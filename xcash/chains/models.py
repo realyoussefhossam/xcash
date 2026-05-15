@@ -519,7 +519,7 @@ class Address(UndeletableModel):
 
             decimals = crypto.get_decimals(chain)
             value_raw = int(amount * Decimal(10**decimals))
-            if crypto == chain.native_coin or crypto.is_native:
+            if crypto == chain.native_coin:
                 intent = build_native_transfer_intent(
                     address=self,
                     chain=chain,

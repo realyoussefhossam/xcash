@@ -1845,9 +1845,9 @@ def test_address_send_crypto_schedules_erc20_transfer_intent():
         coingecko_id="task12-eth",
     )
     token = Crypto.objects.create(
-        name="Task12 USDC",
-        symbol="T12USDC",
-        coingecko_id="task12-usdc",
+        name="Task12 BSC Wrapped",
+        symbol="BSC",
+        coingecko_id="task12-bsc-wrapped",
         decimals=6,
     )
     chain = Chain.objects.create(
@@ -1867,6 +1867,8 @@ def test_address_send_crypto_schedules_erc20_transfer_intent():
         ),
         decimals=6,
     )
+    assert token.is_native
+    assert token != chain.native_coin
     address = Address.objects.create(
         wallet=Wallet.objects.create(),
         chain_type=ChainType.EVM,
