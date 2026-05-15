@@ -18,6 +18,7 @@ from web3.exceptions import ExtraDataLengthError
 from web3.middleware import ExtraDataToPOAMiddleware
 
 from common.fields import AddressField
+from common.fields import EvmAddressField
 from common.fields import HashField
 from common.models import UndeletableModel
 
@@ -77,6 +78,12 @@ class Chain(models.Model):
         _("ERC20 转账 Gas Limit"),
         default=100_000,
         help_text=_("ERC-20 代币 transfer 调用的 gas 上限"),
+    )
+    # CREATE2 工厂合约地址：未启用合约支付收款的链留空
+    create2_factory_address = EvmAddressField(
+        _("CREATE2 工厂合约地址"),
+        blank=True,
+        null=True,
     )
     evm_log_max_block_range = models.PositiveIntegerField(
         _("EVM 单次日志请求最大区块数"),
@@ -533,6 +540,8 @@ class TransferType(models.TextChoices):
     GasRecharge = "gas-recharge", "⛽ Gas分发"
     DepositCollection = "deposit-collection", "💵 归集充币"
     Prefunding = "prefunding", "🏦 注入金库资金"
+    X402Facilitate = "x402_facilitate", _("x402 代付")
+    ContractDeployCollect = "contract_deploy_collect", _("合约部署归集")
 
 
 class BroadcastTaskStage(models.TextChoices):

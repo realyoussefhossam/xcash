@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest.mock import Mock
 from unittest.mock import patch
 
+import pytest
 from django.core import checks
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
@@ -1751,3 +1752,27 @@ class BlockNumberUpdatedCompensationTests(TestCase):
 
         self.assertEqual(confirm_delay_mock.call_count, 3)
         reschedule_mock.assert_not_called()
+
+
+def test_transfer_type_new_values_exist():
+    # 新加的 transfer_type 必须可被 enum 反查
+    assert TransferType.X402Facilitate.value == "x402_facilitate"
+    assert TransferType.ContractDeployCollect.value == "contract_deploy_collect"
+
+
+@pytest.mark.django_db
+def test_chain_create2_factory_address_is_nullable():
+    native = Crypto.objects.create(
+        name="Task2 Native",
+        symbol="T2N",
+        coingecko_id="task2-native",
+    )
+    chain = Chain.objects.create(
+        code="test-task2",
+        chain_id=999_999,
+        name="Test",
+        type=ChainType.EVM,
+        native_coin=native,
+    )
+    # 字段默认为空，不影响现有 chain 创建
+    assert chain.create2_factory_address in (None, "")
