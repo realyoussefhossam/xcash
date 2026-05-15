@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EvmTxIntent:
-    """描述一笔待构建的 EVM 交易，不在本层实现具体 builder。"""
+    """由 builder 构造并传给 schedule 的 EVM 交易入参容器。"""
 
     address: Address
     chain: Chain
@@ -187,6 +187,8 @@ def build_contract_call_intent(
     if value < 0:
         raise ValueError("value must be >= 0")
 
+    recipient_checksum = Web3.to_checksum_address(recipient) if recipient else None
+
     return EvmTxIntent(
         address=address,
         chain=chain,
@@ -197,7 +199,7 @@ def build_contract_call_intent(
         gas=gas,
         transfer_type=transfer_type,
         crypto=crypto,
-        recipient=recipient,
+        recipient=recipient_checksum,
         amount=amount,
         verify_fn=verify_fn,
     )

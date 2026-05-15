@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
+import eth_abi
 import pytest
 from web3 import Web3
 
@@ -218,6 +219,14 @@ def test_build_erc20_transfer_intent_sets_basic_fields():
     assert intent.to == Web3.to_checksum_address(token_address)
     assert intent.value == 0
     assert intent.data.startswith("0xa9059cbb")
+    decoded_recipient, decoded_value_raw = eth_abi.decode(
+        ["address", "uint256"],
+        bytes.fromhex(intent.data.removeprefix("0xa9059cbb")),
+    )
+    assert Web3.to_checksum_address(decoded_recipient) == Web3.to_checksum_address(
+        recipient
+    )
+    assert decoded_value_raw == value_raw
     assert intent.gas == chain.erc20_transfer_gas
     assert intent.recipient == Web3.to_checksum_address(recipient)
     assert intent.amount == Decimal(value_raw).scaleb(-6)
@@ -256,6 +265,7 @@ def test_build_erc20_transfer_intent_rejects_crypto_not_deployed_on_chain():
 def test_build_contract_call_intent_sets_basic_fields():
     chain = _fake_chain()
     contract_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    recipient = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
     intent = build_contract_call_intent(
         address=_fake_address(),
@@ -265,6 +275,7 @@ def test_build_contract_call_intent_sets_basic_fields():
         gas=50000,
         transfer_type=TransferType.Invoice,
         value=7,
+        recipient=recipient,
     )
 
     assert intent.tx_kind == TxKind.CONTRACT_CALL
@@ -272,6 +283,7 @@ def test_build_contract_call_intent_sets_basic_fields():
     assert intent.data == "0xa9059cbb"
     assert intent.gas == 50000
     assert intent.value == 7
+    assert intent.recipient == Web3.to_checksum_address(recipient)
 
 
 def test_build_contract_call_intent_defaults_value_to_zero():
