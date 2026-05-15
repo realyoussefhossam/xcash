@@ -35,6 +35,7 @@ from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.coordinator import InternalEvmTaskCoordinator
 from evm.coordinator import _parse_erc20_transfer_log
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 
@@ -219,6 +220,7 @@ class ObserveConfirmedNativeTest(TestCase):
             value=Decimal("1500000000000000000"),
             nonce=0,
             gas=21000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
         )
 
     def test_native_confirmed_feeds_to_scanner_pipeline(self):
@@ -339,6 +341,7 @@ class ObserveConfirmedErc20Test(TestCase):
             nonce=0,
             gas=100000,
             data="0xa9059cbb",
+            tx_kind=TxKind.CONTRACT_CALL,
         )
 
     def test_erc20_confirmed_feeds_to_scanner_pipeline(self):
@@ -506,6 +509,7 @@ class CoordinatorIntegrationTest(TestCase):
             value=0,
             data="0xa9059cbb",
             gas=60000,
+            tx_kind=TxKind.CONTRACT_CALL,
             gas_price=1,
             signed_payload="0x01",
         )
@@ -558,6 +562,7 @@ class CoordinatorIntegrationTest(TestCase):
             value=Decimal("1500000000000000000"),
             data="",
             gas=21000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x01",
         )

@@ -31,6 +31,7 @@ from common.exceptions import APIError
 from core.models import PLATFORM_SETTINGS_CACHE_KEY
 from core.models import PlatformSettings
 from currencies.models import Crypto
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from projects.models import Project
 from users.models import User
@@ -134,6 +135,7 @@ class WithdrawalBroadcastTaskTests(TestCase):
             to=broadcast_task.recipient,
             value=1,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
         )
         withdrawal = Withdrawal.objects.create(
             project=project,
@@ -1917,6 +1919,7 @@ class WithdrawalTryMatchTests(TestCase):
             to=recipient,
             value=1,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
         )
         return broadcast_task
 

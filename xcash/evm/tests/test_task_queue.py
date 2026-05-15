@@ -34,6 +34,7 @@ from common.consts import ERC20_TRANSFER_GAS
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.admin import EvmScanCursorAdmin
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
@@ -118,6 +119,7 @@ class EvmTaskQueueTests(TestCase):
             to=Web3.to_checksum_address("0x00000000000000000000000000000000000000f2"),
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
         )
 
@@ -149,6 +151,7 @@ class EvmTaskQueueTests(TestCase):
                 ),
                 value=0,
                 gas=21_000,
+                tx_kind=TxKind.NATIVE_TRANSFER,
                 gas_price=1,
             )
 

@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.core.cache import cache
+from django.db import IntegrityError
 from django.db import connections
 from django.db import close_old_connections
+from django.db import transaction
 from django.test import TestCase
 from django.test import TransactionTestCase
 from django.test import override_settings
@@ -34,6 +36,7 @@ from common.consts import ERC20_TRANSFER_GAS
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.admin import EvmScanCursorAdmin
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
@@ -47,6 +50,44 @@ from projects.models import RecipientAddressUsage
 
 
 class EvmBroadcastTaskTests(TestCase):
+    def test_create_without_tx_kind_is_rejected_by_database(self):
+        native = Crypto.objects.create(
+            name="Ethereum TxKind Constraint",
+            symbol="ETHTKC",
+            coingecko_id="ethereum-tx-kind-constraint",
+        )
+        chain = Chain.objects.create(
+            code="eth-tx-kind-constraint",
+            name="Ethereum TxKind Constraint",
+            type=ChainType.EVM,
+            chain_id=999_401,
+            rpc="http://localhost:8545",
+            native_coin=native,
+            active=True,
+        )
+        wallet = Wallet.objects.create()
+        addr = Address.objects.create(
+            wallet=wallet,
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.Vault,
+            bip44_account=1,
+            address_index=0,
+            address="0x0000000000000000000000000000000000000C01",
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                EvmBroadcastTask.objects.create(
+                    address=addr,
+                    chain=chain,
+                    to="0x0000000000000000000000000000000000000002",
+                    value=0,
+                    nonce=0,
+                    gas=21000,
+                    gas_price=1,
+                    signed_payload="0x00",
+                )
+
     def test_next_nonce_returns_count_of_existing_tasks(self):
         # nonce 基于已有任务数量推算，事务回滚时自动复用，不会产生空洞。
         from chains.models import AddressChainState
@@ -96,6 +137,7 @@ class EvmBroadcastTaskTests(TestCase):
             value=0,
             nonce=0,
             gas=21000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x00",
         )
@@ -135,6 +177,7 @@ class EvmBroadcastTaskTests(TestCase):
             to="0x0000000000000000000000000000000000000002",
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -233,6 +276,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -334,6 +378,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -416,6 +461,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -541,6 +587,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**6,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -616,6 +663,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -694,6 +742,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -763,6 +812,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -834,6 +884,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -904,6 +955,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -969,6 +1021,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=lower_base_task.recipient,
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -992,6 +1045,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -1058,6 +1112,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -1135,6 +1190,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -1219,6 +1275,7 @@ class EvmBroadcastTaskTests(TestCase):
             to=base_task.recipient,
             value=10**18,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
@@ -1232,4 +1289,3 @@ class EvmBroadcastTaskTests(TestCase):
         observe_mock.assert_called_once()
         base_task.refresh_from_db()
         self.assertEqual(base_task.stage, BroadcastTaskStage.PENDING_CHAIN)
-

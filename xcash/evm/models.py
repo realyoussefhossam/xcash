@@ -128,6 +128,15 @@ class EvmBroadcastTask(UndeletableModel):
                 # 约束名直接采用 BroadcastTask 语义，保持当前模型命名一致。
                 name="uniq_evm_broadcast_task_address_chain_nonce",
             ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    tx_kind__in=[
+                        TxKind.NATIVE_TRANSFER,
+                        TxKind.CONTRACT_CALL,
+                    ]
+                ),
+                name="ck_evm_broadcast_task_tx_kind_valid",
+            ),
         ]
         ordering = ("created_at",)
         # EVM 主执行对象统一命名为 BroadcastTask，避免继续把稳定任务对象写成历史别名。

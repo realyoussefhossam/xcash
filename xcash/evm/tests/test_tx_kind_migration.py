@@ -64,7 +64,12 @@ def test_backfill_tx_kind_classifies_existing_rows_by_data():
     )
 
     rows = list(
-        new_evm_broadcast_task.objects.order_by("nonce").values("nonce", "tx_kind")
+        new_evm_broadcast_task.objects.filter(
+            address_id=address.pk,
+            chain_id=chain.pk,
+        )
+        .order_by("nonce")
+        .values("nonce", "tx_kind")
     )
     assert rows == [
         {"nonce": 0, "tx_kind": "native_transfer"},

@@ -24,6 +24,7 @@ from chains.service import TransferService
 from core.models import PLATFORM_SETTINGS_CACHE_KEY
 from core.models import PlatformSettings
 from currencies.models import Crypto
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
@@ -302,6 +303,7 @@ class EvmChainScannerServiceTests(TestCase):
             to=Web3.to_checksum_address("0x0000000000000000000000000000000000000002"),
             value=0,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="",
         )
@@ -473,6 +475,7 @@ class EvmChainScannerServiceTests(TestCase):
                 value=0,
                 nonce=n,
                 gas=21_000,
+                tx_kind=TxKind.NATIVE_TRANSFER,
                 gas_price=1,
             )
         base_task = BroadcastTask.objects.create(
@@ -496,6 +499,7 @@ class EvmChainScannerServiceTests(TestCase):
             value=0,
             nonce=5,
             gas=21_000,
+            tx_kind=TxKind.NATIVE_TRANSFER,
             gas_price=1,
             signed_payload="0x01",
         )

@@ -34,6 +34,7 @@ from common.consts import ERC20_TRANSFER_GAS
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.admin import EvmScanCursorAdmin
+from evm.choices import TxKind
 from evm.models import EvmBroadcastTask
 from evm.models import EvmScanCursor
 from evm.models import EvmScanCursorType
@@ -133,6 +134,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
             value=0,
             data="0xa9059cbb",
             gas=ERC20_TRANSFER_GAS,
+            tx_kind=TxKind.CONTRACT_CALL,
             gas_price=1,
             signed_payload="0x01",
         )
