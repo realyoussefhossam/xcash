@@ -7,8 +7,6 @@ from django.db import transaction as db_transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-logger = structlog.get_logger()
-
 from chains.adapters import AdapterFactory
 from chains.models import AddressUsage, BroadcastTask
 from chains.models import ChainType
@@ -16,14 +14,16 @@ from chains.models import TransferType
 from chains.service import AddressService
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
+from common.internal_callback import send_internal_callback
 from common.utils.math import format_decimal_stripped
 from users.otp import validate_admin_approval_context
-from common.internal_callback import send_internal_callback
 from webhooks.service import WebhookService
 from withdrawals.models import VaultFunding
 from withdrawals.models import Withdrawal
 from withdrawals.models import WithdrawalReviewLog
 from withdrawals.models import WithdrawalStatus
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from chains.models import OnchainTransfer
@@ -79,7 +79,7 @@ class WithdrawalService:
 
         gas_limit = (
             chain.base_transfer_gas
-            if crypto == chain.native_coin or crypto.is_native
+            if crypto == chain.native_coin
             else chain.erc20_transfer_gas
         )
         return int(gas_price * gas_limit)
@@ -150,7 +150,7 @@ class WithdrawalService:
         pending_gas_raw = cls.pending_gas_reserved_raw(project=project, chain=chain)
 
         on_chain_asset_raw = adapter.get_balance(address, chain, crypto)
-        if crypto == chain.native_coin or crypto.is_native:
+        if crypto == chain.native_coin:
             # 原生币提币既消耗转出金额，也消耗 gas；在途单子的 gas 必须一起预留。
             available_raw = max(
                 0, on_chain_asset_raw - pending_asset_raw - pending_gas_raw

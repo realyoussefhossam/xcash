@@ -283,6 +283,96 @@ class WithdrawalBroadcastTaskTests(TestCase):
 
 
 class WithdrawalBalanceReservationTests(TestCase):
+    def test_native_symbol_token_uses_erc20_gas_limit(self):
+        native = type("NativeStub", (), {"is_native": True})()
+        token = type("TokenStub", (), {"is_native": True})()
+        chain = type(
+            "ChainStub",
+            (),
+            {
+                "type": ChainType.EVM,
+                "native_coin": native,
+                "base_transfer_gas": 21,
+                "erc20_transfer_gas": 65,
+                "w3": type("W3Stub", (), {"eth": type("EthStub", (), {})()})(),
+            },
+        )()
+        chain.w3.eth.gas_price = 2
+
+        self.assertEqual(
+            WithdrawalService.estimate_current_network_fee_raw(
+                chain=chain,
+                crypto=token,
+            ),
+            130,
+        )
+
+    def test_native_symbol_token_still_requires_native_gas_balance(self):
+        native = type(
+            "NativeStub",
+            (),
+            {
+                "is_native": True,
+                "get_decimals": staticmethod(lambda _chain: 0),
+            },
+        )()
+        token = type(
+            "TokenStub",
+            (),
+            {
+                "is_native": True,
+                "get_decimals": staticmethod(lambda _chain: 0),
+            },
+        )()
+        chain = type(
+            "ChainStub",
+            (),
+            {
+                "type": ChainType.EVM,
+                "code": "native-symbol-token-balance",
+                "native_coin": native,
+            },
+        )()
+
+        def get_balance(_address, _chain, current_crypto):
+            if current_crypto is token:
+                return 100
+            if current_crypto is native:
+                return 0
+            raise AssertionError("unexpected crypto")
+
+        adapter = type(
+            "AdapterStub",
+            (),
+            {
+                "get_balance": staticmethod(get_balance),
+            },
+        )()
+
+        with (
+            patch.object(WithdrawalService, "pending_amount_raw", return_value=0),
+            patch.object(
+                WithdrawalService,
+                "pending_gas_reserved_raw",
+                return_value=0,
+            ),
+            patch.object(
+                WithdrawalService,
+                "estimate_current_network_fee_raw",
+                return_value=5,
+            ),
+        ):
+            enough = WithdrawalService.has_sufficient_balance(
+                project=object(),
+                chain=chain,
+                crypto=token,
+                address="0x00000000000000000000000000000000000000F0",
+                amount=Decimal("50"),
+                adapter=adapter,
+            )
+
+        self.assertFalse(enough)
+
     def test_native_withdrawal_requires_extra_gas_budget(self):
         # 原生币提币必须把当前单子的 gas 一起计入可用余额，不能把全部余额都当作可转出金额。
         chain = type(

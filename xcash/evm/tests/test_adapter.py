@@ -48,6 +48,50 @@ from projects.models import RecipientAddressUsage
 
 
 class EvmAdapterTests(TestCase):
+    def test_get_balance_treats_native_symbol_token_as_erc20_on_non_native_chain(self):
+        native = Crypto.objects.create(
+            name="Adapter Ether",
+            symbol="AETH",
+            coingecko_id="adapter-ether",
+        )
+        token = Crypto.objects.create(
+            name="Adapter BSC Token",
+            symbol="BSC",
+            coingecko_id="adapter-bsc-token",
+        )
+        chain = Chain.objects.create(
+            code="adapter-erc20-chain",
+            name="Adapter ERC20 Chain",
+            type=ChainType.EVM,
+            chain_id=919_001,
+            native_coin=native,
+        )
+        token_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000b01"
+        )
+        owner = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000b02"
+        )
+        ChainToken.objects.create(chain=chain, crypto=token, address=token_address)
+        assert token.is_native
+        assert token != chain.native_coin
+        balance_call = Mock(return_value=77)
+        balance_of = Mock(return_value=SimpleNamespace(call=balance_call))
+        contract = SimpleNamespace(functions=SimpleNamespace(balanceOf=balance_of))
+        chain.__dict__["w3"] = SimpleNamespace(
+            eth=SimpleNamespace(
+                get_balance=Mock(return_value=5),
+                contract=Mock(return_value=contract),
+            ),
+        )
+
+        from evm.adapter import EvmAdapter
+
+        self.assertEqual(EvmAdapter.get_balance(owner, chain, token), 77)
+        chain.w3.eth.get_balance.assert_not_called()
+        chain.w3.eth.contract.assert_called_once()
+        balance_of.assert_called_once_with(owner)
+
     def test_tx_result_returns_confirmed_when_status_is_one(self):
         chain = Chain(
             code="eth",

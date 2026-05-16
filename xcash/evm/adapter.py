@@ -48,7 +48,7 @@ class EvmAdapter(AdapterInterface):
     def get_balance(cls, address: AddressStr, chain: Chain, crypto: Crypto) -> int:
         checksum_address = cls._to_checksum(address)
 
-        if crypto == chain.native_coin or crypto.is_native:
+        if crypto == chain.native_coin:
             # 查询原生币余额（ETH/BNB 等）
             return int(chain.w3.eth.get_balance(checksum_address))  # noqa: SLF001
 

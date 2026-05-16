@@ -752,7 +752,7 @@ class BroadcastTask(UndeletableModel):
                 evm_task = self.evm_task
             except AttributeError:
                 return None
-            if self.crypto == self.chain.native_coin or self.crypto.is_native:
+            if self.crypto == self.chain.native_coin:
                 return Decimal(evm_task.value)
             return Decimal(self.amount).scaleb(self.crypto.get_decimals(self.chain))
         return None
