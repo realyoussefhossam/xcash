@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
-import eth_abi
 from django.db import models
 from django.db import transaction as db_transaction
 from django.utils import timezone
@@ -25,12 +23,7 @@ from evm.intents import assert_transfer_type_implemented
 from evm.intents import get_preflight_buffer_multiplier
 
 if TYPE_CHECKING:
-    from currencies.models import Crypto
     from evm.intents import EvmTxIntent
-
-# ERC-20 transfer(address,uint256) 函数选择器
-_ERC20_TRANSFER_SELECTOR = "0xa9059cbb"
-
 
 class EvmScanCursorType(models.TextChoices):
     """定义 EVM 自扫描器的游标类型。"""
@@ -530,89 +523,54 @@ class EvmBroadcastTask(UndeletableModel):
         return "nonce too low" in str(exc).lower()
 
     @classmethod
-    def _create_broadcast_task(
-        cls,
-        *,
-        address,
-        chain,
-        to,
-        transfer_type,
-        gas,
-        crypto: Crypto | None,
-        recipient,
-        amount: Decimal | None,
-        tx_kind,
-        value=0,
-        data="",
-        verify_fn=None,
-    ):
-        """在数据库行锁内完成 nonce 分配并原子落库待广播任务。
+    def schedule(cls, intent: EvmTxIntent) -> EvmBroadcastTask:
+        """按 EvmTxIntent 原子创建待执行广播任务。
 
-        设计要点：
-        - 通过 AddressChainState 行锁对 (address, chain) 串行化，杜绝并发 nonce 冲突。
-        - verify_fn 在行锁内、nonce 分配前执行，供调用方注入余额二次验证等逻辑，
-          防止 TOCTOU 竞态（Serializer 软检查 → 加锁 → 分配 nonce 之间的窗口期）。
-        - 首次签名和首个 tx_hash 生成延后到 broadcast()；内部稳定身份只依赖 (address, chain, nonce)。
-        - 行锁跟随事务提交自动释放，不依赖 Redis TTL。
+        通过 AddressChainState 行锁对 (address, chain) 串行化，杜绝并发 nonce
+        冲突。verify_fn 必须在行锁内、nonce 分配前执行；验证失败时整个事务
+        回滚，避免留下未通过业务二次校验的 BroadcastTask 或 nonce 空洞。
+
+        首次签名和首个 tx_hash 生成延后到 broadcast()；内部稳定身份只依赖
+        (address, chain, nonce)。
         """
-        assert_transfer_type_implemented(transfer_type)
+        assert_transfer_type_implemented(intent.transfer_type)
 
         with db_transaction.atomic():
-            state = AddressChainState.acquire_for_update(address=address, chain=chain)
+            state = AddressChainState.acquire_for_update(
+                address=intent.address,
+                chain=intent.chain,
+            )
 
-            # 在行锁内执行调用方注入的验证回调（如余额二次确认）
-            if verify_fn is not None:
-                verify_fn()
-            nonce = cls._next_nonce(address, chain, state=state)
+            # 在行锁内执行调用方注入的验证回调（如余额二次确认）。
+            if intent.verify_fn is not None:
+                intent.verify_fn()
+
+            nonce = cls._next_nonce(intent.address, intent.chain, state=state)
             base_task = BroadcastTask.objects.create(
-                chain=chain,
-                address=address,
-                transfer_type=transfer_type,
-                crypto=crypto,
-                recipient=recipient,
-                amount=amount,
+                chain=intent.chain,
+                address=intent.address,
+                transfer_type=intent.transfer_type,
+                crypto=intent.crypto,
+                recipient=intent.recipient,
+                amount=intent.amount,
                 stage=BroadcastTaskStage.QUEUED,
                 result=BroadcastTaskResult.UNKNOWN,
             )
 
-            # 稳定执行对象统一命名为 broadcast_task，避免继续把"任务"误解成某次签名尝试。
             broadcast_task = EvmBroadcastTask.objects.create(
                 base_task=base_task,
-                address=address,
-                chain=chain,
-                to=to,
-                value=value,
+                address=intent.address,
+                chain=intent.chain,
+                to=intent.to,
+                value=intent.value,
                 nonce=nonce,
-                data=data,
-                gas=gas,
-                tx_kind=tx_kind,
+                data=intent.data,
+                gas=intent.gas,
+                tx_kind=intent.tx_kind,
             )
             state.next_nonce = nonce + 1
             state.save()
             return broadcast_task
-
-    @classmethod
-    def schedule(cls, intent: EvmTxIntent) -> EvmBroadcastTask:
-        """按 EvmTxIntent 原子创建待执行广播任务。
-
-        verify_fn 必须在 (address, chain) 行锁内、nonce 分配前执行；验证失败时整个
-        事务回滚，避免留下未通过业务二次校验的 BroadcastTask 或 nonce 空洞。
-        """
-        assert_transfer_type_implemented(intent.transfer_type)
-        return cls._create_broadcast_task(
-            address=intent.address,
-            chain=intent.chain,
-            to=intent.to,
-            value=intent.value,
-            transfer_type=intent.transfer_type,
-            gas=intent.gas,
-            crypto=intent.crypto,
-            recipient=intent.recipient,
-            data=intent.data,
-            amount=intent.amount,
-            tx_kind=intent.tx_kind,
-            verify_fn=intent.verify_fn,
-        )
 
     @staticmethod
     def _next_nonce(address, chain, *, state: AddressChainState) -> int:
@@ -635,117 +593,3 @@ class EvmBroadcastTask(UndeletableModel):
             state.next_nonce = next_nonce
             state.save()
         return next_nonce
-
-    @classmethod
-    def schedule_native(
-        cls,
-        *,
-        address,
-        chain,
-        to,
-        value,
-        transfer_type,
-        verify_fn=None,
-    ):
-        """发送原生币（ETH/BNB 等）转账，写入队列等待链上观测。"""
-        return cls._create_broadcast_task(
-            address=address,
-            chain=chain,
-            to=to,
-            value=value,
-            transfer_type=transfer_type,
-            gas=chain.base_transfer_gas,
-            crypto=chain.native_coin,
-            recipient=to,
-            amount=cls._normalize_amount(value, chain.native_coin.decimals),
-            tx_kind=TxKind.NATIVE_TRANSFER,
-            verify_fn=verify_fn,
-        )
-
-    @classmethod
-    def schedule_erc20(
-        cls,
-        *,
-        address,
-        chain,
-        contract_address,
-        data,
-        transfer_type,
-        crypto,
-        recipient,
-        token_value: int,
-        verify_fn=None,
-    ):
-        """发送 ERC-20 代币转账，写入队列等待链上观测。"""
-        # ERC-20 展示金额也要使用链特定精度，避免后台看到错误数量。
-        amount = cls._normalize_amount(token_value, crypto.get_decimals(chain))
-        return cls._create_broadcast_task(
-            address=address,
-            chain=chain,
-            to=contract_address,
-            transfer_type=transfer_type,
-            gas=chain.erc20_transfer_gas,
-            crypto=crypto,
-            recipient=recipient,
-            data=data,
-            amount=amount,
-            tx_kind=TxKind.CONTRACT_CALL,
-            verify_fn=verify_fn,
-        )
-
-    @classmethod
-    def schedule_transfer(
-        cls,
-        *,
-        address,
-        chain,
-        crypto: Crypto,
-        to: str,
-        value_raw: int,
-        transfer_type,
-        verify_fn=None,
-    ) -> EvmBroadcastTask:
-        """统一入口：根据代币类型自动路由到 native 或 ERC-20 路径。
-
-        value_raw 为链上原始整数单位（已乘以 10^decimals）。
-        to 为收款地址（自动转为 checksum 格式）。
-        verify_fn 透传到 _create_broadcast_task，在账户锁内执行（见该方法注释）。
-        """
-        to_checksum = Web3.to_checksum_address(to)
-
-        if crypto == chain.native_coin or crypto.is_native:
-            return cls.schedule_native(
-                address=address,
-                chain=chain,
-                to=to_checksum,
-                value=value_raw,
-                transfer_type=transfer_type,
-                verify_fn=verify_fn,
-            )
-
-        token_addr = crypto.address(chain)
-        if not token_addr:
-            raise ValueError(
-                f"Crypto {crypto.symbol} is not deployed on chain {chain.code}"
-            )
-        token_addr_checksum = Web3.to_checksum_address(token_addr)
-
-        # 构造 ERC-20 transfer(address,uint256) calldata
-        encoded = eth_abi.encode(["address", "uint256"], [to_checksum, value_raw])
-        data = _ERC20_TRANSFER_SELECTOR + encoded.hex()
-
-        return cls.schedule_erc20(
-            address=address,
-            chain=chain,
-            contract_address=token_addr_checksum,
-            data=data,
-            transfer_type=transfer_type,
-            crypto=crypto,
-            recipient=to_checksum,
-            token_value=value_raw,
-            verify_fn=verify_fn,
-        )
-
-    @staticmethod
-    def _normalize_amount(value: int, decimals: int) -> Decimal:
-        return Decimal(value).scaleb(-decimals)

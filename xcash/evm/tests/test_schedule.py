@@ -161,28 +161,6 @@ class EvmBroadcastTaskScheduleTests(TestCase):
         self.assertEqual(BroadcastTask.objects.count(), 0)
         self.assertEqual(EvmBroadcastTask.objects.count(), 0)
 
-    def test_create_broadcast_task_blocks_unimplemented_transfer_type(self):
-        with (
-            patch.object(AddressChainState, "acquire_for_update") as acquire_mock,
-            self.assertRaises(NotImplementedError),
-        ):
-            EvmBroadcastTask._create_broadcast_task(
-                address=self.address,
-                chain=self.chain,
-                to=self.recipient,
-                value=1,
-                transfer_type=TransferType.ContractDeployCollect,
-                gas=21_000,
-                crypto=self.native,
-                recipient=self.recipient,
-                amount=Decimal("1"),
-                tx_kind=TxKind.NATIVE_TRANSFER,
-            )
-
-        acquire_mock.assert_not_called()
-        self.assertEqual(BroadcastTask.objects.count(), 0)
-        self.assertEqual(EvmBroadcastTask.objects.count(), 0)
-
     def test_schedule_blocks_contract_deploy_collect_before_lock(self):
         intent = self._intent(transfer_type=TransferType.ContractDeployCollect)
 
