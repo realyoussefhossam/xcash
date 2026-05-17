@@ -3,7 +3,6 @@ name: xcash-dev
 volumes:
   django_db_data: {}
   redis_data: {}
-  ethereum_data: {}
   # anvil 会在 $HOME/.foundry/anvil/tmp 下按会话堆放每块 trace/receipt，独立卷便于排查与单独清理。
   foundry_home: {}
   bitcoin_data: {}
@@ -52,14 +51,13 @@ services:
     image: ghcr.io/foundry-rs/foundry:v1.3.1
     container_name: xcash_dev_ethereum
     # 开发环境直接以 root 运行，避免 Docker 命名卷根目录默认 755/root:root
-    # 导致镜像内 foundry 用户无法把 anvil state 写入 /data。
+    # 导致镜像内 foundry 用户无法写入挂载点。
     user: "0:0"
     restart: unless-stopped
     entrypoint: ["anvil"]
     ports:
       - "${LOCAL_EVM_PORT:-8545}:8545"
     volumes:
-      - ethereum_data:/data
       # anvil 会在 $HOME/.foundry/anvil/tmp/<session> 下累积每块 trace/receipt，并仅在 graceful shutdown 时清理。
       # 容器异常重启会留下数十 GB 孤儿目录。挂出独立卷避免污染容器可写层，便于按需 docker volume rm 清理。
       - foundry_home:/root/.foundry
@@ -79,13 +77,8 @@ services:
       # 每秒自动出块，模拟真实链的区块推进，使 FULL 确认模式和 block_number_updated 正常工作。
       - --block-time
       - "${LOCAL_EVM_BLOCK_TIME:-1}"
-      # 持久化链状态，重启后继续出块而非从创世块重来。
-      - --state
-      - /data/anvil-state.json
-      # 开发联调更关注异常退出后的状态连续性，定时落盘比仅在退出时保存更稳妥。
-      # 60s 间隔对 dev 场景足够，相比 5s 大幅降低磁盘 I/O。
-      - --state-interval
-      - "60"
+      # dev 不持久化链状态：anvil 的 --state 单文件 + 周期落盘并非原子写，被强杀会留下截断 JSON 致下次启动反复崩溃。
+      # 每次容器重启都从创世块开始，业务侧不应依赖历史余额/nonce/合约地址。
       # 仅保留最近 N 块的 trace/receipt/log，避免 anvil 在 $HOME/.foundry 无限累积历史。
       # 1s 出块下 10000 块 ≈ 2.8h 历史，覆盖典型 dev 调试场景。
       - --prune-history
