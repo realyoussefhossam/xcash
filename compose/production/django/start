@@ -9,6 +9,10 @@ eval "$(python /app/config/performance.py shell-env web)"
 # 生产迁移、collectstatic 与默认管理员补齐由 scripts/upgrade.sh 统一执行。
 # 容器启动阶段不能隐式修改数据库，避免绕过真实数据演练流程。
 
+# 上线兜底：检测到尚未应用的迁移即立即退出，强制运维先执行 scripts/upgrade.sh，
+# 避免新代码连到陈旧 schema 产生大面积运行时错误。
+python manage.py migrate --check
+
 /app/compose/production/django/check-signer-preflight
 
 exec gunicorn config.wsgi:application \

@@ -9,6 +9,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 UPGRADE_REF="${1:-${UPGRADE_REF:-main}}"
 SKIP_GIT_PULL="${SKIP_GIT_PULL:-false}"
 QUIESCE_BEFORE_REHEARSAL="${QUIESCE_BEFORE_REHEARSAL:-false}"
+UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/tmp/xcash-upgrade.lock}"
 
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 REHEARSAL_COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" --profile migration-rehearsal)
@@ -103,10 +104,12 @@ run_main_manage() {
   local postgres_host="$1"
   shift
 
-  "${COMPOSE[@]}" run --rm --no-deps \
+  # POSTGRES_PASSWORD 由 compose 的 env_file (.env) 注入，不再通过命令行 -e 传递，
+  # 避免短时间内出现在宿主 ps aux 输出中。
+  # -T 禁用 PTY，确保 stdout 是干净字节流，避免 ANSI 控制序列/CR 行尾污染 plan 比对。
+  "${COMPOSE[@]}" run --rm --no-deps -T \
     -e XCASH_IGNORE_DATABASE_URL=true \
     -e POSTGRES_HOST="${postgres_host}" \
-    -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
     django python manage.py "$@"
 }
 
@@ -114,18 +117,31 @@ run_signer_manage() {
   local postgres_host="$1"
   shift
 
-  "${COMPOSE[@]}" run --rm --no-deps \
+  # SIGNER_POSTGRES_PASSWORD 由 compose 的 env_file (.env) 注入，理由同 run_main_manage。
+  # -T 同样用于消除 PTY 引入的不确定字节，参见 run_main_manage 注释。
+  "${COMPOSE[@]}" run --rm --no-deps -T \
     -e SIGNER_POSTGRES_HOST="${postgres_host}" \
-    -e SIGNER_POSTGRES_PASSWORD="${SIGNER_POSTGRES_PASSWORD}" \
     signer bash -lc 'cd /app/signer && python manage.py "$@"' signer-manage "$@"
+}
+
+# 从 migrate --plan 输出中只保留真正的迁移行（形如 "  app_label.NNNN_name"），
+# 丢弃提示文案、空行、日志、以及可能漏入的 compose 进度残留，让 diff 比对鲁棒。
+# 操作明细行（形如 "    Add field xxx"）首字母为大写，不匹配 [a-z_]，会被自然过滤。
+extract_plan() {
+  grep -E '^[[:space:]]+[a-z_][a-z0-9_]*\.[0-9]{4}_' "$1" || true
 }
 
 compare_plans() {
   local rehearsal_plan="$1"
   local production_plan="$2"
   local label="$3"
+  local rehearsal_norm="${rehearsal_plan}.norm"
+  local production_norm="${production_plan}.norm"
 
-  if ! diff -u "${rehearsal_plan}" "${production_plan}"; then
+  extract_plan "${rehearsal_plan}" >"${rehearsal_norm}"
+  extract_plan "${production_plan}" >"${production_norm}"
+
+  if ! diff -u "${rehearsal_norm}" "${production_norm}"; then
     die "${label} migrate --plan differs between rehearsal and production"
   fi
 }
@@ -134,6 +150,7 @@ trap cleanup EXIT
 
 require_command docker
 require_command git
+require_command flock
 
 [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
 [[ -f "${COMPOSE_FILE}" ]] || die "compose file not found: ${COMPOSE_FILE}"
@@ -145,6 +162,11 @@ set +a
 
 [[ -n "${POSTGRES_PASSWORD:-}" ]] || die "POSTGRES_PASSWORD is required"
 [[ -n "${SIGNER_POSTGRES_PASSWORD:-}" ]] || die "SIGNER_POSTGRES_PASSWORD is required"
+
+# 互斥锁：避免两人同时执行 upgrade.sh 造成 dump/restore/migrate 交叉污染。
+# 文件描述符 9 在脚本退出时自动释放，无需在 cleanup 中显式处理。
+exec 9>"${UPGRADE_LOCK_FILE}"
+flock -n 9 || die "another upgrade is in progress (lock: ${UPGRADE_LOCK_FILE})"
 
 TMP_DIR="$(mktemp -d)"
 MAIN_DUMP="${TMP_DIR}/xcash-main.dump"

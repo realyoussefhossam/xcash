@@ -49,6 +49,21 @@ except (socket.herror, socket.gaierror):
     _ips = []
 INTERNAL_IPS += [".".join([*ip.split(".")[:-1], "1"]) for ip in _ips]
 
+# django-migration-linter
+# ------------------------------------------------------------------------------
+# 严格模式：把所有 WARNING（非 concurrent CREATE_INDEX/DROP_INDEX、REINDEX 等）
+# 也升级为 ERROR，从源头拒绝非零停机迁移合入。
+# - warnings_as_errors=[] 触发"全部 WARNING 当 ERROR"（见包内 management/utils.py
+#   的 extract_warnings_as_errors_option：空 list → all_warnings_as_errors=True）。
+# - ignore_initial_migrations=True 放过初始建表迁移中不可避免的 NOT NULL 列。
+# - sql_analyser 显式指定 postgresql，避免 lint 时未连 DB 自动探测失败。
+MIGRATION_LINTER_OPTIONS = {
+    "sql_analyser": "postgresql",
+    "warnings_as_errors": [],
+    "ignore_initial_migrations": True,
+    "no_cache": True,
+}
+
 # Celery
 # ------------------------------------------------------------------------------
 
