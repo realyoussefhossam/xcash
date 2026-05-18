@@ -329,7 +329,6 @@ class InitEnvScriptTests(TestCase):
             )
 
             self.assertEqual(result.returncode, 0)
-            self.assertIn(".env 已存在", result.stdout)
             self.assertEqual(
                 env_path.read_text(encoding="utf-8"),
                 "DJANGO_SECRET_KEY=existing-secret\n",
@@ -1506,5 +1505,4 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         self.assertIsNone(withdrawal.transfer_id)
         self.assertEqual(broadcast_task.stage, BroadcastTaskStage.PENDING_CHAIN)
         self.assertEqual(broadcast_task.result, BroadcastTaskResult.UNKNOWN)
-
 

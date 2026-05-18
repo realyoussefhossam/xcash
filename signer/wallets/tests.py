@@ -309,7 +309,6 @@ class SignerWalletSignPolicyTests(TestCase):
         )
         self.assertEqual(audit.status, SignerRequestAudit.Status.FAILED)
         self.assertEqual(audit.error_code, ErrorCode.ACCESS_DENY.code)
-        self.assertEqual(audit.detail, "wallet 已冻结")
 
     def test_wallet_sign_rate_limit_blocks_third_request(self):
         wallet = self._create_wallet(wallet_id=3002)

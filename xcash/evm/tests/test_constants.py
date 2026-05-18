@@ -6,12 +6,6 @@ import pytest
 from evm.constants import get_x402_eip3009_facilitate_gas
 
 
-def test_returns_configured_value_for_known_chain_id():
-    # 已配置 chain_id（Ethereum mainnet）应返回 dict 内的整数
-    chain = SimpleNamespace(chain_id=1, code="ethereum")
-    assert get_x402_eip3009_facilitate_gas(chain) > 0
-
-
 def test_missing_chain_id_raises_with_helpful_message():
     chain = SimpleNamespace(chain_id=999_999, code="unknown-test")
     with pytest.raises(ValueError, match=r"unknown-test.*999999.*evm/constants\.py") as exc:

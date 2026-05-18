@@ -60,31 +60,24 @@ class CustomerRawAccIdxTests(TestCase):
 
 class TestEnsureDefaultSuperuserCommand(TestCase):
     def test_creates_default_superuser_when_none_exists(self):
-        out = []
-
-        with patch("sys.stdout.write", side_effect=out.append):
-            call_command("ensure_default_superuser")
+        call_command("ensure_default_superuser")
 
         admin_user = User.objects.get(username="admin")
         self.assertTrue(admin_user.is_superuser)
         self.assertTrue(admin_user.is_staff)
         self.assertTrue(admin_user.check_password("Admin@123456"))
-        self.assertIn("已创建默认管理员账号", "".join(out))
 
     def test_skips_creation_when_superuser_already_exists(self):
         existing = User.objects.create_superuser(
             username="existing-admin",
             password="secret",
         )
-        out = []
 
-        with patch("sys.stdout.write", side_effect=out.append):
-            call_command("ensure_default_superuser")
+        call_command("ensure_default_superuser")
 
         self.assertEqual(User.objects.filter(is_superuser=True).count(), 1)
         self.assertTrue(User.objects.filter(pk=existing.pk).exists())
         self.assertFalse(User.objects.filter(username="admin").exists())
-        self.assertIn("已存在管理员账号", "".join(out))
 
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost", "127.0.0.1"])

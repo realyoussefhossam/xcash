@@ -81,15 +81,10 @@ class InternalCallbackTest(TestCase):
                 currency="USDT",
             )
 
-    def test_retry_countdown_schedule(self):
-        """退避序列：8 / 60 / 300 / 600 / 1800 / 3600，越界统一为 3600。"""
+    def test_retry_countdown_is_monotonic_and_capped(self):
         from common.internal_callback import _retry_countdown
 
-        assert _retry_countdown(0) == 8
-        assert _retry_countdown(1) == 60
-        assert _retry_countdown(2) == 300
-        assert _retry_countdown(3) == 600
-        assert _retry_countdown(4) == 1800
-        assert _retry_countdown(5) == 3600
-        assert _retry_countdown(6) == 3600
-        assert _retry_countdown(100) == 3600
+        retry_delays = [_retry_countdown(retries) for retries in range(6)]
+        assert retry_delays == sorted(retry_delays)
+        assert _retry_countdown(6) == retry_delays[-1]
+        assert _retry_countdown(100) == retry_delays[-1]

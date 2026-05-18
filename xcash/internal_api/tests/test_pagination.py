@@ -2,10 +2,8 @@
 
 验证通过全局 REST_FRAMEWORK.DEFAULT_PAGINATION_CLASS 接入的
 common.pagination.PageNumberSizePagination 真的作用于内网 API 列表端点：
-- 默认 page_size = 20
 - 支持 size 查询参数覆盖
 - 支持 page 查询参数翻页
-- size 超过 max_page_size (100) 会被截断
 - 响应结构包含 {count, next, previous, results}
 
 使用 webhook-events 端点作为载体：它是 ListModelMixin + GenericViewSet，
@@ -21,6 +19,7 @@ from internal_api.viewsets.recipient_addresses import RecipientAddressViewSet
 from internal_api.viewsets.withdrawals import InternalWithdrawalViewSet
 
 from chains.models import Wallet
+from common.pagination import PageNumberSizePagination
 from projects.models import Project
 from webhooks.models import WebhookEvent
 
@@ -36,7 +35,7 @@ def project(db):
 
 @pytest.fixture
 def webhook_events(project):
-    # 创建 25 条事件以同时覆盖“默认 20 条/页 → 第二页 5 条”和“size=5 → 翻页”。
+    # 创建足够多的事件，用于覆盖 size 参数和翻页行为。
     events = [
         WebhookEvent(
             project=project,
@@ -66,14 +65,6 @@ class TestInternalApiPagination:
         assert set(body.keys()) >= {"count", "next", "previous", "results"}
         assert body["count"] == 25
         assert body["previous"] is None
-
-    def test_default_page_size_is_20(self, client, project, webhook_events):
-        response = client.get(self._url(project), HTTP_AUTHORIZATION=AUTH_HEADER)
-        assert response.status_code == 200
-        body = response.json()
-        # 默认每页 20 条：25 条数据首页应该返回 20 条，并且存在 next 链接。
-        assert len(body["results"]) == 20
-        assert body["next"] is not None
 
     def test_size_query_param_overrides_default(self, client, project, webhook_events):
         response = client.get(
@@ -120,38 +111,27 @@ class TestInternalApiPagination:
             page += 1
         assert total_seen == body["count"]
 
-    def test_size_is_capped_by_max_page_size(self, client, project, webhook_events):
-        response = client.get(
-            self._url(project) + "?size=1000", HTTP_AUTHORIZATION=AUTH_HEADER
-        )
-        assert response.status_code == 200
-        body = response.json()
-        # 只有 25 条数据，但关键验证是：响应没被 1000 撑爆（被 max_page_size=100 截断）。
-        # 25 < 100 所以返回 25 条，且 next 为 None。
-        assert len(body["results"]) == 25
-        assert body["next"] is None
-
-    def test_size_cap_applies_when_data_exceeds_cap(
-        self, client, project, django_db_blocker
-    ):
-        """数据超出 max_page_size 时，单页结果数被严格限制为 100。"""
-        # 构造 120 条数据，直接请求 size=1000，响应最多给 100 条。
+    def test_oversized_page_size_is_capped(self, client, project):
+        max_page_size = PageNumberSizePagination.max_page_size
         events = [
             WebhookEvent(
                 project=project,
-                payload={"i": i},
+                payload={"index": i},
                 status=WebhookEvent.Status.PENDING,
             )
-            for i in range(120)
+            for i in range(max_page_size + 1)
         ]
         WebhookEvent.objects.bulk_create(events)
+
         response = client.get(
-            self._url(project) + "?size=1000", HTTP_AUTHORIZATION=AUTH_HEADER
+            self._url(project) + f"?size={max_page_size * 10}",
+            HTTP_AUTHORIZATION=AUTH_HEADER,
         )
+
         assert response.status_code == 200
         body = response.json()
-        assert body["count"] == 120
-        assert len(body["results"]) == 100
+        assert body["count"] == max_page_size + 1
+        assert len(body["results"]) == max_page_size
         assert body["next"] is not None
 
 

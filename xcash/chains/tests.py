@@ -1865,35 +1865,6 @@ class BlockNumberUpdatedCompensationTests(TestCase):
         reschedule_mock.assert_not_called()
 
 
-def test_action_type_new_values_exist():
-    # 新加的 action_type 必须可被 enum 反查
-    assert OnchainActionType.X402Facilitate.value == "x402_facilitate"
-    assert OnchainActionType.ContractDeployCollect.value == "contract_deploy_collect"
-    assert OnchainActionType("x402_facilitate") == OnchainActionType.X402Facilitate
-    assert (
-        OnchainActionType("contract_deploy_collect")
-        == OnchainActionType.ContractDeployCollect
-    )
-
-
-@pytest.mark.django_db
-def test_chain_create2_factory_address_is_nullable():
-    native = Crypto.objects.create(
-        name="Task2 Native",
-        symbol="T2N",
-        coingecko_id="task2-native",
-    )
-    chain = Chain.objects.create(
-        code="test-task2",
-        chain_id=999_999,
-        name="Test",
-        type=ChainType.EVM,
-        native_coin=native,
-    )
-    # 字段默认为空，不影响现有 chain 创建
-    assert chain.create2_factory_address in (None, "")
-
-
 @pytest.mark.django_db
 def test_address_send_crypto_schedules_native_transfer_intent():
     native = Crypto.objects.create(

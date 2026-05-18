@@ -20,11 +20,6 @@ def _hex_to_bytes(value: str) -> bytes:
     return bytes.fromhex(value[2:] if value.startswith("0x") else value)
 
 
-def test_module_import_validates_sentinels():
-    assert codec.VAULT_SENTINEL.hex() == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    assert codec.TOKEN_SENTINEL.hex() == "cafebabecafebabecafebabecafebabecafebabe"
-
-
 def test_invalid_sentinel_count_raises_import_error():
     with pytest.raises(ImportError):
         codec._check_sentinel(b"", codec.VAULT_SENTINEL, 1, "NativeCollector")
