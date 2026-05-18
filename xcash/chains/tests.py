@@ -10,6 +10,7 @@ import pytest
 from django.core import checks
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
+from django.db import transaction
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.test import override_settings
@@ -70,6 +71,56 @@ class ChainPoaDetectionTests(SimpleTestCase):
             Chain._detect_poa,
         )
         self.assertTrue(detect_poa(chain))
+
+
+class ChainTypeConstraintTests(TestCase):
+    def test_non_evm_chain_type_is_unique_but_evm_can_have_multiple_chains(self):
+        native = Crypto.objects.create(
+            name="Chain Type Constraint Native",
+            symbol="CTCN",
+            coingecko_id="chain-type-constraint-native",
+        )
+        Chain.objects.bulk_create(
+            [
+                Chain(
+                    name="Chain Type Constraint ETH",
+                    code="ctc-eth",
+                    type=ChainType.EVM,
+                    native_coin=native,
+                    chain_id=940001,
+                ),
+                Chain(
+                    name="Chain Type Constraint BSC",
+                    code="ctc-bsc",
+                    type=ChainType.EVM,
+                    native_coin=native,
+                    chain_id=940002,
+                ),
+            ]
+        )
+
+        Chain.objects.bulk_create(
+            [
+                Chain(
+                    name="Chain Type Constraint Tron",
+                    code="ctc-tron",
+                    type=ChainType.TRON,
+                    native_coin=native,
+                )
+            ]
+        )
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Chain.objects.bulk_create(
+                [
+                    Chain(
+                        name="Chain Type Constraint Tron Duplicate",
+                        code="ctc-tron-duplicate",
+                        type=ChainType.TRON,
+                        native_coin=native,
+                    )
+                ]
+            )
 
 
 class TransferMatchingTests(TestCase):

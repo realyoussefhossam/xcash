@@ -105,6 +105,13 @@ class Chain(models.Model):
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("type",),
+                condition=~models.Q(type=ChainType.EVM),
+                name="uniq_chain_type_for_non_evm",
+            ),
+        ]
         verbose_name = _("链")
         verbose_name_plural = _("链")
 
