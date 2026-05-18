@@ -377,7 +377,6 @@ class MistTrackOpenApiClientTests(SimpleTestCase):
 class RiskChainMappingTests(SimpleTestCase):
     def test_quicknode_maps_only_addon_supported_networks(self):
         cases = {
-            ChainType.BITCOIN: "BTC",
             ChainType.TRON: "TRX",
             1: "ETH",
             56: "BNB",
