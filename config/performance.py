@@ -16,8 +16,6 @@ class PerformanceProfile:
     celery_worker_concurrency: int
     evm_scan_seconds: int
     tron_scan_seconds: int
-    bitcoin_scan_seconds: int
-    bitcoin_watch_sync_seconds: int
 
 
 PROFILES = {
@@ -28,8 +26,6 @@ PROFILES = {
         celery_worker_concurrency=2,
         evm_scan_seconds=16,
         tron_scan_seconds=16,
-        bitcoin_scan_seconds=60,
-        bitcoin_watch_sync_seconds=600,
     ),
     "medium": PerformanceProfile(
         django_workers=4,
@@ -38,8 +34,6 @@ PROFILES = {
         celery_worker_concurrency=8,
         evm_scan_seconds=10,
         tron_scan_seconds=10,
-        bitcoin_scan_seconds=45,
-        bitcoin_watch_sync_seconds=300,
     ),
     "high": PerformanceProfile(
         django_workers=8,
@@ -48,8 +42,6 @@ PROFILES = {
         celery_worker_concurrency=16,
         evm_scan_seconds=6,
         tron_scan_seconds=6,
-        bitcoin_scan_seconds=30,
-        bitcoin_watch_sync_seconds=180,
     ),
 }
 

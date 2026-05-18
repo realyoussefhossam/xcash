@@ -423,7 +423,6 @@ CELERY_TASK_ROUTES = {
     "evm.tasks.scan_active_evm_native_chains": {"queue": "scan"},
     "tron.tasks.scan_tron_chain": {"queue": "scan"},
     "tron.tasks.scan_active_tron_chains": {"queue": "scan"},
-    "bitcoin.tasks.scan_bitcoin_receipts": {"queue": "scan"},
     "stress.tasks.prepare_stress": {"queue": "stress"},
     "stress.tasks.execute_stress_case": {"queue": "stress"},
     "stress.tasks.execute_withdrawal_case": {"queue": "stress"},

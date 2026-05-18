@@ -57,14 +57,6 @@ TRON_SCAN_SCHEDULE_SECONDS = get_int(
     "CELERY_TRON_SCAN_SCHEDULE_SECONDS",
     "tron_scan_seconds",
 )
-BITCOIN_SCAN_SCHEDULE_SECONDS = get_int(
-    "CELERY_BITCOIN_SCAN_SCHEDULE_SECONDS",
-    "bitcoin_scan_seconds",
-)
-BITCOIN_WATCH_SYNC_SCHEDULE_SECONDS = get_int(
-    "CELERY_BITCOIN_WATCH_SYNC_SCHEDULE_SECONDS",
-    "bitcoin_watch_sync_seconds",
-)
 INVOICE_EXPIRED_SCHEDULE_SECONDS = get_int_default(
     "CELERY_INVOICE_EXPIRED_SCHEDULE_SECONDS",
     60,
@@ -159,23 +151,6 @@ tron_tasks = {
 }
 
 # ---------------------------
-# bitcoin app
-# ---------------------------
-bitcoin_tasks = {
-    "scan_bitcoin_receipts": {
-        # BTC 首版改为内部区块扫描，不再依赖外部流服务商回调。
-        "task": "bitcoin.tasks.scan_bitcoin_receipts",
-        "schedule": BITCOIN_SCAN_SCHEDULE_SECONDS,
-    },
-    "sync_bitcoin_watch_addresses": {
-        # 定期全量同步 watch-only 地址到 Bitcoin 节点钱包，
-        # 确保换节点或节点重建后自动恢复，无需手动干预。
-        "task": "bitcoin.tasks.sync_bitcoin_watch_addresses",
-        "schedule": BITCOIN_WATCH_SYNC_SCHEDULE_SECONDS,
-    },
-}
-
-# ---------------------------
 # invoices app
 # ---------------------------
 invoices_tasks = {
@@ -215,7 +190,6 @@ app.conf.beat_schedule = {
     **deposits_tasks,
     **evm_tasks,
     **tron_tasks,
-    **bitcoin_tasks,
     **currencies_tasks,
     **celery_internal_tasks,
     **invoices_tasks,

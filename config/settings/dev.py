@@ -89,10 +89,9 @@ STRESS_EVM_RPC_URL = "http://localhost:8545"
 STRESS_EVM_PRIVATE_KEY = (
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 )
-STRESS_BTC_RPC_URL = "http://xcash:xcash@localhost:18443"
 STRESS_WEBHOOK_BASE_URL = "http://localhost:8000"
-# 压力测试允许的链代码；EVM 走 Ethereum Local，BTC 走 Bitcoin Local，非本地链无法支付
-STRESS_ALLOWED_CHAINS = ["ethereum-local", "bitcoin-local"]
+# 压力测试允许的链代码；EVM 走 Ethereum Local，非本地链无法支付
+STRESS_ALLOWED_CHAINS = ["ethereum-local"]
 
 # 本地压测会以匿名方式高并发访问公开接口，沿用基础配置的 256/minute 很容易在建单阶段触发 429。
 # 仅开发环境放宽匿名限流，生产仍继续使用 base.py 中的保守默认值。

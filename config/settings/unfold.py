@@ -251,13 +251,6 @@ SIDEBAR_UNFOLD = {
                         "link": reverse_lazy("admin:evm_evmscancursor_changelist"),
                     },
                     {
-                        "title": _("Bitcoin 扫描游标"),
-                        "icon": "track_changes",
-                        "link": reverse_lazy(
-                            "admin:bitcoin_bitcoinscancursor_changelist"
-                        ),
-                    },
-                    {
                         "title": _("Tron 扫描游标"),
                         "icon": "radar",
                         "link": reverse_lazy("admin:tron_tronwatchcursor_changelist"),
