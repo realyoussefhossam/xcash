@@ -380,8 +380,6 @@ class RiskMarkingService:
 
     @staticmethod
     def _quicknode_misttrack_chain(chain: Chain) -> str:
-        if chain.type == ChainType.BITCOIN:
-            return "BTC"
         if chain.type == ChainType.TRON:
             return "TRX"
         if chain.type == ChainType.EVM and chain.chain_id in QUICKNODE_EVM_CHAIN:
@@ -393,8 +391,6 @@ class RiskMarkingService:
     @staticmethod
     def _misttrack_openapi_coin(*, chain: Chain, crypto: Crypto) -> str:
         symbol = crypto.symbol.upper()
-        if chain.type == ChainType.BITCOIN and symbol == "BTC":
-            return "BTC"
         if chain.type == ChainType.TRON and symbol in OPENAPI_TRON_COIN:
             return OPENAPI_TRON_COIN[symbol]
         if chain.type == ChainType.EVM:

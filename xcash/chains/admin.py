@@ -73,16 +73,6 @@ class ChainAdmin(ModelAdmin):
             },
         ),
     )
-    bitcoin_fieldsets = (
-        (
-            "Bitcoin",
-            {
-                "fields": (
-                    "rpc",
-                )
-            },
-        ),
-    )
     tron_fieldsets = (
         (
             "Tron",
@@ -105,8 +95,6 @@ class ChainAdmin(ModelAdmin):
             )
         if obj.type == ChainType.EVM:
             return (*self.base_fieldsets, *self.evm_fieldsets)
-        if obj.type == ChainType.BITCOIN:
-            return (*self.base_fieldsets, *self.bitcoin_fieldsets)
         if obj.type == ChainType.TRON:
             return (*self.base_fieldsets, *self.tron_fieldsets)
         return self.base_fieldsets

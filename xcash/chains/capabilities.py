@@ -8,7 +8,7 @@ class ChainProductCapabilityService:
     """集中维护链类型在各产品入口中的能力边界。"""
 
     INVOICE_RECIPIENT_CHAIN_TYPES = frozenset(
-        {ChainType.EVM, ChainType.BITCOIN, ChainType.TRON}
+        {ChainType.EVM, ChainType.TRON}
     )
     COLLECTION_RECIPIENT_CHAIN_TYPES = frozenset({ChainType.EVM})
     DEPOSIT_CHAIN_TYPES = frozenset({ChainType.EVM})

@@ -7,7 +7,6 @@ from web3 import Web3
 
 from common.consts import LENGTH_OF_EVM_HASH
 from common.consts import UPPER_ALPHABET
-from common.utils.bitcoin import is_valid_bitcoin_address
 from tron.codec import TronAddressCodec
 
 
@@ -17,7 +16,7 @@ class HashField(models.CharField):
         kwargs.setdefault("unique", True)
         kwargs.setdefault("db_index", True)
         kwargs.setdefault("verbose_name", _("哈希"))
-        # 覆盖当前支持链哈希最大长度：EVM=66，Bitcoin=64。
+        # 覆盖当前支持链哈希最大长度：EVM=66。
         # 统一设为 100，留有余量，不依赖调用方传入
         kwargs.setdefault("max_length", 100)
 
@@ -27,12 +26,7 @@ class HashField(models.CharField):
         value = getattr(model_instance, self.attname)
 
         # 当前系统仅接受真实链上交易哈希，转账明细唯一性统一由业务字段单独表达。
-        if value is not None and not any(
-            (
-                is_valid_evm_256bit_hex_string(value),
-                is_valid_bitcoin_256bit_hex_string(value),
-            )
-        ):
+        if value is not None and not is_valid_evm_256bit_hex_string(value):
             msg = f"{value} is not a valid blockchain hash"
             raise ValueError(msg)
 
@@ -66,18 +60,17 @@ class EvmAddressField(models.CharField):
 class AddressField(models.CharField):
     def __init__(self, *args, **kwargs):
         kwargs["db_index"] = True
-        # 覆盖当前支持链地址最大长度：EVM=42, Bitcoin bech32/taproot 可更长。
+        # 覆盖当前支持链地址最大长度：EVM=42。
         kwargs.setdefault("max_length", 100)
 
         super().__init__(*args, **kwargs)
 
     def pre_save(self, model_instance, add):
         value = getattr(model_instance, self.attname)
-        # 依次匹配当前支持链地址格式：EVM checksum / Bitcoin。
+        # 匹配当前支持链地址格式：EVM checksum / Tron base58。
         if value and not any(
             (
                 Web3.is_checksum_address(value),
-                is_valid_bitcoin_address(value),
                 TronAddressCodec.is_valid_base58(value),
             )
         ):
@@ -96,14 +89,6 @@ def is_valid_evm_256bit_hex_string(s: str) -> bool:
 
     hex_digits = set("0123456789abcdefABCDEF")
     return all(c in hex_digits for c in s[2:])
-
-
-def is_valid_bitcoin_256bit_hex_string(s: str) -> bool:
-    if len(s) != 64:
-        return False
-
-    hex_digits = set("0123456789abcdefABCDEF")
-    return all(c in hex_digits for c in s)
 
 
 class SysNoField(ShortUUIDField):

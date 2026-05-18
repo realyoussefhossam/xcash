@@ -6,11 +6,8 @@ from bip_utils import Bip39SeedGenerator
 from bip_utils import Bip44
 from bip_utils import Bip44Changes
 from bip_utils import Bip44Coins
-from bip_utils import Bip84
-from bip_utils import Bip84Coins
 from web3 import Web3
 
-from bitcoin.network import get_active_bitcoin_network
 from chains.models import ChainType
 from chains.signer import EvmSignedPayload
 from chains.signer import SignerAdminSummary
@@ -67,15 +64,7 @@ class TestRemoteSignerBackend:
     def _coin(chain_type: str) -> Bip44Coins:
         if chain_type == ChainType.EVM:
             return Bip44Coins.ETHEREUM
-        if chain_type == ChainType.BITCOIN:
-            return get_active_bitcoin_network().bip44_coin
         raise NotImplementedError(f"unsupported chain_type={chain_type}")
-
-    @staticmethod
-    def _bip84_coin(chain_type: str) -> Bip84Coins:
-        if chain_type == ChainType.BITCOIN:
-            return get_active_bitcoin_network().bip84_coin
-        raise NotImplementedError(f"BIP84 不支持 chain_type={chain_type}")
 
     def _wallet_passphrase(self, *, wallet_id: int) -> str:
         # 真实 signer 是“每个钱包一份独立密钥材料”；测试假体用 run salt + wallet slot 模拟这个边界，
@@ -89,21 +78,10 @@ class TestRemoteSignerBackend:
         """派生 HD 钱包完整叶子节点，与 signer 保持一致。
 
         EVM: BIP44 路径 m/44'/coin'/bip44_account'/0/address_index
-        Bitcoin: BIP84 路径 m/84'/coin'/bip44_account'/0/address_index
         """
         seed_bytes = Bip39SeedGenerator(TEST_SIGNER_MNEMONIC).Generate(
             self._wallet_passphrase(wallet_id=wallet_id)
         )
-
-        if chain_type == ChainType.BITCOIN:
-            return (
-                Bip84.FromSeed(seed_bytes, self._bip84_coin(chain_type))
-                .Purpose()
-                .Coin()
-                .Account(bip44_account)
-                .Change(Bip44Changes.CHAIN_EXT)
-                .AddressIndex(address_index)
-            )
 
         return (
             Bip44.FromSeed(seed_bytes, self._coin(chain_type))

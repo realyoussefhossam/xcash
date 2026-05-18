@@ -179,7 +179,7 @@ class RecipientAddress(models.Model):
     chain_type = models.CharField(
         _("地址格式"),
         choices=ChainType,
-        help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Bitcoin: Bitcoin",
+        help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Tron: Tron",
     )
     address = AddressField(verbose_name=_("收币地址"))
     usage = models.CharField(
@@ -214,28 +214,8 @@ class RecipientAddress(models.Model):
 
     def save(self, *args, **kwargs):
         # 收币地址的链上发现完全由内部扫描器负责；模型层只保留数据校验，不再派发外部订阅同步。
-        previous = None
-        if self.pk is not None:
-            previous = (
-                RecipientAddress.objects.filter(pk=self.pk)
-                .values("chain_type", "address")
-                .first()
-            )
         self.full_clean()
-        result = super().save(*args, **kwargs)
-
-        should_schedule_sync = self.chain_type == ChainType.BITCOIN and (
-            previous is None
-            or previous["chain_type"] != self.chain_type
-            or previous["address"] != self.address
-        )
-        if should_schedule_sync:
-            from bitcoin.watch_sync import schedule_watch_address_sync_on_commit
-
-            # 管理后台保存项目 BTC 收款地址后，提交事务即可把 watch-only 同步到节点钱包。
-            schedule_watch_address_sync_on_commit()
-
-        return result
+        return super().save(*args, **kwargs)
 
     def clean(self) -> None:
         """按用途校验项目收币地址允许进入的链类型。"""
@@ -249,7 +229,7 @@ class RecipientAddress(models.Model):
             allowed_chain_types = (
                 ChainProductCapabilityService.INVOICE_RECIPIENT_CHAIN_TYPES
             )
-            error_message = _("当前版本支付地址仅支持 EVM / Bitcoin / Tron。")
+            error_message = _("当前版本支付地址仅支持 EVM / Tron。")
         elif self.usage == RecipientAddressUsage.DEPOSIT_COLLECTION:
             allowed_chain_types = (
                 ChainProductCapabilityService.COLLECTION_RECIPIENT_CHAIN_TYPES

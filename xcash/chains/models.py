@@ -109,8 +109,8 @@ class Chain(models.Model):
         verbose_name = _("链")
         verbose_name_plural = _("链")
 
-    # 当前产品允许创建 EVM / Bitcoin / Tron 三类链。
-    PRODUCT_ENABLED_TYPES = (ChainType.EVM, ChainType.BITCOIN, ChainType.TRON)
+    # 当前产品允许创建 EVM / Tron 两类链。
+    PRODUCT_ENABLED_TYPES = (ChainType.EVM, ChainType.TRON)
 
     def __str__(self):
         return self.name
@@ -189,7 +189,7 @@ class Chain(models.Model):
         super().clean()
         if self.type and self.type not in self.PRODUCT_ENABLED_TYPES:
             raise ValidationError(
-                {"type": _("当前版本仅支持创建 EVM / Bitcoin / Tron 链。")}
+                {"type": _("当前版本仅支持创建 EVM / Tron 链。")}
             )
 
     def _detect_chain_id(self) -> int | None:
@@ -272,10 +272,6 @@ class Chain(models.Model):
     def get_latest_block_number(self) -> int:
         if self.type == ChainType.EVM:
             return self.w3.eth.block_number
-        if self.type == ChainType.BITCOIN:
-            from bitcoin.rpc import BitcoinRpcClient
-
-            return BitcoinRpcClient(self.rpc).get_block_count()
         if self.type == ChainType.TRON:
             # Tron 区块轮询尚未接入专用 RPC 适配器。
             # 过渡期对公共 update_latest_block 仅返回数据库中已知高度，

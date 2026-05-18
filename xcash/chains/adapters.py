@@ -89,10 +89,6 @@ class AdapterFactory:
             from evm.adapter import EvmAdapter
 
             return EvmAdapter()
-        if chain_type == "btc":
-            from bitcoin.adapter import BitcoinAdapter
-
-            return BitcoinAdapter()
         if chain_type == "tron":
             from tron.adapter import TronAdapter
 
