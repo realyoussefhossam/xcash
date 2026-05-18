@@ -10,4 +10,3 @@ ENV_FILE="${ENV_FILE:-.env}"
 ENV_FILE="${ENV_FILE}" /Users/void/PycharmProjects/xcash/scripts/dev-signer-e2e.sh
 ENV_FILE="${ENV_FILE}" /Users/void/PycharmProjects/xcash/scripts/dev-manage.sh migrate
 ENV_FILE="${ENV_FILE}" /Users/void/PycharmProjects/xcash/scripts/dev-manage.sh init_local_chains
-ENV_FILE="${ENV_FILE}" /Users/void/PycharmProjects/xcash/scripts/dev-manage.sh prepare_local_bitcoin
