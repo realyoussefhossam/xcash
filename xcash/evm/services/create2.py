@@ -16,6 +16,7 @@ from evm.intents import compute_create2_address
 from evm.models import ContractDeployCollection
 from evm.models import ContractDeployCollectionStatus
 from evm.models import EvmBroadcastTask
+from evm.services.idempotency import lock_evm_idempotency_key
 
 if TYPE_CHECKING:
     from currencies.models import Crypto
@@ -62,6 +63,41 @@ class ContractDeployCollectionService:
             salt=salt,
             init_code_hash=collector_init_code_hash,
         )
+
+        lock_evm_idempotency_key(
+            namespace="create2",
+            key=f"{chain.pk}:{factory_address}:{salt.hex()}",
+        )
+
+        existing = (
+            ContractDeployCollection.objects.select_for_update()
+            .filter(
+                chain=chain,
+                factory_address=factory_address,
+                salt=salt,
+            )
+            .exclude(
+                status__in=(
+                    ContractDeployCollectionStatus.FAILED,
+                    ContractDeployCollectionStatus.DROPPED,
+                ),
+            )
+            .first()
+        )
+        if existing is not None:
+            if (
+                existing.crypto_id == crypto.pk
+                and existing.deployer_address_id == deployer.pk
+                and Web3.to_checksum_address(existing.collector_address)
+                == collector_address
+                and Web3.to_checksum_address(existing.vault_address) == vault_checksum
+                and bytes(existing.collector_init_code_hash)
+                == bytes(collector_init_code_hash)
+                and int(existing.expected_collect_value_raw)
+                == int(expected_collect_value_raw)
+            ):
+                return ContractDeployCollectionCreateResult(collection=existing)
+            raise ValueError("CREATE2 collection conflict")
 
         collection = ContractDeployCollection.objects.create(
             chain=chain,

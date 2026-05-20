@@ -611,6 +611,24 @@ class X402Facilitation(UndeletableModel):
     updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=(
+                    "chain",
+                    "crypto",
+                    "authorization_from_address",
+                    "authorization_nonce",
+                ),
+                condition=models.Q(
+                    status__in=[
+                        X402FacilitationStatus.CREATED,
+                        X402FacilitationStatus.BROADCASTED,
+                        X402FacilitationStatus.CONFIRMED,
+                    ],
+                ),
+                name="uniq_active_x402_authorization_nonce",
+            ),
+        ]
         verbose_name = _("x402 代付")
         verbose_name_plural = verbose_name
 
@@ -674,6 +692,32 @@ class ContractDeployCollection(UndeletableModel):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("chain", "factory_address", "salt"),
+                condition=models.Q(
+                    status__in=[
+                        ContractDeployCollectionStatus.CREATED,
+                        ContractDeployCollectionStatus.BROADCASTED,
+                        ContractDeployCollectionStatus.CONFIRMED,
+                    ],
+                ),
+                name="uniq_active_create2_chain_factory_salt",
+            ),
+            models.UniqueConstraint(
+                fields=("chain", "collector_address"),
+                condition=models.Q(
+                    status__in=[
+                        ContractDeployCollectionStatus.CREATED,
+                        ContractDeployCollectionStatus.BROADCASTED,
+                        ContractDeployCollectionStatus.CONFIRMED,
+                    ],
+                ),
+                name="uniq_active_create2_chain_collector",
+            ),
+        ]
 
     def clean(self):
         super().clean()
