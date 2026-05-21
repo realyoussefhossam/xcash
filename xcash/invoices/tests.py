@@ -17,6 +17,7 @@ from django.test import TransactionTestCase
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from eth_utils import keccak
 from rest_framework.test import APIRequestFactory
 from web3 import Web3
 
@@ -1641,3 +1642,119 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         field = InvoicePaySlot._meta.get_field("recipient_address")
         self.assertTrue(field.null)
         self.assertTrue(field.blank)
+
+
+class AllocateContractSlotTest(TestCase, InvoiceTestMixin):
+    def setUp(self):
+        self.setup_base_fixtures(
+            username="contract-slot-merchant",
+            project_name="ContractSlotProject",
+            crypto_symbol="USDTCAS",
+            chain_code="eth-contract-slot",
+            chain_id=8801,
+        )
+        self.chain.create2_factory_address = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000ab"
+        )
+        self.chain.save(update_fields=["create2_factory_address"])
+        ChainToken.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000c0"
+            ),
+        )
+        self.invoice = self.create_test_invoice(
+            out_no="contract-slot-order",
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            amount=Decimal("100"),
+        )
+
+    def test_first_allocation_derives_collector_from_salt(self):
+        from evm.contracts_codec import predict_collector_address
+
+        crypto_amount = Decimal("100")
+
+        pay_address, recipient_address, pay_amount = (
+            self.invoice._allocate_contract_slot(
+                self.crypto,
+                self.chain,
+                crypto_amount,
+            )
+        )
+
+        expected_salt = keccak(
+            self.invoice.sys_no.encode()
+            + self.chain.code.encode()
+            + self.crypto.symbol.encode()
+        )[:32]
+        expected_collector = predict_collector_address(
+            factory=self.chain.create2_factory_address,
+            salt=expected_salt,
+            to=self.recipient_address,
+            token=self.crypto.address(self.chain) or None,
+        )
+        self.assertEqual(pay_address, expected_collector)
+        self.assertEqual(recipient_address, self.recipient_address)
+        self.assertEqual(pay_amount, crypto_amount)
+
+    def test_reuse_historical_pay_slot_when_existing(self):
+        first_pay, first_recipient, _ = self.invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("100"),
+        )
+        InvoicePaySlot.objects.create(
+            invoice=self.invoice,
+            project=self.invoice.project,
+            version=1,
+            crypto=self.crypto,
+            chain=self.chain,
+            pay_address=first_pay,
+            pay_amount=Decimal("100"),
+            recipient_address=first_recipient,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            status=InvoicePaySlotStatus.DISCARDED,
+        )
+        RecipientAddress.objects.filter(
+            project=self.project,
+            chain_type=ChainType.EVM,
+            usage=RecipientAddressUsage.INVOICE,
+        ).delete()
+        new_recipient = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000066"
+        )
+        RecipientAddress.objects.create(
+            name="New Contract Recipient",
+            project=self.project,
+            chain_type=ChainType.EVM,
+            address=new_recipient,
+            usage=RecipientAddressUsage.INVOICE,
+        )
+
+        pay_address, recipient_address, pay_amount = (
+            self.invoice._allocate_contract_slot(
+                self.crypto,
+                self.chain,
+                Decimal("100"),
+            )
+        )
+
+        self.assertEqual(pay_address, first_pay)
+        self.assertEqual(recipient_address, first_recipient)
+        self.assertEqual(pay_amount, Decimal("100"))
+        self.assertNotEqual(recipient_address, new_recipient)
+
+    def test_raises_when_no_invoice_recipient(self):
+        RecipientAddress.objects.filter(
+            project=self.project,
+            chain_type=ChainType.EVM,
+            usage=RecipientAddressUsage.INVOICE,
+        ).delete()
+
+        with self.assertRaises(Invoice.InvoiceAllocationError):
+            self.invoice._allocate_contract_slot(
+                self.crypto,
+                self.chain,
+                Decimal("100"),
+            )

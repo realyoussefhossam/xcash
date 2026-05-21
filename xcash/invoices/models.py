@@ -10,6 +10,7 @@ from django.db import transaction as db_transaction
 from django.db.models import Max
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from eth_utils import keccak
 
 logger = structlog.get_logger()
 
@@ -246,6 +247,51 @@ class Invoice(models.Model):
             )
             raise self.InvoiceAllocationError(detail)
         return pay_address, pay_amount
+
+    def _allocate_contract_slot(
+        self,
+        crypto: "Crypto",
+        chain: "Chain",
+        crypto_amount: Decimal,
+    ) -> tuple[str, str, Decimal]:
+        """合约账单:派生 CREATE2 collector 地址并锁定 recipient 地址。
+
+        同一账单切换回相同 chain+crypto 时优先复用历史 PaySlot,避免商户后续
+        修改 INVOICE 收款地址导致 collector 地址漂移。
+        """
+        from evm.contracts_codec import predict_collector_address
+
+        historical = (
+            self.pay_slots.filter(
+                billing_mode=InvoiceBillingMode.CONTRACT,
+                crypto=crypto,
+                chain=chain,
+            )
+            .order_by("-version", "-created_at", "-pk")
+            .first()
+        )
+        if historical is not None and historical.recipient_address:
+            return historical.pay_address, historical.recipient_address, crypto_amount
+
+        recipient = ProjectService.primary_invoice_recipient(
+            project=self.project,
+            chain_type=chain.type,
+        )
+        if recipient is None:
+            raise self.InvoiceAllocationError(
+                f"no INVOICE recipient on {chain.type} for project={self.project_id}"
+            )
+
+        salt = keccak(
+            self.sys_no.encode() + chain.code.encode() + crypto.symbol.encode()
+        )[:32]
+        collector_address = predict_collector_address(
+            factory=chain.create2_factory_address,
+            salt=salt,
+            to=recipient.address,
+            token=crypto.address(chain) or None,
+        )
+        return collector_address, recipient.address, crypto_amount
 
     @db_transaction.atomic
     def select_method(self, crypto: "Crypto", chain: "Chain"):
