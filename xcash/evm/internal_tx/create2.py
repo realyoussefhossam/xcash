@@ -39,7 +39,7 @@ def create2_matcher(
             log,
             token=collection.crypto.address(chain),
             from_address=collection.collector_address,
-            to_address=collection.vault_address,
+            to_address=collection.recipient_address,
             value=expected_value,
         )
     ]
@@ -49,7 +49,7 @@ def create2_matcher(
     return MatchedTransferFact(
         event_id=f"erc20:{normalize_log_index(log['logIndex'])}",
         from_address=collection.collector_address,
-        to_address=collection.vault_address,
+        to_address=collection.recipient_address,
         crypto=collection.crypto,
         value=expected_value,
         amount=expected_value.scaleb(-decimals),

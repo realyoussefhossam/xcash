@@ -527,20 +527,20 @@ class Create2InternalLifecycleTests(TestCase):
         chain.save(update_fields=["create2_factory_address"])
         crypto = make_erc20_token(chain=chain, address_suffix="cd", decimals=6)
         deployer = make_evm_system_address(suffix="d4", usage=AddressUsage.Vault)
-        vault_address = Web3.to_checksum_address("0x" + "44" * 20)
+        recipient_address = Web3.to_checksum_address("0x" + "44" * 20)
         value_raw = 1_000_000
         result = ContractDeployCollectionService.create_and_schedule(
             deployer=deployer,
             chain=chain,
             crypto=crypto,
             salt=b"\x01" * 32,
-            vault_address=vault_address,
+            recipient_address=recipient_address,
             expected_collect_value_raw=value_raw,
             gas=200_000,
         )
         collection = result.collection
         assert collection.collector_init_code_hash == collector_init_code_hash(
-            to=vault_address,
+            to=recipient_address,
             token=crypto.address(chain),
         )
         base_task = collection.broadcast_task
@@ -554,7 +554,7 @@ class Create2InternalLifecycleTests(TestCase):
                 _erc20_transfer_log(
                     token=crypto.address(chain),
                     from_addr=collection.collector_address,
-                    to_addr=collection.vault_address,
+                    to_addr=collection.recipient_address,
                     value_raw=value_raw,
                     log_index=7,
                 )
@@ -585,13 +585,13 @@ class Create2InternalLifecycleTests(TestCase):
         chain.save(update_fields=["create2_factory_address"])
         crypto = make_erc20_token(chain=chain, address_suffix="ce", decimals=6)
         deployer = make_evm_system_address(suffix="d5", usage=AddressUsage.Vault)
-        vault_address = Web3.to_checksum_address("0x" + "45" * 20)
+        recipient_address = Web3.to_checksum_address("0x" + "45" * 20)
         result = ContractDeployCollectionService.create_and_schedule(
             deployer=deployer,
             chain=chain,
             crypto=crypto,
             salt=b"\x02" * 32,
-            vault_address=vault_address,
+            recipient_address=recipient_address,
             expected_collect_value_raw=1_000_000,
             gas=200_000,
         )
@@ -605,7 +605,7 @@ class Create2InternalLifecycleTests(TestCase):
             event_id="erc20:8",
             crypto=crypto,
             from_address=collection.collector_address,
-            to_address=collection.vault_address,
+            to_address=collection.recipient_address,
             value=Decimal("1000000"),
             amount=Decimal("1"),
             timestamp=1_700_000_000,
@@ -633,7 +633,7 @@ class Create2InternalLifecycleTests(TestCase):
             chain=chain,
             crypto=crypto,
             salt=b"\x03" * 32,
-            vault_address=Web3.to_checksum_address("0x" + "46" * 20),
+            recipient_address=Web3.to_checksum_address("0x" + "46" * 20),
             expected_collect_value_raw=1_000_000,
             gas=200_000,
         )
@@ -646,7 +646,7 @@ class Create2InternalLifecycleTests(TestCase):
             event_id="erc20:9",
             crypto=crypto,
             from_address=collection.collector_address,
-            to_address=collection.vault_address,
+            to_address=collection.recipient_address,
             value=Decimal("1000000"),
             amount=Decimal("1"),
             timestamp=1_700_000_000,

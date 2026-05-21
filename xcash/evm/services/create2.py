@@ -37,7 +37,7 @@ class ContractDeployCollectionService:
         chain: Chain,
         crypto: Crypto,
         salt: bytes,
-        vault_address: str,
+        recipient_address: str,
         expected_collect_value_raw: int,
         gas: int,
     ) -> ContractDeployCollectionCreateResult:
@@ -51,10 +51,10 @@ class ContractDeployCollectionService:
             raise ValueError(f"Crypto {crypto.symbol} is not deployed on chain {chain.code}")
 
         factory_address = Web3.to_checksum_address(chain.create2_factory_address)
-        vault_checksum = Web3.to_checksum_address(vault_address)
+        recipient_checksum = Web3.to_checksum_address(recipient_address)
         token_address = crypto.address(chain) or None
         collector_init_code = build_collector_init_code(
-            to=vault_checksum,
+            to=recipient_checksum,
             token=token_address,
         )
         collector_init_code_hash = Web3.keccak(collector_init_code)
@@ -91,7 +91,7 @@ class ContractDeployCollectionService:
                 and existing.deployer_address_id == deployer.pk
                 and Web3.to_checksum_address(existing.collector_address)
                 == collector_address
-                and Web3.to_checksum_address(existing.vault_address) == vault_checksum
+                and Web3.to_checksum_address(existing.recipient_address) == recipient_checksum
                 and bytes(existing.collector_init_code_hash)
                 == bytes(collector_init_code_hash)
                 and int(existing.expected_collect_value_raw)
@@ -108,7 +108,7 @@ class ContractDeployCollectionService:
             deployer_address=deployer,
             factory_address=factory_address,
             collector_address=collector_address,
-            vault_address=vault_checksum,
+            recipient_address=recipient_checksum,
             salt=salt,
             collector_init_code_hash=collector_init_code_hash,
             expected_collect_value_raw=expected_collect_value_raw,

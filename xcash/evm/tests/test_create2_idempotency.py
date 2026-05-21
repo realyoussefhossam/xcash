@@ -34,7 +34,7 @@ class Create2IdempotencyTests(TestCase):
             "chain": self.chain,
             "crypto": self.crypto,
             "salt": b"\x95" * 32,
-            "vault_address": self.vault,
+            "recipient_address": self.vault,
             "expected_collect_value_raw": 1_000_000,
             "gas": 200_000,
         }
@@ -47,7 +47,7 @@ class Create2IdempotencyTests(TestCase):
 
         assert second.pk == first.pk
         assert Web3.is_checksum_address(second.factory_address)
-        assert Web3.is_checksum_address(second.vault_address)
+        assert Web3.is_checksum_address(second.recipient_address)
         assert ContractDeployCollection.objects.count() == 1
 
     def test_same_chain_factory_salt_with_different_value_is_rejected(self):
@@ -56,7 +56,7 @@ class Create2IdempotencyTests(TestCase):
             "chain": self.chain,
             "crypto": self.crypto,
             "salt": b"\x96" * 32,
-            "vault_address": self.vault,
+            "recipient_address": self.vault,
             "expected_collect_value_raw": 1_000_000,
             "gas": 200_000,
         }
@@ -72,7 +72,7 @@ class Create2IdempotencyTests(TestCase):
             "chain": self.chain,
             "crypto": self.crypto,
             "salt": b"\x97" * 32,
-            "vault_address": self.vault,
+            "recipient_address": self.vault,
             "expected_collect_value_raw": 1_000_000,
             "gas": 200_000,
         }
@@ -95,7 +95,7 @@ class Create2IdempotencyConcurrencyTests(TransactionTestCase):
             "chain": chain,
             "crypto": crypto,
             "salt": b"\x9a" * 32,
-            "vault_address": Web3.to_checksum_address("0x" + "9b" * 20),
+            "recipient_address": Web3.to_checksum_address("0x" + "9b" * 20),
             "expected_collect_value_raw": 1_000_000,
             "gas": 200_000,
         }

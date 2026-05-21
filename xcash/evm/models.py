@@ -679,7 +679,7 @@ class ContractDeployCollection(UndeletableModel):
     deployer_address = models.ForeignKey("chains.Address", on_delete=models.PROTECT)
     factory_address = EvmAddressField()
     collector_address = EvmAddressField()
-    vault_address = EvmAddressField()
+    recipient_address = EvmAddressField()
     salt = models.BinaryField(max_length=32)
     collector_init_code_hash = models.BinaryField(max_length=32)
     expected_collect_value_raw = models.DecimalField(max_digits=32, decimal_places=0)
