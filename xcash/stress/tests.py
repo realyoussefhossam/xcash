@@ -65,9 +65,15 @@ class StressServiceTests(SimpleTestCase):
     databases = {"default"}
 
     def test_create_invoice_posts_project_available_local_methods(self):
+        from invoices.models import InvoiceBillingMode
+
         project = SimpleNamespace(appid="app-1", hmac_key="secret")
         stress_run = SimpleNamespace(pk=12, project=project)
-        case = SimpleNamespace(sequence=7, stress_run=stress_run)
+        case = SimpleNamespace(
+            sequence=7,
+            stress_run=stress_run,
+            billing_mode=InvoiceBillingMode.DIFFER,
+        )
 
         response = Mock()
         response.status_code = 200
@@ -102,6 +108,41 @@ class StressServiceTests(SimpleTestCase):
         )
         self.assertEqual(payload["out_no"], "STRESS-12-7")
         build_headers_mock.assert_called_once_with(project, body)
+
+    def test_create_invoice_includes_case_billing_mode(self):
+        from invoices.models import InvoiceBillingMode
+
+        project = SimpleNamespace(appid="app-2", hmac_key="secret")
+        stress_run = SimpleNamespace(pk=33, project=project)
+        case = SimpleNamespace(
+            sequence=4,
+            stress_run=stress_run,
+            billing_mode=InvoiceBillingMode.CONTRACT,
+        )
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"sys_no": "INV-CONTRACT"}
+
+        with (
+            patch(
+                "stress.service.Invoice.available_methods",
+                return_value={
+                    "ETH": ["ethereum-local"],
+                    "USDT": ["ethereum-local"],
+                },
+            ),
+            patch.object(
+                StressService,
+                "_build_hmac_headers",
+                return_value={"X-Test": "1"},
+            ),
+            patch("stress.service.httpx.post", return_value=response) as post_mock,
+        ):
+            StressService.create_invoice(case)
+
+        body = post_mock.call_args.kwargs["content"]
+        payload = json.loads(body)
+        self.assertEqual(payload["billing_mode"], InvoiceBillingMode.CONTRACT)
 
     def test_create_invoice_raises_when_project_methods_incomplete(self):
         project = SimpleNamespace(appid="app-1", hmac_key="secret")

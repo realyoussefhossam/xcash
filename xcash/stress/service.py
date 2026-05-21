@@ -229,6 +229,7 @@ class StressService:
                 "amount": amount,
                 "duration": 30,
                 "methods": methods,
+                "billing_mode": case.billing_mode,
             }
         )
 
