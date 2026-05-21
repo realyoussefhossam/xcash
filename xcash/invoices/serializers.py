@@ -7,6 +7,8 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.serializers import Serializer
 
+from chains.models import Chain
+from chains.models import ChainType
 from chains.serializers import TransferSerializer
 from chains.service import ChainService
 from common.consts import APPID_HEADER
@@ -14,12 +16,16 @@ from common.consts import MAX_INVOICE_DURATION
 from common.consts import MIN_INVOICE_DURATION
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
+from core.runtime_settings import get_open_native_scanner
 from common.serializers import StrippedDecimalField
 from currencies.service import CryptoService
 from currencies.service import FiatService
+from projects.models import RecipientAddress
+from projects.models import RecipientAddressUsage
 from projects.service import ProjectService
 
 from .models import Invoice
+from .models import InvoiceBillingMode
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
 
@@ -81,6 +87,11 @@ class InvoiceCreateSerializer(Serializer):
     methods = serializers.JSONField(required=False, default=dict)
     notify_url = serializers.URLField(required=False)
     return_url = serializers.URLField(required=False)
+    billing_mode = serializers.ChoiceField(
+        choices=InvoiceBillingMode.choices,
+        default=InvoiceBillingMode.DIFFER,
+        required=False,
+    )
 
     def _get_project(self):
         # 缓存到实例，避免 validate_out_no / validate_methods / validate 三处重复查询。
@@ -172,7 +183,53 @@ class InvoiceCreateSerializer(Serializer):
                 raise APIError(ErrorCode.NO_AVAILABLE_METHOD)
             attrs["methods"] = {currency: methods}
 
+        if attrs.get("billing_mode") == InvoiceBillingMode.CONTRACT:
+            self._validate_contract_billing(attrs)
+
         return attrs
+
+    def _validate_contract_billing(self, attrs):
+        project = self._get_project()
+        methods = attrs.get("methods") or {}
+
+        if not get_open_native_scanner():
+            raise APIError(ErrorCode.CONTRACT_BILLING_REQUIRES_NATIVE_SCANNER)
+
+        chain_codes = {
+            chain_code
+            for chain_codes in methods.values()
+            for chain_code in chain_codes
+        }
+        chains = list(Chain.objects.filter(code__in=chain_codes, active=True))
+        if not chains:
+            raise APIError(ErrorCode.CONTRACT_BILLING_EVM_ONLY)
+
+        evm_chains = [chain for chain in chains if chain.type == ChainType.EVM]
+        if not evm_chains:
+            raise APIError(ErrorCode.CONTRACT_BILLING_EVM_ONLY)
+
+        for chain in evm_chains:
+            if not chain.create2_factory_address:
+                raise APIError(ErrorCode.CONTRACT_BILLING_FACTORY_NOT_CONFIGURED)
+
+        chains_by_code = {chain.code: chain for chain in chains}
+        for crypto_symbol, chain_codes in methods.items():
+            crypto = CryptoService.get_by_symbol(crypto_symbol)
+            for chain_code in chain_codes:
+                chain = chains_by_code.get(chain_code)
+                if chain is None or chain.type != ChainType.EVM:
+                    continue
+                if not CryptoService.is_supported_on_chain(crypto, chain=chain):
+                    raise APIError(ErrorCode.CHAIN_CRYPTO_NOT_SUPPORT)
+
+        chain_types = {chain.type for chain in evm_chains}
+        for chain_type in chain_types:
+            if not RecipientAddress.objects.filter(
+                project=project,
+                chain_type=chain_type,
+                usage=RecipientAddressUsage.INVOICE,
+            ).exists():
+                raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
 
 
 class InvoicePublicSerializer(serializers.ModelSerializer):

@@ -1794,3 +1794,170 @@ class SelectMethodContractBranchTest(TestCase, InvoiceTestMixin):
         self.assertEqual(slot.billing_mode, InvoiceBillingMode.CONTRACT)
         self.assertEqual(slot.recipient_address, self.recipient_address)
         self.assertEqual(slot.pay_amount, self.invoice.amount)
+
+
+class CreateContractInvoicePreflightTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        PlatformSettings.objects.create(open_native_scanner=True)
+        self.project = Project.objects.create(
+            name="ContractCreateProject",
+            wallet=Wallet.objects.create(),
+        )
+        self.crypto = Crypto.objects.create(
+            name="Contract Create USDT",
+            symbol="USDTCRT",
+            prices={"USD": "1"},
+            coingecko_id="usdt-contract-create",
+        )
+        self.native = Crypto.objects.create(
+            name="Contract Create ETH",
+            symbol="ETHCRT",
+            prices={"USD": "2000"},
+            coingecko_id="eth-contract-create",
+        )
+        self.chain = Chain.objects.create(
+            name="Contract Create Chain",
+            code="eth-contract-create",
+            type=ChainType.EVM,
+            native_coin=self.native,
+            chain_id=8803,
+            rpc="http://localhost:8545",
+            create2_factory_address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000ab"
+            ),
+            active=True,
+        )
+        ChainToken.objects.create(
+            crypto=self.crypto,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000c2"
+            ),
+        )
+        RecipientAddress.objects.create(
+            name="Contract Create Recipient",
+            project=self.project,
+            chain_type=ChainType.EVM,
+            address=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000d1"
+            ),
+            usage=RecipientAddressUsage.INVOICE,
+        )
+
+    def _base_payload(self):
+        return {
+            "out_no": "contract-create-order",
+            "title": "Contract invoice",
+            "currency": self.crypto.symbol,
+            "amount": "100",
+            "methods": {self.crypto.symbol: [self.chain.code]},
+            "billing_mode": InvoiceBillingMode.CONTRACT,
+        }
+
+    def _post(self, payload):
+        request = APIRequestFactory().post(
+            "/v1/invoice",
+            payload,
+            format="json",
+            HTTP_XC_APPID=self.project.appid,
+        )
+        with (
+            patch("invoices.viewsets.check_saas_permission"),
+            patch("invoices.viewsets.InvoiceService.initialize_invoice"),
+        ):
+            return InvoiceViewSet.as_view({"post": "create"})(request)
+
+    def test_fails_when_native_scanner_disabled(self):
+        settings_obj = PlatformSettings.objects.get(singleton_key=1)
+        settings_obj.open_native_scanner = False
+        settings_obj.save(update_fields=["open_native_scanner"])
+        cache.clear()
+
+        response = self._post(self._base_payload())
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["code"],
+            ErrorCode.CONTRACT_BILLING_REQUIRES_NATIVE_SCANNER.code,
+        )
+
+    def test_fails_when_factory_not_configured(self):
+        self.chain.create2_factory_address = ""
+        self.chain.save(update_fields=["create2_factory_address"])
+
+        response = self._post(self._base_payload())
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["code"],
+            ErrorCode.CONTRACT_BILLING_FACTORY_NOT_CONFIGURED.code,
+        )
+
+    def test_fails_when_methods_only_non_evm(self):
+        usdt, _ = Crypto.objects.get_or_create(
+            symbol="USDT",
+            defaults={
+                "name": "Tether USD",
+                "prices": {"USD": "1"},
+                "coingecko_id": "tether-contract-create",
+            },
+        )
+        trx = Crypto.objects.create(
+            name="Contract Create TRX",
+            symbol="TRXCRT",
+            prices={"USD": "0.1"},
+            coingecko_id="trx-contract-create",
+        )
+        tron_chain = Chain.objects.filter(type=ChainType.TRON).first()
+        if tron_chain is None:
+            tron_chain = Chain.objects.create(
+                name="Contract Create Tron",
+                code="tron-contract-create",
+                type=ChainType.TRON,
+                native_coin=trx,
+                chain_id=8804,
+                rpc="http://localhost:8545",
+                active=True,
+            )
+        else:
+            tron_chain.active = True
+            tron_chain.save(update_fields=["active"])
+        ChainToken.objects.get_or_create(
+            crypto=usdt,
+            chain=tron_chain,
+            defaults={"address": "TTokenCRT"},
+        )
+        RecipientAddress.objects.create(
+            name="Contract Create Tron Recipient",
+            project=self.project,
+            chain_type=ChainType.TRON,
+            address="TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT",
+            usage=RecipientAddressUsage.INVOICE,
+        )
+        payload = self._base_payload()
+        payload["currency"] = usdt.symbol
+        payload["methods"] = {usdt.symbol: [tron_chain.code]}
+
+        response = self._post(payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], ErrorCode.CONTRACT_BILLING_EVM_ONLY.code)
+
+    def test_succeeds_when_all_preflight_pass(self):
+        response = self._post(self._base_payload())
+
+        self.assertEqual(response.status_code, 201)
+        invoice = Invoice.objects.get(out_no="contract-create-order")
+        self.assertEqual(invoice.billing_mode, InvoiceBillingMode.CONTRACT)
+
+    def test_default_billing_mode_is_differ(self):
+        payload = self._base_payload()
+        payload["out_no"] = "default-billing-order"
+        del payload["billing_mode"]
+
+        response = self._post(payload)
+
+        self.assertEqual(response.status_code, 201)
+        invoice = Invoice.objects.get(out_no="default-billing-order")
+        self.assertEqual(invoice.billing_mode, InvoiceBillingMode.DIFFER)
