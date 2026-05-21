@@ -223,6 +223,30 @@ class Invoice(models.Model):
             methods=methods,
         )
 
+    def _allocate_differ_slot(
+        self,
+        crypto: "Crypto",
+        chain: "Chain",
+        crypto_amount: Decimal,
+    ) -> tuple[str, Decimal]:
+        """差额账单:沿用 get_pay_differ 寻找空闲的 (pay_address, pay_amount)。"""
+        detail = (
+            f"project={self.project_id}, crypto={crypto.symbol}, chain={chain.code}"
+        )
+        pay_address, pay_amount = Invoice.get_pay_differ(
+            project=self.project,
+            crypto=crypto,
+            chain=chain,
+            crypto_amount=crypto_amount,
+        )
+        if not (pay_address and pay_amount):
+            logger.warning(
+                "Invoice pay method allocation failed",
+                detail=detail,
+            )
+            raise self.InvoiceAllocationError(detail)
+        return pay_address, pay_amount
+
     @db_transaction.atomic
     def select_method(self, crypto: "Crypto", chain: "Chain"):
         # 先锁账单行，保证同一账单的多次切链/切币不会并发写出超过上限的活跃槽位。
@@ -253,19 +277,11 @@ class Invoice(models.Model):
         for _retry in range(self.MAX_ALLOCATION_RETRY):
             try:
                 with db_transaction.atomic():
-                    pay_address, pay_amount = Invoice.get_pay_differ(
-                        project=self.project,
-                        crypto=crypto,
-                        chain=chain,
-                        crypto_amount=crypto_amount,
+                    pay_address, pay_amount = self._allocate_differ_slot(
+                        crypto,
+                        chain,
+                        crypto_amount,
                     )
-
-                    if not (pay_address and pay_amount):
-                        logger.warning(
-                            "Invoice pay method allocation failed",
-                            detail=detail,
-                        )
-                        raise self.InvoiceAllocationError(detail)
 
                     created_at = timezone.now()
                     pay_slot = InvoicePaySlot.objects.create(
