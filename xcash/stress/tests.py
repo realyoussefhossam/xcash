@@ -1718,3 +1718,102 @@ class EnsureLocalCreate2FactoryTests(TestCase):
             chain.create2_factory_address.lower(),
             ("0x" + "cc" * 20).lower(),
         )
+
+
+class HandleInvoiceWebhookBillingModeTests(TestCase):
+    """webhook 验证通过后按 billing_mode 分流。"""
+
+    def _build_case(self, *, billing_mode):
+        from projects.models import Project
+
+        project = Project.objects.create(
+            name="stress-wh-test",
+            wallet=Wallet.objects.create(),
+            webhook="http://localhost/wh",
+            ip_white_list="*",
+            active=True,
+            hmac_key="hmac-key-test",
+        )
+        stress = StressRun.objects.create(
+            name="wh-test",
+            count=1,
+            project=project,
+            status=StressRunStatus.RUNNING,
+        )
+        case = InvoiceStressCase.objects.create(
+            stress_run=stress,
+            sequence=1,
+            scheduled_offset=0,
+            invoice_sys_no="INV-WH-1",
+            invoice_out_no="OUT-WH-1",
+            status=InvoiceStressCaseStatus.PAID,
+            billing_mode=billing_mode,
+        )
+        return case
+
+    def _post_webhook(self, *, case):
+        from common.consts import NONCE_HEADER
+        from common.consts import SIGNATURE_HEADER
+        from common.consts import TIMESTAMP_HEADER
+        from stress.views import stress_webhook_view
+
+        body = {
+            "type": "invoice",
+            "data": {
+                "sys_no": case.invoice_sys_no,
+                "out_no": case.invoice_out_no,
+                "confirmed": True,
+            },
+        }
+        body_str = json.dumps(body)
+        timestamp = str(int(time.time()))
+        nonce = "nonce-1"
+        message = f"{nonce}{timestamp}{body_str}"
+        signature = hmac.new(
+            case.stress_run.project.hmac_key.encode(),
+            message.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        rf = RequestFactory()
+        request = rf.post(
+            "/stress/webhook",
+            data=body_str,
+            content_type="application/json",
+        )
+        request.META[f"HTTP_{NONCE_HEADER.upper().replace('-', '_')}"] = nonce
+        request.META[f"HTTP_{TIMESTAMP_HEADER.upper().replace('-', '_')}"] = timestamp
+        request.META[f"HTTP_{SIGNATURE_HEADER.upper().replace('-', '_')}"] = signature
+        return stress_webhook_view(request)
+
+    def test_differ_invoice_webhook_ok_marks_succeeded(self):
+        from invoices.models import InvoiceBillingMode
+
+        case = self._build_case(billing_mode=InvoiceBillingMode.DIFFER)
+
+        with patch("stress.views.StressService.on_case_finished") as on_finish_mock:
+            self._post_webhook(case=case)
+
+        case.refresh_from_db()
+        self.assertEqual(case.status, InvoiceStressCaseStatus.SUCCEEDED)
+        self.assertIsNotNone(case.finished_at)
+        on_finish_mock.assert_called_once()
+
+    def test_contract_invoice_webhook_ok_marks_webhook_ok(self):
+        from invoices.models import InvoiceBillingMode
+
+        case = self._build_case(billing_mode=InvoiceBillingMode.CONTRACT)
+
+        with (
+            patch("stress.views.StressService.on_case_finished") as on_finish_mock,
+            patch(
+                "stress.views._maybe_trigger_invoice_collection_verification"
+            ) as trigger_mock,
+        ):
+            self._post_webhook(case=case)
+
+        case.refresh_from_db()
+        self.assertEqual(case.status, InvoiceStressCaseStatus.WEBHOOK_OK)
+        self.assertIsNone(case.finished_at)
+        self.assertTrue(case.webhook_signature_ok)
+        on_finish_mock.assert_not_called()
+        trigger_mock.assert_called_once_with(case.stress_run_id)

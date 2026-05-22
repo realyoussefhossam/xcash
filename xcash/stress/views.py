@@ -135,7 +135,13 @@ def _verify_webhook(
 
 
 def _update_stress_case(case, nonce, result: _VerifyResult):
-    """原子更新 InvoiceStressCase 状态，返回是否实际更新。"""
+    """原子更新 InvoiceStressCase 状态。
+
+    对差额账单维持 PAID → SUCCEEDED；对合约账单 webhook 验证通过时只推到
+    WEBHOOK_OK，等待 run-level 归集验证任务再决定 SUCCEEDED / FAILED。
+    """
+    from invoices.models import InvoiceBillingMode
+
     with transaction.atomic():
         case = InvoiceStressCase.objects.select_for_update().get(pk=case.pk)
 
@@ -154,29 +160,35 @@ def _update_stress_case(case, nonce, result: _VerifyResult):
         if nonce and nonce not in case.webhook_received_nonces:
             case.webhook_received_nonces = [*case.webhook_received_nonces, nonce]
 
-        if result.all_ok:
-            case.status = InvoiceStressCaseStatus.SUCCEEDED
-        else:
-            case.status = InvoiceStressCaseStatus.FAILED
-            case.error = "; ".join(result.errors)
         now = timezone.now()
         case.webhook_received_at = now
-        case.finished_at = now
 
-        case.save(
-            update_fields=[
-                "webhook_received",
-                "webhook_signature_ok",
-                "webhook_payload_ok",
-                "webhook_nonce_ok",
-                "webhook_timestamp_ok",
-                "webhook_received_nonces",
-                "status",
-                "error",
-                "webhook_received_at",
-                "finished_at",
-            ]
-        )
+        update_fields = [
+            "webhook_received",
+            "webhook_signature_ok",
+            "webhook_payload_ok",
+            "webhook_nonce_ok",
+            "webhook_timestamp_ok",
+            "webhook_received_nonces",
+            "status",
+            "error",
+            "webhook_received_at",
+        ]
+
+        if not result.all_ok:
+            case.status = InvoiceStressCaseStatus.FAILED
+            case.error = "; ".join(result.errors)
+            case.finished_at = now
+            update_fields.append("finished_at")
+        elif case.billing_mode == InvoiceBillingMode.CONTRACT:
+            # 合约账单 webhook OK 只是中间态，等 collection CONFIRMED 才 SUCCEEDED。
+            case.status = InvoiceStressCaseStatus.WEBHOOK_OK
+        else:
+            case.status = InvoiceStressCaseStatus.SUCCEEDED
+            case.finished_at = now
+            update_fields.append("finished_at")
+
+        case.save(update_fields=update_fields)
 
     return case
 
@@ -259,7 +271,12 @@ def _handle_invoice_webhook(*, nonce, timestamp_str, signature, body_str, payloa
     if updated is None:
         return
 
-    StressService.on_case_finished(updated)
+    if updated.status == InvoiceStressCaseStatus.WEBHOOK_OK:
+        # 合约账单：webhook 验证通过但还要等归集确认，
+        # 触发 run-level 归集验证任务（singleton 锁保证幂等）。
+        _maybe_trigger_invoice_collection_verification(updated.stress_run_id)
+    else:
+        StressService.on_case_finished(updated)
 
     logger.info(
         "stress.webhook.processed",
@@ -423,6 +440,15 @@ def _check_and_trigger_collection(stress_run_id: int) -> None:
     from .tasks import _maybe_trigger_collection_verification  # noqa: PLC0415
 
     _maybe_trigger_collection_verification(stress_run_id)
+
+
+def _maybe_trigger_invoice_collection_verification(stress_run_id: int) -> None:
+    """延迟导入避免循环引用；合约账单归集验证派发器。"""
+    from .tasks import (
+        _maybe_trigger_invoice_collection_verification as _impl,  # noqa: PLC0415
+    )
+
+    _impl(stress_run_id)
 
 
 def _handle_deposit_webhook(*, nonce, timestamp_str, signature, body_str, payload):

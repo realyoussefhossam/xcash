@@ -514,6 +514,24 @@ def _maybe_trigger_collection_verification(stress_run_id: int) -> None:
     )
 
 
+def _maybe_trigger_invoice_collection_verification(stress_run_id: int) -> None:
+    """合约账单归集验证派发器。
+
+    与 deposit 版同形态：无条件延迟 15 秒调度，verify_invoice_collection
+    本身幂等并自带前置条件检查，多次调度安全。
+    """
+    verify_invoice_collection.apply_async(
+        args=[stress_run_id],
+        countdown=15,
+    )
+
+
+@shared_task(ignore_result=True)
+def verify_invoice_collection(stress_run_id: int) -> None:
+    """Stub：完整实现见 Task 7。"""
+    return
+
+
 # 归集验证 self-rescheduling 配置
 # - _VERIFY_COLLECTION_INTERVAL: 每轮自调度的间隔（秒）
 # - _VERIFY_COLLECTION_OVERALL_TIMEOUT: 整体兜底超时（秒），保留原 30 分钟语义
