@@ -86,8 +86,6 @@ class EvmBroadcastTask(UndeletableModel):
         on_delete=models.CASCADE,
         related_name="evm_task",
         verbose_name=_("通用链上任务"),
-        blank=True,
-        null=True,
     )
     address = models.ForeignKey(
         "chains.Address",
@@ -112,7 +110,7 @@ class EvmBroadcastTask(UndeletableModel):
     tx_kind = models.CharField(
         _("交易形态"),
         max_length=32,
-        choices=TxKind.choices,
+        choices=TxKind,
     )
     gas_price = models.PositiveBigIntegerField(_("Gas Price"), blank=True, null=True)
     signed_payload = models.TextField(_("已签名链上载荷"), blank=True, default="")
@@ -144,27 +142,7 @@ class EvmBroadcastTask(UndeletableModel):
         verbose_name_plural = verbose_name
 
     def __str__(self) -> str:
-        return (
-            self.base_task.tx_hash or f"{self.address_id}:{self.nonce}"
-            if self.base_task_id
-            else f"{self.address_id}:{self.nonce}"
-        )
-
-    @property
-    def transaction_dict(self) -> dict:
-        if self.gas_price is None:
-            raise ValueError("EVM 任务尚未签名，gas_price 不可为空")
-        return {
-            "chainId": self.chain.chain_id,
-            "nonce": self.nonce,
-            "from": self.address.address,
-            "to": self.to,
-            "value": int(self.value),
-            # 交易字典要稳定适配 signer 请求载荷和 web3 原始交易格式，空 data 统一使用 0x。
-            "data": self.data if self.data else "0x",
-            "gas": self.gas,
-            "gasPrice": self.gas_price,
-        }
+        return self.base_task.tx_hash or f"{self.address_id}:{self.nonce}"
 
     def broadcast(self, *, allow_pending_chain_rebroadcast: bool = False) -> None:
         if not self._can_broadcast_for_current_stage(
@@ -239,9 +217,6 @@ class EvmBroadcastTask(UndeletableModel):
 
     def _known_tx_hashes(self) -> list[str]:
         """返回当前任务所有已知 tx_hash，按新版本优先查询。"""
-        if not self.base_task_id:
-            return []
-
         hashes: list[str] = []
         base_tx_hash = (
             BroadcastTask.objects.filter(pk=self.base_task_id)
@@ -282,9 +257,6 @@ class EvmBroadcastTask(UndeletableModel):
         中断。再次执行时不能盲目重发或让 nonce too low 卡住队列，应先用历史
         hash 观察链上事实，再回到统一 coordinator/业务管线。
         """
-        if not self.base_task_id:
-            return False
-
         base_task = BroadcastTask.objects.only("stage", "result", "tx_hash").get(
             pk=self.base_task_id
         )
@@ -321,9 +293,6 @@ class EvmBroadcastTask(UndeletableModel):
         self, *, allow_pending_chain_rebroadcast: bool
     ) -> bool:
         """校验当前父任务阶段是否允许进入真实广播副作用。"""
-        if not self.base_task_id:
-            return True
-
         base_task = BroadcastTask.objects.only("stage", "result").get(
             pk=self.base_task_id
         )
@@ -341,10 +310,8 @@ class EvmBroadcastTask(UndeletableModel):
         - self.address 已登记为有效 DepositAddress（排除其它用途的地址）
 
         Withdrawal 任务的 address 本身即 Vault，补 gas 会形成 vault→vault 死循环，
-        故排除；无 base_task 或非归集类型直接返回 False。
+        故排除；非归集类型直接返回 False。
         """
-        if not self.base_task_id:
-            return False
         if not evm.intents.is_gas_rechargeable(self.base_task.action_type):
             return False
 
@@ -394,8 +361,7 @@ class EvmBroadcastTask(UndeletableModel):
             self.gas_price = current_gas_price
             self.signed_payload = signed.raw_transaction
             self.save(update_fields=["gas_price", "signed_payload"])
-            if self.base_task_id:
-                self.base_task.append_tx_hash(signed.tx_hash)
+            self.base_task.append_tx_hash(signed.tx_hash)
             return
 
         if current_gas_price <= self.gas_price:
@@ -415,8 +381,7 @@ class EvmBroadcastTask(UndeletableModel):
         self.save(update_fields=["gas_price", "signed_payload"])
 
         # 重签后 tx_hash 变化，更新父任务并追加历史记录以便链上观测匹配。
-        if self.base_task_id:
-            self.base_task.append_tx_hash(signed.tx_hash)
+        self.base_task.append_tx_hash(signed.tx_hash)
 
     def _build_transaction_dict(self, *, gas_price: int) -> dict:
         return {
@@ -431,22 +396,19 @@ class EvmBroadcastTask(UndeletableModel):
         }
 
     def _mark_pending_chain(self) -> None:
-        if self.base_task_id:
-            # 首次成功提交到节点后，统一父任务从"待广播"进入"待上链"。
-            BroadcastTask.objects.filter(
-                pk=self.base_task_id,
-                stage=BroadcastTaskStage.QUEUED,
-                result=BroadcastTaskResult.UNKNOWN,
-            ).update(
-                stage=BroadcastTaskStage.PENDING_CHAIN,
-                updated_at=timezone.now(),
-            )
+        # 首次成功提交到节点后，统一父任务从"待广播"进入"待上链"。
+        BroadcastTask.objects.filter(
+            pk=self.base_task_id,
+            stage=BroadcastTaskStage.QUEUED,
+            result=BroadcastTaskResult.UNKNOWN,
+        ).update(
+            stage=BroadcastTaskStage.PENDING_CHAIN,
+            updated_at=timezone.now(),
+        )
 
     @property
     def status(self) -> str:
-        if self.base_task_id:
-            return self.base_task.display_status
-        return "待执行"
+        return self.base_task.display_status
 
     def has_lower_queued_nonce(self) -> bool:
         """同账户更低 nonce 尚未提交到节点（QUEUED）时阻断，保证 nonce 按顺序进入 mempool。"""

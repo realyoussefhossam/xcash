@@ -276,18 +276,26 @@ class EvmChainScannerServiceTests(TestCase):
     @override_settings(SIGNER_BACKEND="remote")
     def test_broadcast_rejects_local_fallback_when_remote_signer_enabled(self):
         # remote signer 模式下，广播阶段不允许再用本地私钥补签，避免应用进程重新持钥。
-        chain = Chain(
-            code="eth",
-            name="Ethereum",
+        native = Crypto.objects.create(
+            name="Ethereum Remote Signer",
+            symbol="ETHRS",
+            coingecko_id="ethereum-remote-signer",
+        )
+        chain = Chain.objects.create(
+            code="eth-remote-signer",
+            name="Ethereum Remote Signer",
             type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            chain_id=20002,
+            rpc="http://localhost:8545",
+            native_coin=native,
+            active=True,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(gas_price=2, send_raw_transaction=Mock(), account=Mock()),
         )
-        addr = Address(
-            wallet=Wallet(),
+        wallet = Wallet.objects.create()
+        addr = Address.objects.create(
+            wallet=wallet,
             chain_type=ChainType.EVM,
             usage=AddressUsage.Vault,
             bip44_account=1,
@@ -296,10 +304,18 @@ class EvmChainScannerServiceTests(TestCase):
                 "0x0000000000000000000000000000000000000001"
             ),
         )
-        broadcast_task = EvmBroadcastTask(
+        base_task = BroadcastTask.objects.create(
+            chain=chain,
+            address=addr,
+            action_type=OnchainActionType.Withdrawal,
+            stage=BroadcastTaskStage.QUEUED,
+            result=BroadcastTaskResult.UNKNOWN,
+        )
+        broadcast_task = EvmBroadcastTask.objects.create(
+            base_task=base_task,
             address=addr,
             chain=chain,
-            nonce=1,
+            nonce=0,
             to=Web3.to_checksum_address("0x0000000000000000000000000000000000000002"),
             value=0,
             gas=21_000,
@@ -307,7 +323,6 @@ class EvmChainScannerServiceTests(TestCase):
             gas_price=1,
             signed_payload="",
         )
-        broadcast_task.save = Mock()
 
         with self.assertRaisesMessage(Exception, "远端 signer 请求失败"):
             broadcast_task.broadcast()

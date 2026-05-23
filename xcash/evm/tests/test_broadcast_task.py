@@ -158,9 +158,17 @@ class EvmBroadcastTaskTests(TestCase):
             address_index=0,
             address="0x0000000000000000000000000000000000000C01",
         )
+        base_task = BroadcastTask.objects.create(
+            chain=chain,
+            address=addr,
+            action_type=OnchainActionType.Withdrawal,
+            stage=BroadcastTaskStage.QUEUED,
+            result=BroadcastTaskResult.UNKNOWN,
+        )
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             EvmBroadcastTask.objects.create(
+                base_task=base_task,
                 address=addr,
                 chain=chain,
                 to="0x0000000000000000000000000000000000000002",
@@ -224,12 +232,19 @@ class EvmBroadcastTaskTests(TestCase):
 
     def test_broadcast_records_last_attempt_without_marking_completion(self):
         # EVM 主执行对象只记录发送尝试；是否上链由统一父任务状态推进。
-        chain = Chain(
-            code="eth",
-            name="Ethereum",
+        native = Crypto.objects.create(
+            name="Ethereum Last Attempt",
+            symbol="ETHLA",
+            coingecko_id="ethereum-last-attempt",
+        )
+        chain = Chain.objects.create(
+            code="eth-last-attempt",
+            name="Ethereum Last Attempt",
             type=ChainType.EVM,
-            chain_id=1,
-            native_coin=Crypto(name="Ethereum", symbol="ETH", coingecko_id="ethereum"),
+            chain_id=999_402,
+            rpc="http://localhost:8545",
+            native_coin=native,
+            active=True,
         )
         chain.__dict__["w3"] = SimpleNamespace(
             eth=SimpleNamespace(
@@ -240,18 +255,27 @@ class EvmBroadcastTaskTests(TestCase):
                 send_raw_transaction=Mock(),
             ),
         )
-        addr = Address(
-            wallet=Wallet(),
+        wallet = Wallet.objects.create()
+        addr = Address.objects.create(
+            wallet=wallet,
             chain_type=ChainType.EVM,
             usage=AddressUsage.Vault,
             bip44_account=1,
             address_index=0,
             address="0x0000000000000000000000000000000000000001",
         )
-        broadcast_task = EvmBroadcastTask(
+        base_task = BroadcastTask.objects.create(
+            chain=chain,
+            address=addr,
+            action_type=OnchainActionType.Withdrawal,
+            stage=BroadcastTaskStage.QUEUED,
+            result=BroadcastTaskResult.UNKNOWN,
+        )
+        broadcast_task = EvmBroadcastTask.objects.create(
+            base_task=base_task,
             address=addr,
             chain=chain,
-            nonce=1,
+            nonce=0,
             to="0x0000000000000000000000000000000000000002",
             value=0,
             gas=21_000,
@@ -259,10 +283,10 @@ class EvmBroadcastTaskTests(TestCase):
             gas_price=1,
             signed_payload="0x7261772d6279746573",
         )
-        broadcast_task.save = Mock()
 
         broadcast_task.broadcast()
 
+        broadcast_task.refresh_from_db()
         self.assertIsNotNone(broadcast_task.last_attempt_at)
 
     def test_broadcast_preflight_threshold_recharges_gas_for_collection(self):
