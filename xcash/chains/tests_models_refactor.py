@@ -1,6 +1,7 @@
+from unittest.mock import patch
+
 import pytest
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
 
 from chains.constants import ChainName
 from chains.constants import ChainType
@@ -31,8 +32,10 @@ def test_chain_tron_properties():
 
 @pytest.mark.django_db
 def test_chain_unique_per_name():
+    # Chain.save() 内置 full_clean()，validate_unique 会在 DB 层 IntegrityError
+    # 之前先抛 ValidationError；唯一性约束仍由 DB 层兜底，但用户面错误是 ValidationError。
     Chain.objects.create(chain=ChainName.BSC, active=False)
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ValidationError):
         Chain.objects.create(chain=ChainName.BSC, active=False)
 
 
@@ -51,9 +54,6 @@ def test_chain_invalid_choice_rejected():
     chain = Chain(chain="not-a-real-chain")
     with pytest.raises(ValidationError):
         chain.full_clean()
-
-
-from unittest.mock import patch
 
 
 @pytest.mark.django_db
