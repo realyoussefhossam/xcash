@@ -10,10 +10,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from currencies.models import ChainToken
 from evm.models import VaultSlot
-from invoices.models import InvoiceBillingMode
-from invoices.models import InvoicePaySlot
-from invoices.models import InvoicePaySlotStatus
-from invoices.models import InvoiceStatus
+from projects.models import DifferRecipientAddress
 
 
 @dataclass(frozen=True)
@@ -64,7 +61,7 @@ def load_watch_set(*, chain: Chain, refresh: bool = False) -> EvmWatchSet:
 def refresh_evm_watched_addresses() -> frozenset[str]:
     """重建 EVM 全局观察地址缓存。
 
-    VaultSlot 和 contract InvoicePaySlot 是当前 EVM 入账观察面。
+    VaultSlot（含合约账单 INVOICE 槽位）与 DifferRecipientAddress 是当前 EVM 入账观察面。
     系统 Address 只作为部署、归集、提现等内部交易的发起账户，不进入 scanner。
     """
 
@@ -118,6 +115,8 @@ def _chain_tokens_cache_key(*, chain: Chain) -> str:
 
 
 def _load_evm_watched_addresses_from_db() -> frozenset[str]:
+    # VaultSlot.address 已经覆盖了合约账单的 pay_address（INVOICE usage 的 VaultSlot
+    # 即为合约账单的收款地址），故 contract 类 InvoicePaySlot 无需再单独查询。
     vault_slot_addresses = (
         VaultSlot.objects.filter(
             chain__type=ChainType.EVM,
@@ -125,20 +124,17 @@ def _load_evm_watched_addresses_from_db() -> frozenset[str]:
         .values_list("address", flat=True)
         .iterator(chunk_size=EVM_WATCH_SET_ITERATOR_CHUNK_SIZE)
     )
-    contract_pay_slot_addresses = (
-        InvoicePaySlot.objects.filter(
-            chain__type=ChainType.EVM,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            status=InvoicePaySlotStatus.ACTIVE,
-            invoice__status=InvoiceStatus.WAITING,
+    differ_recipient_addresses = (
+        DifferRecipientAddress.objects.filter(
+            chain_type=ChainType.EVM,
         )
-        .values_list("pay_address", flat=True)
+        .values_list("address", flat=True)
         .iterator(chunk_size=EVM_WATCH_SET_ITERATOR_CHUNK_SIZE)
     )
 
     return frozenset(
         _normalize_address(address)
-        for address in iter_chain(vault_slot_addresses, contract_pay_slot_addresses)
+        for address in iter_chain(vault_slot_addresses, differ_recipient_addresses)
     )
 
 

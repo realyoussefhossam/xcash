@@ -13,12 +13,7 @@ from currencies.models import Crypto
 from evm.models import VaultSlot
 from evm.scanner.watchers import clear_evm_watch_set_cache
 from evm.scanner.watchers import load_watch_set
-from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
-from invoices.models import InvoicePaySlot
-from invoices.models import InvoicePaySlotDiscardReason
-from invoices.models import InvoicePaySlotStatus
-from invoices.models import InvoiceStatus
+from projects.models import DifferRecipientAddress
 from projects.models import Project
 from users.models import Customer
 
@@ -130,112 +125,75 @@ class EvmWatchSetCacheTests(TestCase):
         watch_set = load_watch_set(chain=self.chain)
         self.assertIn(new_slot_address, watch_set.watched_addresses)
 
-    def test_load_watch_set_includes_active_contract_invoice_pay_slot_addresses(self):
+    def test_load_watch_set_includes_evm_differ_recipient_addresses(self):
         project = self._create_project()
-        invoice = self._create_invoice(project=project, status=InvoiceStatus.WAITING)
-        slot_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000c01"
+        recipient_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000d01"
         )
-        InvoicePaySlot.objects.create(
-            invoice=invoice,
+        DifferRecipientAddress.objects.create(
             project=project,
-            version=1,
-            crypto=self.token,
-            chain=self.chain,
-            pay_address=slot_address,
-            pay_amount="1.00000000",
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=Web3.to_checksum_address(
-                "0x0000000000000000000000000000000000000c02"
-            ),
-            status=InvoicePaySlotStatus.ACTIVE,
+            chain_type=ChainType.EVM,
+            address=recipient_address,
         )
 
         watch_set = load_watch_set(chain=self.chain, refresh=True)
 
-        self.assertIn(slot_address, watch_set.watched_addresses)
+        self.assertIn(recipient_address, watch_set.watched_addresses)
 
-    def test_load_watch_set_excludes_contract_invoice_pay_slot_addresses_for_inactive_invoices(
+    def test_load_watch_set_excludes_non_evm_differ_recipient_addresses(self):
+        project = self._create_project()
+        recipient_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000d02"
+        )
+        DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.TRON,
+            address=recipient_address,
+        )
+
+        watch_set = load_watch_set(chain=self.chain, refresh=True)
+
+        self.assertNotIn(recipient_address, watch_set.watched_addresses)
+
+    def test_differ_recipient_address_save_refreshes_cached_watch_set_after_commit(
         self,
     ):
         project = self._create_project()
-        invoice = self._create_invoice(project=project, status=InvoiceStatus.COMPLETED)
-        slot_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000c03"
-        )
-        InvoicePaySlot.objects.create(
-            invoice=invoice,
-            project=project,
-            version=1,
-            crypto=self.token,
-            chain=self.chain,
-            pay_address=slot_address,
-            pay_amount="1.00000000",
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=Web3.to_checksum_address(
-                "0x0000000000000000000000000000000000000c04"
-            ),
-            status=InvoicePaySlotStatus.ACTIVE,
-        )
-
-        watch_set = load_watch_set(chain=self.chain, refresh=True)
-
-        self.assertNotIn(slot_address, watch_set.watched_addresses)
-
-    def test_load_watch_set_excludes_settled_contract_invoice_pay_slot_addresses(self):
-        project = self._create_project()
-        invoice = self._create_invoice(project=project, status=InvoiceStatus.WAITING)
-        slot_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000c05"
-        )
-        InvoicePaySlot.objects.create(
-            invoice=invoice,
-            project=project,
-            version=1,
-            crypto=self.token,
-            chain=self.chain,
-            pay_address=slot_address,
-            pay_amount="1.00000000",
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=Web3.to_checksum_address(
-                "0x0000000000000000000000000000000000000c06"
-            ),
-            status=InvoicePaySlotStatus.DISCARDED,
-            discard_reason=InvoicePaySlotDiscardReason.SETTLED,
-        )
-
-        watch_set = load_watch_set(chain=self.chain, refresh=True)
-
-        self.assertNotIn(slot_address, watch_set.watched_addresses)
-
-    def test_contract_invoice_pay_slot_save_refreshes_cached_watch_set_after_commit(
-        self,
-    ):
-        project = self._create_project()
-        invoice = self._create_invoice(project=project, status=InvoiceStatus.WAITING)
         load_watch_set(chain=self.chain, refresh=True)
-        slot_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000c07"
+        recipient_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000d03"
         )
 
         with self.captureOnCommitCallbacks(execute=True):
-            InvoicePaySlot.objects.create(
-                invoice=invoice,
+            DifferRecipientAddress.objects.create(
                 project=project,
-                version=1,
-                crypto=self.token,
-                chain=self.chain,
-                pay_address=slot_address,
-                pay_amount="1.00000000",
-                billing_mode=InvoiceBillingMode.CONTRACT,
-                recipient_address=Web3.to_checksum_address(
-                    "0x0000000000000000000000000000000000000c08"
-                ),
-                status=InvoicePaySlotStatus.ACTIVE,
+                chain_type=ChainType.EVM,
+                address=recipient_address,
             )
 
         watch_set = load_watch_set(chain=self.chain)
-        self.assertIn(slot_address, watch_set.watched_addresses)
+        self.assertIn(recipient_address, watch_set.watched_addresses)
+
+    def test_differ_recipient_address_delete_refreshes_cached_watch_set_after_commit(
+        self,
+    ):
+        project = self._create_project()
+        recipient_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000d04"
+        )
+        differ_address = DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.EVM,
+            address=recipient_address,
+        )
+        initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
+        self.assertIn(recipient_address, initial_watch_set.watched_addresses)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            differ_address.delete()
+
+        watch_set = load_watch_set(chain=self.chain)
+        self.assertNotIn(recipient_address, watch_set.watched_addresses)
 
     def test_chain_token_save_refreshes_cached_token_set_after_commit(self):
         load_watch_set(chain=self.chain, refresh=True)
@@ -291,17 +249,4 @@ class EvmWatchSetCacheTests(TestCase):
             name=f"watcher-project-{suffix}",
             wallet=Wallet.objects.create(),
             webhook="https://example.com/webhook",
-        )
-
-    def _create_invoice(self, *, project: Project, status: str) -> Invoice:
-        return Invoice.objects.create(
-            project=project,
-            out_no=f"watcher-{status}-{Invoice.objects.count()}",
-            title="Watcher invoice",
-            currency="USD",
-            amount="1.00",
-            methods={self.token.symbol: [self.chain.code]},
-            status=status,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            expires_at="2099-01-01T00:00:00Z",
         )

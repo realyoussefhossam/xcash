@@ -13,8 +13,7 @@ from evm.scanner.watchers import clear_evm_chain_tokens_cache
 from evm.scanner.watchers import clear_evm_watched_addresses_cache
 from evm.scanner.watchers import load_watch_set
 from evm.scanner.watchers import refresh_evm_watched_addresses
-from invoices.models import InvoiceBillingMode
-from invoices.models import InvoicePaySlot
+from projects.models import DifferRecipientAddress
 
 
 def _refresh_evm_watched_addresses_on_commit() -> None:
@@ -56,14 +55,14 @@ def refresh_watch_set_when_vault_slot_changes(
     _refresh_evm_watched_addresses_on_commit()
 
 
-@receiver(post_save, sender=InvoicePaySlot)
-@receiver(post_delete, sender=InvoicePaySlot)
-def refresh_watch_set_when_invoice_pay_slot_changes(
+@receiver(post_save, sender=DifferRecipientAddress)
+@receiver(post_delete, sender=DifferRecipientAddress)
+def refresh_watch_set_when_differ_recipient_address_changes(
     sender,
-    instance: InvoicePaySlot,
+    instance: DifferRecipientAddress,
     **kwargs,
 ):
-    if instance.billing_mode != InvoiceBillingMode.CONTRACT:
+    if instance.chain_type != ChainType.EVM:
         return
     _refresh_evm_watched_addresses_on_commit()
 
