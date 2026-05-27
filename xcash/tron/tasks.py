@@ -4,7 +4,6 @@ from tron.client import TronClientError
 from tron.scanner import TronUsdtPaymentScanner
 
 from chains.constants import ChainType
-from chains.constants import TRON_CHAIN_NAMES
 from chains.models import Chain
 from common.decorators import singleton_task
 
@@ -42,6 +41,6 @@ def scan_tron_chain(chain_pk: int) -> None:
 def scan_active_tron_chains() -> None:
     for chain_pk in Chain.objects.filter(
         active=True,
-        chain__in=TRON_CHAIN_NAMES,
+        type=ChainType.TRON,
     ).exclude(tron_api_key="").values_list("pk", flat=True):
         scan_tron_chain.delay(chain_pk)

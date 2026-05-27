@@ -18,11 +18,10 @@ from alerts.admin import ProjectTelegramAlertConfigInline
 from alerts.models import ProjectTelegramAlertConfig
 from chains.adapters import AdapterFactory
 from chains.capabilities import ChainProductCapabilityService
-from chains.constants import EVM_CHAIN_NAMES
+from chains.constants import ChainType
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import Chain
-from chains.models import ChainType
 from common.admin import ModelAdmin
 from invoices.models import EpayMerchant
 from projects.models import DifferRecipientAddress
@@ -125,7 +124,7 @@ class ProjectForm(forms.ModelForm):
             return Web3.to_checksum_address(old_address)
 
         evm_chains = Chain.objects.filter(
-            chain__in=EVM_CHAIN_NAMES, active=True
+            type=ChainType.EVM, active=True
         ).exclude(rpc="")
         if not evm_chains.exists():
             raise forms.ValidationError(_("没有可用于校验合约地址的已启用 EVM 链。"))
@@ -699,11 +698,9 @@ class ProjectAdmin(ModelAdmin):
         for chain_type, chain_label in ChainType.choices:
             if chain_type != ChainType.EVM:
                 continue
-            # type 是 property，逐条加载后用 property 读 name（label），避免使用已删除的 type/name 字段做 ORM 查询。
             chain_names = [
                 chain.name
-                for chain in Chain.objects.filter(chain__in=EVM_CHAIN_NAMES)
-                if chain.type == chain_type
+                for chain in Chain.objects.filter(type=chain_type)
             ]
             try:
                 hot_wallet_address = instance.wallet.get_address(

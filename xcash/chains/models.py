@@ -47,6 +47,14 @@ class Chain(models.Model):
         choices=ChainName,
         unique=True,
     )
+    type = models.CharField(
+        _("类型"),
+        max_length=16,
+        editable=False,
+        blank=True,
+        default="",
+        help_text=_("由 chain 常量自动决定，不可手动修改。"),
+    )
     latest_block_number = models.PositiveIntegerField(
         default=0, verbose_name=_("最新区块")
     )
@@ -77,6 +85,10 @@ class Chain(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
+        # type 是链固有属性的反规范化冗余，由 chain 常量自动推导，
+        # 不让业务层手动设置，避免脏数据。
+        if self.chain and self.chain in CHAIN_SPECS:
+            self.type = CHAIN_SPECS[self.chain].type
         self.full_clean()
         with db_transaction.atomic():
             result = super().save(*args, **kwargs)
@@ -94,10 +106,6 @@ class Chain(models.Model):
         if not self.chain:
             return "Chain(unsaved)"
         return ChainName(self.chain).label
-
-    @property
-    def type(self) -> str:
-        return self.spec.type
 
     @property
     def chain_id(self) -> int | None:
@@ -142,7 +150,8 @@ class Chain(models.Model):
         # 让 clean_fields 的 choices 校验报错即可，本方法直接放行。
         if self.chain not in CHAIN_SPECS:
             return
-        if self.type != ChainType.EVM or not self.rpc:
+        # type 的权威来源是 CHAIN_SPECS，不能依赖 DB 字段（full_clean 时 type 可能尚未设置）。
+        if self.spec.type != ChainType.EVM or not self.rpc:
             return
         try:
             w3 = Web3(Web3.HTTPProvider(self.rpc, request_kwargs={"timeout": 8}))
