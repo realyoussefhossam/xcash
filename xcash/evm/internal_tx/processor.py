@@ -10,32 +10,31 @@ from web3 import Web3
 
 from chains.models import Chain
 from chains.models import TxTask
-from chains.models import TxTaskType
 from chains.service import ObservedTransferCreateResult
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
 from evm.internal_tx.routing import UnknownInternalBroadcastError
+from evm.internal_tx.routing import NON_TRANSFER_TX_TASK_TYPES
 from evm.internal_tx.routing import get_handler
 from evm.internal_tx.routing import get_matcher
 
 logger = structlog.get_logger()
 
-NO_TRANSFER_SUCCESS_TASK_TYPES = {
-    TxTaskType.VaultSlotDeploy,
-}
-
 
 def _normalize_tx_hash(value: Any) -> str:
+    """转成带 0x 前缀的小写哈希。"""
     raw = value.hex() if hasattr(value, "hex") else str(value)
     raw = raw.removeprefix("0x").lower()
     return f"0x{raw}"
 
 
 def _normalize_address(value: Any) -> str:
+    """转 checksum 地址。"""
     return Web3.to_checksum_address(str(value))
 
 
 def _lookup_block_timestamp(*, chain: Chain, receipt: dict) -> tuple[int, datetime]:
+    """补查 receipt 所在块的时间戳与本地化时间。"""
     block_number = int(receipt["blockNumber"])
     block = chain.w3.eth.get_block(block_number)
     ts = int(block["timestamp"])
@@ -44,6 +43,7 @@ def _lookup_block_timestamp(*, chain: Chain, receipt: dict) -> tuple[int, dateti
 
 
 def _block_hash_from_receipt(receipt: dict) -> str | None:
+    """从 receipt 提取 block_hash，未填则返回 None。"""
     raw = receipt.get("blockHash")
     if raw is None:
         return None
@@ -51,6 +51,7 @@ def _block_hash_from_receipt(receipt: dict) -> str | None:
 
 
 def _receipt_status(receipt: dict) -> int:
+    """读取 receipt.status，兼容 int / 十进制串 / 0x 十六进制串。"""
     raw = receipt.get("status", 0)
     if isinstance(raw, str):
         return int(raw, 16) if raw.startswith("0x") else int(raw)
@@ -58,6 +59,7 @@ def _receipt_status(receipt: dict) -> int:
 
 
 def _finalize_failed(*, tx_task: TxTask) -> None:
+    """把 TxTask 标记为最终失败，并触发对应业务的失败收尾。"""
     with db_transaction.atomic():
         updated = TxTask.mark_finalized_failed(
             task_id=tx_task.pk,
@@ -87,7 +89,7 @@ def process_internal_transaction(
     tx_task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
     if tx_task is None:
         raise UnknownInternalBroadcastError(
-            chain_code=chain.chain,
+            chain_code=chain.code,
             tx_hash=tx_hash,
             from_address=from_address,
         )
@@ -97,8 +99,8 @@ def process_internal_transaction(
         _finalize_failed(tx_task=tx_task)
         return None
 
-    if tx_task.tx_type in NO_TRANSFER_SUCCESS_TASK_TYPES:
-        TxTask.mark_finalized_success(chain=chain, tx_hash=tx_hash)
+    if tx_task.tx_type in NON_TRANSFER_TX_TASK_TYPES:
+        TxTask.mark_pending_confirm(chain=chain, tx_hash=tx_hash)
         return None
 
     matcher = get_matcher(tx_task.tx_type)
@@ -106,7 +108,7 @@ def process_internal_transaction(
     if fact is None:
         logger.warning(
             "EVM 内部交易 receipt 成功但 matcher 未找到预期 Transfer",
-            chain=chain.chain,
+            chain=chain.code,
             tx_hash=tx_hash,
             tx_type=tx_task.tx_type,
             tx_task_id=tx_task.pk,

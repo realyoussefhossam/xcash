@@ -8,6 +8,8 @@ from django.test import TestCase
 from django.utils import timezone
 from web3 import Web3
 
+from chains.constants import ChainCode
+from chains.models import Chain
 from chains.models import AddressUsage
 from chains.models import TxTask
 from chains.models import TxTaskStage
@@ -96,7 +98,11 @@ class InternalTxRegistryTests(TestCase):
         )
         self.assertEqual(
             set(INTERNAL_TX_HANDLERS),
-            {TxTaskType.VaultSlotCollect, TxTaskType.Withdrawal},
+            {
+                TxTaskType.VaultSlotDeploy,
+                TxTaskType.VaultSlotCollect,
+                TxTaskType.Withdrawal,
+            },
         )
         self.assertEqual(
             set(INTERNAL_TX_MATCHERS),
@@ -204,8 +210,8 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         self.assertEqual(task.stage, TxTaskStage.FINALIZED)
         self.assertIs(task.success, True)
 
-    def test_vault_slot_deploy_success_finalizes_without_transfer(self):
-        chain = make_evm_chain(code="eth-slot-deploy", chain_id=43017)
+    def test_vault_slot_deploy_success_enters_pending_confirm_without_transfer(self):
+        chain = Chain.objects.create(code=ChainCode.Anvil, rpc="", active=True)
         address = make_evm_system_address(suffix="ad07", usage=AddressUsage.HotWallet)
         task = _base_task_without_asset_fields(
             chain=chain,
@@ -238,8 +244,8 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
 
         task.refresh_from_db()
         self.assertIsNone(result)
-        self.assertEqual(task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(task.success, True)
+        self.assertEqual(task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertIsNone(task.success)
         self.assertFalse(Transfer.objects.filter(hash=task.tx_hash).exists())
 
     def test_native_withdrawal_matches_from_withdrawal_and_evm_task(self):

@@ -61,16 +61,35 @@ class InternalTransferHandler(Protocol):
     def finalize_failed(self, tx_task: TxTask) -> None: ...
 
 
-from evm.internal_tx.vault_slot_collect import (
-    vault_slot_collect_handler,  # noqa: E402
-)
-from evm.internal_tx.vault_slot_collect import (
-    vault_slot_collect_matcher,  # noqa: E402
-)
+class NoopInternalTransferHandler:
+    """无业务副作用的本地主动交易生命周期 handler。"""
+
+    def match(self, transfer: Transfer, tx_task: TxTask) -> bool:
+        return True
+
+    def confirm(self, transfer: Transfer) -> None:
+        return None
+
+    def drop(self, transfer: Transfer) -> None:
+        return None
+
+    def finalize_failed(self, tx_task: TxTask) -> None:
+        return None
+
+
+from evm.internal_tx.vault_slot_collect import vault_slot_collect_handler  # noqa: E402
+from evm.internal_tx.vault_slot_collect import vault_slot_collect_matcher  # noqa: E402
 from evm.internal_tx.withdrawal import withdrawal_handler  # noqa: E402
 from evm.internal_tx.withdrawal import withdrawal_matcher  # noqa: E402
 
+noop_internal_transfer_handler = NoopInternalTransferHandler()
+
+NON_TRANSFER_TX_TASK_TYPES: set[TxTaskType] = {
+    TxTaskType.VaultSlotDeploy,
+}
+
 INTERNAL_TX_HANDLERS: dict[TxTaskType, InternalTransferHandler] = {
+    TxTaskType.VaultSlotDeploy: noop_internal_transfer_handler,
     TxTaskType.VaultSlotCollect: vault_slot_collect_handler,
     TxTaskType.Withdrawal: withdrawal_handler,
 }
@@ -82,8 +101,10 @@ INTERNAL_TX_MATCHERS: dict[TxTaskType, ReceiptMatcher] = {
 
 
 def get_handler(tx_type: TxTaskType) -> InternalTransferHandler:
+    """按任务类型获取业务生命周期 handler；未注册类型抛 KeyError。"""
     return INTERNAL_TX_HANDLERS[tx_type]
 
 
 def get_matcher(tx_type: TxTaskType) -> ReceiptMatcher:
+    """按任务类型获取 receipt matcher；未注册类型抛 KeyError。"""
     return INTERNAL_TX_MATCHERS[tx_type]

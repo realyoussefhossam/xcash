@@ -1,12 +1,13 @@
 """
-轮询器 _observe_confirmed_transaction 和 _parse_erc20_transfer_log 的单元测试。
+轮询器 _observe_confirmed_transaction 和 ERC20 Transfer 日志工具的单元测试。
 
 覆盖：
-- 原生币路径：get_block + get_transaction → 构建正确的 ObservedTransferPayload
-- ERC-20 路径：从 receipt.logs 解析 Transfer 事件 → 构建正确的 ObservedTransferPayload
+- 原生币路径：get_transaction + receipt → 内部交易处理器
+- ERC-20 路径：从 receipt.logs 校验 Transfer 事件 → 内部交易处理器
 - _parse_erc20_transfer_log 独立测试：正常解析、空 logs、非 Transfer topic
 - 集成测试：poll_chain → create_observed_transfer → process() 完整管线
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -21,6 +22,9 @@ from django.test import TestCase
 from django.utils import timezone
 from web3 import Web3
 
+from chains.adapters import TxCheckResult
+from chains.adapters import TxCheckStatus
+from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import TxTask
@@ -35,6 +39,7 @@ from currencies.models import ChainToken
 from currencies.models import Crypto
 from evm.choices import TxKind
 from evm.poller import EvmTaskPoller
+from evm.tasks import confirm_non_transfer_tx_tasks
 from evm.internal_tx._log_utils import matches_transfer_log
 from evm.internal_tx._log_utils import normalize_log_index
 from evm.models import EvmTxTask
@@ -47,7 +52,7 @@ _SENDER_HEX = Web3.to_checksum_address("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 _RECEIVER_HEX = Web3.to_checksum_address("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 _VAULT_HEX = Web3.to_checksum_address("0xcccccccccccccccccccccccccccccccccccccccc")
 _CONTRACT_HEX = Web3.to_checksum_address("0xdddddddddddddddddddddddddddddddddddddddd")
-_ERC20_TRANSFER_SELECTOR = "0xa9059cbb"
+ERC20_TRANSFER_SELECTOR = "0xa9059cbb"
 
 
 def _make_erc20_transfer_calldata(
@@ -56,7 +61,7 @@ def _make_erc20_transfer_calldata(
     value_int: int = 100_000_000,
 ) -> str:
     encoded_args = eth_abi.encode(["address", "uint256"], [to_hex, value_int]).hex()
-    return f"{_ERC20_TRANSFER_SELECTOR}{encoded_args}"
+    return f"{ERC20_TRANSFER_SELECTOR}{encoded_args}"
 
 
 def _make_erc20_transfer_log(
@@ -182,28 +187,15 @@ class Erc20TransferLogUtilsTest(TestCase):
 # Task 4：_observe_confirmed_transaction — 原生币路径
 # ---------------------------------------------------------------------------
 class ObserveConfirmedNativeTest(TestCase):
-    """原生币路径：从 get_transaction 取 from/to/value，喂回扫描器管线。"""
+    """原生币路径：从 get_transaction 取 from/to/value，交给内部交易处理器。"""
 
     def setUp(self):
-        self.eth = Crypto.objects.create(
-            name="Ethereum Poller Native",
-            symbol="ETHCN",
-            decimals=18,
-            coingecko_id="ethereum-poller-native",
-        )
         self.chain = Chain.objects.create(
-            code="eth-coord-native",
-            name="Ethereum Poller Native",
-            type=ChainType.EVM,
-            chain_id=90_001,
+            code=ChainCode.Anvil,
             # rpc 设为空字符串以跳过 save() 内的自动 RPC 检测
             rpc="",
-            native_coin=self.eth,
             active=True,
         )
-        # currencies.signals 在 Chain 创建后自动触发 ensure_native_crypto_mapping_for_chain，
-        # 已经建好 (eth, chain) 的 ChainToken；这里只需补齐精度覆盖字段即可。
-        ChainToken.objects.filter(crypto=self.eth, chain=self.chain).update(decimals=18)
         self.wallet = Wallet.objects.create()
         self.address = Address.objects.create(
             wallet=self.wallet,
@@ -231,7 +223,7 @@ class ObserveConfirmedNativeTest(TestCase):
             tx_kind=TxKind.NATIVE_TRANSFER,
         )
 
-    def test_native_confirmed_feeds_to_scanner_pipeline(self):
+    def test_native_confirmed_feeds_to_internal_processor(self):
         """原生币已确认时，_observe_confirmed_transaction 用正确载荷调用 TransferService。"""
         tx_hash = "0x" + "ab" * 32
         receipt = {
@@ -252,8 +244,14 @@ class ObserveConfirmedNativeTest(TestCase):
         mock_w3.eth.get_transaction.return_value = mock_tx
 
         with (
-            patch.object(type(self.chain), "w3", new_callable=lambda: property(lambda self: mock_w3)),
-            patch("evm.internal_tx.processor.process_internal_transaction") as process_mock,
+            patch.object(
+                type(self.chain),
+                "w3",
+                new_callable=lambda: property(lambda self: mock_w3),
+            ),
+            patch(
+                "evm.internal_tx.processor.process_internal_transaction"
+            ) as process_mock,
         ):
             EvmTaskPoller._observe_confirmed_transaction(
                 evm_task=self.evm_task,
@@ -275,12 +273,6 @@ class ObserveConfirmedErc20Test(TestCase):
     """ERC-20 路径：从 receipt.logs 解析 Transfer，无需调用 get_transaction。"""
 
     def setUp(self):
-        self.eth = Crypto.objects.create(
-            name="Ethereum Poller ERC20",
-            symbol="ETHCE",
-            decimals=18,
-            coingecko_id="ethereum-poller-erc20",
-        )
         self.usdt = Crypto.objects.create(
             name="Tether Poller",
             symbol="USDTC",
@@ -288,17 +280,10 @@ class ObserveConfirmedErc20Test(TestCase):
             coingecko_id="tether-poller",
         )
         self.chain = Chain.objects.create(
-            code="eth-coord-erc20",
-            name="Ethereum Poller ERC20",
-            type=ChainType.EVM,
-            chain_id=90_002,
+            code=ChainCode.Anvil,
             rpc="",
-            native_coin=self.eth,
             active=True,
         )
-        # currencies.signals 在 Chain 创建后自动触发 ensure_native_crypto_mapping_for_chain，
-        # 已经建好 (eth, chain) 的 ChainToken；仅补齐精度覆盖和补建 USDT ChainToken。
-        ChainToken.objects.filter(crypto=self.eth, chain=self.chain).update(decimals=18)
         ChainToken.objects.create(
             crypto=self.usdt,
             chain=self.chain,
@@ -334,7 +319,7 @@ class ObserveConfirmedErc20Test(TestCase):
             tx_kind=TxKind.CONTRACT_CALL,
         )
 
-    def test_erc20_confirmed_feeds_to_scanner_pipeline(self):
+    def test_erc20_confirmed_feeds_to_internal_processor(self):
         """ERC-20 已确认时，从 receipt.logs 解析 Transfer，不调用 get_transaction。"""
         tx_hash = "0x" + "cd" * 32
         transfer_log = _make_erc20_transfer_log(
@@ -357,8 +342,14 @@ class ObserveConfirmedErc20Test(TestCase):
         }
 
         with (
-            patch.object(type(self.chain), "w3", new_callable=lambda: property(lambda self: mock_w3)),
-            patch("evm.internal_tx.processor.process_internal_transaction") as process_mock,
+            patch.object(
+                type(self.chain),
+                "w3",
+                new_callable=lambda: property(lambda self: mock_w3),
+            ),
+            patch(
+                "evm.internal_tx.processor.process_internal_transaction"
+            ) as process_mock,
         ):
             EvmTaskPoller._observe_confirmed_transaction(
                 evm_task=self.evm_task,
@@ -394,8 +385,14 @@ class ObserveConfirmedErc20Test(TestCase):
         }
 
         with (
-            patch.object(type(self.chain), "w3", new_callable=lambda: property(lambda self: mock_w3)),
-            patch("evm.internal_tx.processor.process_internal_transaction") as process_mock,
+            patch.object(
+                type(self.chain),
+                "w3",
+                new_callable=lambda: property(lambda self: mock_w3),
+            ),
+            patch(
+                "evm.internal_tx.processor.process_internal_transaction"
+            ) as process_mock,
         ):
             EvmTaskPoller._observe_confirmed_transaction(
                 evm_task=self.evm_task,
@@ -410,16 +407,10 @@ class ObserveConfirmedErc20Test(TestCase):
 # 集成测试：poll_chain → TransferService → process() 完整管线
 # ---------------------------------------------------------------------------
 class PollerIntegrationTest(TestCase):
-    """协调器兜底路径集成测试：scanner 漏扫时，协调器作为兜底创建 Transfer 并完成匹配。"""
+    """Poller 负责收口本系统主动发起的 EVM 交易。"""
 
     def setUp(self):
         self.wallet = Wallet.objects.create()
-        self.native = Crypto.objects.create(
-            name="Ethereum Poller Integration",
-            symbol="ETHCI",
-            coingecko_id="ethereum-poller-integration",
-            decimals=18,
-        )
         self.token = Crypto.objects.create(
             name="USDC Poller Integration",
             symbol="USDCCI",
@@ -427,14 +418,11 @@ class PollerIntegrationTest(TestCase):
             decimals=6,
         )
         self.chain = Chain.objects.create(
-            code="eth-coord-integ",
-            name="Ethereum Poller Integration",
-            type=ChainType.EVM,
-            chain_id=90_100,
+            code=ChainCode.Anvil,
             rpc="",
-            native_coin=self.native,
             active=True,
         )
+        self.native = self.chain.native_coin
         # currencies.signals 自动创建 native ChainToken；只需创建 token ChainToken
         ChainToken.objects.create(
             crypto=self.token,
@@ -474,7 +462,10 @@ class PollerIntegrationTest(TestCase):
             success=None,
         )
         TxHash.objects.create(
-            tx_task=base_task, chain=self.chain, hash=tx_hash, version=0,
+            tx_task=base_task,
+            chain=self.chain,
+            hash=tx_hash,
+            version=0,
         )
         evm_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -524,7 +515,10 @@ class PollerIntegrationTest(TestCase):
             success=None,
         )
         TxHash.objects.create(
-            tx_task=base_task, chain=self.chain, hash=tx_hash, version=0,
+            tx_task=base_task,
+            chain=self.chain,
+            hash=tx_hash,
+            version=0,
         )
         evm_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -553,6 +547,97 @@ class PollerIntegrationTest(TestCase):
         )
         return withdrawal, base_task, evm_task
 
+    def _create_vault_slot_collect(self, *, tx_hash):
+        """创建一个 VaultSlot ERC20 归集场景。"""
+        from chains.models import TxHash
+        from evm.intents import build_vault_slot_collect_intent
+        from evm.models import VaultSlot
+        from evm.models import VaultSlotUsage
+        from projects.models import Project
+
+        slot_address = Web3.to_checksum_address("0x" + "88" * 20)
+        vault_address = Web3.to_checksum_address("0x" + "99" * 20)
+        project = Project.objects.create(
+            name=f"proj-slot-{tx_hash[-6:]}",
+            wallet=self.wallet,
+        )
+        VaultSlot.objects.create(
+            project=project,
+            chain=self.chain,
+            usage=VaultSlotUsage.INVOICE,
+            invoice_index=1,
+            address=slot_address,
+            vault_address=vault_address,
+            salt=b"\x01" * 32,
+        )
+        intent = build_vault_slot_collect_intent(
+            address=self.addr,
+            chain=self.chain,
+            vault_slot_address=slot_address,
+            token_address=_CONTRACT_HEX,
+        )
+        base_task = TxTask.objects.create(
+            chain=self.chain,
+            address=self.addr,
+            tx_type=TxTaskType.VaultSlotCollect,
+            tx_hash=tx_hash,
+            stage=TxTaskStage.PENDING_CHAIN,
+            success=None,
+        )
+        TxHash.objects.create(
+            tx_task=base_task,
+            chain=self.chain,
+            hash=tx_hash,
+            version=0,
+        )
+        evm_task = EvmTxTask.objects.create(
+            base_task=base_task,
+            address=self.addr,
+            chain=self.chain,
+            nonce=0,
+            to=intent.to,
+            value=intent.value,
+            data=intent.data,
+            gas=intent.gas,
+            tx_kind=intent.tx_kind,
+            gas_price=1,
+            signed_payload="0x01",
+        )
+        return base_task, evm_task, slot_address, vault_address
+
+    def _create_vault_slot_deploy(self, *, tx_hash):
+        """创建一个 VaultSlot 部署场景。"""
+        from chains.models import TxHash
+
+        base_task = TxTask.objects.create(
+            chain=self.chain,
+            address=self.addr,
+            tx_type=TxTaskType.VaultSlotDeploy,
+            tx_hash=tx_hash,
+            stage=TxTaskStage.PENDING_CHAIN,
+            success=None,
+        )
+        TxHash.objects.create(
+            tx_task=base_task,
+            chain=self.chain,
+            hash=tx_hash,
+            version=0,
+        )
+        evm_task = EvmTxTask.objects.create(
+            base_task=base_task,
+            address=self.addr,
+            chain=self.chain,
+            nonce=0,
+            to=Web3.to_checksum_address("0x" + "de" * 20),
+            value=0,
+            data="0x1234",
+            gas=300_000,
+            tx_kind=TxKind.CONTRACT_CALL,
+            gas_price=1,
+            signed_payload="0x01",
+        )
+        return base_task, evm_task
+
     def _make_overdue(self, evm_task):
         from datetime import timedelta
 
@@ -576,12 +661,14 @@ class PollerIntegrationTest(TestCase):
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value=receipt),
                 get_block=Mock(return_value={"timestamp": timestamp}),
-                get_transaction=Mock(return_value={
-                    "hash": tx_hash,
-                    "from": _VAULT_HEX,
-                    "to": _CONTRACT_HEX,
-                    "value": 0,
-                }),
+                get_transaction=Mock(
+                    return_value={
+                        "hash": tx_hash,
+                        "from": _VAULT_HEX,
+                        "to": _CONTRACT_HEX,
+                        "value": 0,
+                    }
+                ),
             ),
         )
 
@@ -592,13 +679,78 @@ class PollerIntegrationTest(TestCase):
             eth=SimpleNamespace(
                 get_transaction_receipt=Mock(return_value=receipt),
                 get_block=Mock(return_value={"timestamp": timestamp}),
-                get_transaction=Mock(return_value={
-                    "hash": tx_hash,
-                    "from": _VAULT_HEX,
-                    "to": _RECEIVER_HEX,
-                    "value": 1500000000000000000,
-                    "input": "0x",
-                }),
+                get_transaction=Mock(
+                    return_value={
+                        "hash": tx_hash,
+                        "from": _VAULT_HEX,
+                        "to": _RECEIVER_HEX,
+                        "value": 1500000000000000000,
+                        "input": "0x",
+                    }
+                ),
+            ),
+        )
+
+    def _mock_vault_slot_collect_rpc(
+        self,
+        *,
+        tx_hash,
+        slot_address,
+        vault_address,
+        block_number=100,
+        timestamp=1700000000,
+    ):
+        """返回一个配好 VaultSlot ERC20 归集场景 RPC mock。"""
+        value_int = 100_000_000
+        collected_log = {
+            "address": slot_address,
+            "topics": [
+                Web3.keccak(text="XcashCollected(address,uint256)").hex(),
+                "0x" + _CONTRACT_HEX.removeprefix("0x").zfill(64).lower(),
+            ],
+            "data": "0x" + hex(value_int)[2:].zfill(64),
+            "logIndex": 2,
+        }
+        transfer_log = _make_erc20_transfer_log(
+            contract_address=_CONTRACT_HEX,
+            from_hex=slot_address,
+            to_hex=vault_address,
+            value_int=value_int,
+            log_index=3,
+        )
+        receipt = {
+            "status": 1,
+            "blockNumber": block_number,
+            "blockHash": "0x" + "61" * 32,
+            "logs": [collected_log, transfer_log],
+        }
+        return SimpleNamespace(
+            eth=SimpleNamespace(
+                get_transaction_receipt=Mock(return_value=receipt),
+                get_block=Mock(return_value={"timestamp": timestamp}),
+                get_transaction=Mock(
+                    return_value={
+                        "hash": tx_hash,
+                        "from": _VAULT_HEX,
+                        "to": slot_address,
+                        "value": 0,
+                    }
+                ),
+            ),
+        )
+
+    def _mock_vault_slot_deploy_rpc(self, *, tx_hash, block_number=100):
+        receipt = {"status": 1, "blockNumber": block_number, "logs": []}
+        return SimpleNamespace(
+            eth=SimpleNamespace(
+                get_transaction_receipt=Mock(return_value=receipt),
+                get_transaction=Mock(
+                    return_value={
+                        "hash": tx_hash,
+                        "from": _VAULT_HEX,
+                        "value": 0,
+                    }
+                ),
             ),
         )
 
@@ -624,7 +776,8 @@ class PollerIntegrationTest(TestCase):
 
         # 验证 Transfer 被创建且字段正确
         self.assertEqual(
-            Transfer.objects.filter(chain=self.chain, hash=tx_hash).count(), 1,
+            Transfer.objects.filter(chain=self.chain, hash=tx_hash).count(),
+            1,
         )
         transfer = Transfer.objects.get(chain=self.chain, hash=tx_hash)
         self.assertEqual(transfer.event_id, "erc20:3")
@@ -639,6 +792,79 @@ class PollerIntegrationTest(TestCase):
         # TxTask 应已被推进到 PENDING_CONFIRM
         base_task.refresh_from_db()
         self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+
+    @patch("chains.tasks.process_transfer.apply_async")
+    @patch.object(Chain, "w3", new_callable=PropertyMock)
+    def test_vault_slot_collect_poller_observe_then_process_marks_collect(
+        self,
+        chain_w3_mock,
+        process_mock,
+    ):
+        tx_hash = "0x" + "a7" * 32
+        base_task, evm_task, slot_address, vault_address = (
+            self._create_vault_slot_collect(tx_hash=tx_hash)
+        )
+        self._make_overdue(evm_task)
+        chain_w3_mock.return_value = self._mock_vault_slot_collect_rpc(
+            tx_hash=tx_hash,
+            slot_address=slot_address,
+            vault_address=vault_address,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            EvmTaskPoller.poll_chain(chain=self.chain)
+
+        transfer = Transfer.objects.get(chain=self.chain, hash=tx_hash)
+        self.assertEqual(transfer.event_id, "collect:2")
+        self.assertEqual(transfer.from_address, slot_address)
+        self.assertEqual(transfer.to_address, vault_address)
+        self.assertEqual(transfer.amount, Decimal("100"))
+        process_mock.assert_called_once()
+
+        transfer.process()
+        transfer.refresh_from_db()
+        base_task.refresh_from_db()
+        self.assertEqual(transfer.type, TransferType.Collect)
+        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+
+    @patch.object(Chain, "w3", new_callable=PropertyMock)
+    def test_vault_slot_deploy_poller_marks_pending_confirm_without_transfer(
+        self,
+        chain_w3_mock,
+    ):
+        tx_hash = "0x" + "a8" * 32
+        base_task, evm_task = self._create_vault_slot_deploy(tx_hash=tx_hash)
+        self._make_overdue(evm_task)
+        chain_w3_mock.return_value = self._mock_vault_slot_deploy_rpc(tx_hash=tx_hash)
+
+        EvmTaskPoller.poll_chain(chain=self.chain)
+
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertIsNone(base_task.success)
+        self.assertFalse(Transfer.objects.filter(chain=self.chain, hash=tx_hash).exists())
+
+    @patch("evm.tasks.AdapterFactory.get_adapter")
+    def test_confirm_non_transfer_tx_tasks_finalizes_after_confirm_window(
+        self,
+        get_adapter_mock,
+    ):
+        tx_hash = "0x" + "a9" * 32
+        base_task, _evm_task = self._create_vault_slot_deploy(tx_hash=tx_hash)
+        TxTask.mark_pending_confirm(chain=self.chain, tx_hash=tx_hash)
+        self.chain.latest_block_number = 120
+        self.chain.save(update_fields=["latest_block_number"])
+        get_adapter_mock.return_value.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.CONFIRMED,
+            block_number=100,
+            block_hash="0x" + "62" * 32,
+        )
+
+        confirm_non_transfer_tx_tasks()
+
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.stage, TxTaskStage.FINALIZED)
+        self.assertIs(base_task.success, True)
 
     # ---- Test 2 ----
 
@@ -721,7 +947,9 @@ class PollerIntegrationTest(TestCase):
         from withdrawals.models import WithdrawalStatus
 
         tx_hash = "0x" + "a3" * 32
-        withdrawal, base_task, evm_task = self._create_native_withdrawal(tx_hash=tx_hash)
+        withdrawal, base_task, evm_task = self._create_native_withdrawal(
+            tx_hash=tx_hash
+        )
         self._make_overdue(evm_task)
         chain_w3_mock.return_value = self._mock_native_rpc(tx_hash=tx_hash)
 
@@ -757,7 +985,7 @@ class PollerIntegrationTest(TestCase):
         withdrawal, base_task, evm_task = self._create_erc20_withdrawal(tx_hash=tx_hash)
         self._make_overdue(evm_task)
 
-        # 预先创建 Transfer，模拟 scanner 已处理
+        # 预先创建 Transfer，模拟内部交易处理器已处理
         Transfer.objects.create(
             chain=self.chain,
             block=100,
@@ -779,7 +1007,8 @@ class PollerIntegrationTest(TestCase):
 
         # 不应产生重复记录
         self.assertEqual(
-            Transfer.objects.filter(chain=self.chain, hash=tx_hash).count(), 1,
+            Transfer.objects.filter(chain=self.chain, hash=tx_hash).count(),
+            1,
         )
         # TxTask 仍被推进到 PENDING_CONFIRM（幂等路径也会调用 mark_pending_confirm）
         base_task.refresh_from_db()
@@ -819,7 +1048,8 @@ class PollerIntegrationTest(TestCase):
         self.assertEqual(withdrawal.status, WithdrawalStatus.FAILED)
         # 失败交易不应创建 Transfer
         self.assertEqual(
-            Transfer.objects.filter(hash=tx_hash).count(), 0,
+            Transfer.objects.filter(hash=tx_hash).count(),
+            0,
         )
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)

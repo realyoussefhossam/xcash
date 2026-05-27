@@ -37,9 +37,9 @@ EVM_BROADCAST_SCHEDULE_SECONDS = get_int_default(
     "CELERY_EVM_BROADCAST_SCHEDULE_SECONDS",
     8,
 )
-EVM_RESCAN_SCHEDULE_SECONDS = get_int_default(
-    "CELERY_EVM_RESCAN_SCHEDULE_SECONDS",
-    45,
+EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS = get_int_default(
+    "CELERY_EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS",
+    60,
 )
 TRON_SCAN_SCHEDULE_SECONDS = get_int(
     "CELERY_TRON_SCAN_SCHEDULE_SECONDS",
@@ -87,14 +87,13 @@ chains_tasks = {
 # evm app
 # ---------------------------
 evm_tasks = {
-    "dispatch_due_evm_tx_tasks": {
-        "task": "evm.tasks.dispatch_due_evm_tx_tasks",
+    "dispatch_evm_tx_tasks": {
+        "task": "evm.tasks.dispatch_evm_tx_tasks",
         "schedule": EVM_BROADCAST_SCHEDULE_SECONDS,
     },
-    "rescan_pending_evm_chains": {
-        # 兜底：主扫描漏扫导致的 PENDING_CHAIN 卡单，周期性按 receipt 主动命中并定点重扫。
-        "task": "evm.tasks.rescan_pending_evm_chains",
-        "schedule": EVM_RESCAN_SCHEDULE_SECONDS,
+    "confirm_non_transfer_tx_tasks": {
+        "task": "evm.tasks.confirm_non_transfer_tx_tasks",
+        "schedule": EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS,
     },
 }
 
