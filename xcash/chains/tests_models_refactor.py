@@ -51,3 +51,51 @@ def test_chain_invalid_choice_rejected():
     chain = Chain(chain="not-a-real-chain")
     with pytest.raises(ValidationError):
         chain.full_clean()
+
+
+from unittest.mock import patch
+
+
+@pytest.mark.django_db
+def test_clean_skips_when_rpc_empty():
+    chain = Chain(chain=ChainName.Ethereum, rpc="")
+    chain.full_clean()
+
+
+@pytest.mark.django_db
+def test_clean_skips_for_tron():
+    chain = Chain(chain=ChainName.Tron, rpc="", tron_api_key="key")
+    chain.full_clean()
+
+
+@pytest.mark.django_db
+def test_clean_accepts_matching_rpc():
+    chain = Chain(chain=ChainName.Ethereum, rpc="http://fake.rpc")
+    with patch("chains.models.Web3") as mock_w3:
+        mock_w3.HTTPProvider.return_value = object()
+        mock_w3.return_value.eth.chain_id = 1
+        chain.full_clean()
+
+
+@pytest.mark.django_db
+def test_clean_rejects_mismatching_rpc():
+    chain = Chain(chain=ChainName.Ethereum, rpc="http://fake.rpc")
+    with patch("chains.models.Web3") as mock_w3:
+        mock_w3.HTTPProvider.return_value = object()
+        mock_w3.return_value.eth.chain_id = 56  # BSC, not Ethereum
+        with pytest.raises(ValidationError) as exc_info:
+            chain.full_clean()
+        assert "rpc" in exc_info.value.message_dict
+
+
+@pytest.mark.django_db
+def test_clean_rejects_unreachable_rpc():
+    chain = Chain(chain=ChainName.Ethereum, rpc="http://fake.rpc")
+    with patch("chains.models.Web3") as mock_w3:
+        mock_w3.HTTPProvider.return_value = object()
+        type(mock_w3.return_value.eth).chain_id = property(
+            lambda self: (_ for _ in ()).throw(ConnectionError("boom"))
+        )
+        with pytest.raises(ValidationError) as exc_info:
+            chain.full_clean()
+        assert "rpc" in exc_info.value.message_dict

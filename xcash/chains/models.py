@@ -117,6 +117,37 @@ class Chain(models.Model):
         )
         return crypto
 
+    def clean(self) -> None:
+        """收紧合法 RPC：仅当 EVM 链配置了 RPC 时，校验远端 chain_id 与常量一致。
+
+        把过去 `_detect_chain_id` 从 RPC 写入字段的逻辑反过来用 ——
+        以常量为单一事实源，校验运维填入的 RPC 是否真的对应所选链。
+        Tron 无 chain_id 概念，跳过此校验；空 RPC 允许占位创建，配置完整时再校验。
+        """
+        super().clean()
+        # full_clean 会先收集 clean_fields 的错误再调用本方法，所以这里可能拿到非法 chain。
+        # 让 clean_fields 的 choices 校验报错即可，本方法直接放行。
+        if self.chain not in CHAIN_SPECS:
+            return
+        if self.type != ChainType.EVM or not self.rpc:
+            return
+        try:
+            w3 = Web3(Web3.HTTPProvider(self.rpc, request_kwargs={"timeout": 8}))
+            actual_chain_id = w3.eth.chain_id
+        except Exception as exc:
+            raise ValidationError(
+                {"rpc": _("RPC 连接失败：%(err)s") % {"err": exc}}
+            ) from exc
+        if actual_chain_id != self.chain_id:
+            raise ValidationError(
+                {
+                    "rpc": _(
+                        "RPC chain_id 与所选链不匹配：期望 %(expected)s，实际 %(actual)s"
+                    )
+                    % {"expected": self.chain_id, "actual": actual_chain_id}
+                }
+            )
+
     def save(self, *args, **kwargs):
         self.full_clean()
         with db_transaction.atomic():
