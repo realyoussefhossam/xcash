@@ -17,7 +17,7 @@ from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TxHash
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import ChainToken
@@ -92,8 +92,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         # 协调器通过 TxHash 历史记录查链上 receipt，必须有至少一条记录。
         TxHash.objects.create(
@@ -175,8 +174,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
         base_task.refresh_from_db()
         evm_task.refresh_from_db()
         self.assertEqual(withdrawal.status, "failed")
-        self.assertEqual(base_task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(base_task.success, False)
+        self.assertEqual(base_task.status, TxTaskStatus.FAILED)
         self.assertEqual(Transfer.objects.count(), 0)
         # 当前契约：FAILED 不发 webhook（与 withdrawals.tests 一致）。
         webhook_mock.assert_not_called()
@@ -207,8 +205,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
         base_task.refresh_from_db()
         evm_task.refresh_from_db()
         self.assertEqual(withdrawal.status, WithdrawalStatus.PENDING)
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
         webhook_mock.assert_not_called()
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)
@@ -270,7 +267,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
         evm_task.refresh_from_db()
         base_task.refresh_from_db()
         self.assertEqual(evm_task.last_attempt_at, old_attempt_at)
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
         send_raw_mock.assert_not_called()
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)
@@ -337,7 +334,7 @@ class EvmInternalTaskConfirmationTests(TestCase):
         evm_task.refresh_from_db()
         base_task.refresh_from_db()
         self.assertGreater(evm_task.last_attempt_at, old_attempt_at)
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
         send_raw_mock.assert_called_once()
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)
@@ -418,4 +415,4 @@ class EvmInternalTaskConfirmationTests(TestCase):
         EvmTaskPoller.poll_chain(chain=self.chain)
 
         evm_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)

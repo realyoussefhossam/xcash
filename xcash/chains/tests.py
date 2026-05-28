@@ -30,7 +30,7 @@ from chains.models import TransferStatus
 from chains.models import TransferType
 from chains.models import TxHash
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from chains.service import ObservedTransferPayload
@@ -226,20 +226,6 @@ class TxTaskValidationTests(TestCase):
             address="0x0000000000000000000000000000000000000001",
         )
 
-    def test_failed_result_must_be_finalized(self):
-        # 失败是终局结果，必须落在已结束阶段。
-        task = TxTask(
-            chain=self.chain,
-            address=self.addr,
-            tx_type=TxTaskType.Withdrawal,
-            tx_hash="0x" + "1" * 64,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=False,
-        )
-
-        with self.assertRaises(ValidationError):
-            task.full_clean()
-
 
 class WalletBip44AccountMapTests(TestCase):
     def test_vault_maps_to_bip44_account_0(self):
@@ -271,8 +257,7 @@ class TxHashModelTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "a1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
 
     def test_tx_hash_unique_per_chain_hash(self):
@@ -346,8 +331,7 @@ class TxTaskTxHashHistoryTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "e1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
 
     def test_append_tx_hash_updates_current_tx_hash_and_keeps_history(self):
@@ -625,8 +609,7 @@ class TransferConfirmDispatchTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success=None,
+            status=TxTaskStatus.PENDING_CONFIRM,
         )
         withdrawal = Withdrawal.objects.create(
             project=project,
@@ -847,8 +830,7 @@ class TransferConfirmDispatchTests(TestCase):
         self.assertEqual(withdrawal.status, WithdrawalStatus.CONFIRMING)
         self.assertEqual(withdrawal.transfer_id, transfer.pk)
         tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(tx_task.success)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
@@ -881,7 +863,7 @@ class TransferConfirmDispatchTests(TestCase):
         self.assertEqual(transfer.block_hash, "0x" + "12" * 32)
         self.assertEqual(transfer.status, TransferStatus.CONFIRMING)
         self.assertEqual(withdrawal.status, WithdrawalStatus.CONFIRMING)
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
@@ -917,7 +899,7 @@ class TransferConfirmDispatchTests(TestCase):
         self.assertEqual(transfer.block_hash, "0x" + "22" * 32)
         self.assertEqual(transfer.status, TransferStatus.CONFIRMING)
         self.assertEqual(withdrawal.status, WithdrawalStatus.CONFIRMING)
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
@@ -949,7 +931,7 @@ class TransferConfirmDispatchTests(TestCase):
         self.assertEqual(withdrawal.status, WithdrawalStatus.CONFIRMING)
         self.assertEqual(withdrawal.transfer_id, transfer.pk)
         tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("common.decorators.cache.delete", return_value=True)
     @patch("common.decorators.cache.add", return_value=True)
@@ -980,7 +962,7 @@ class TransferConfirmDispatchTests(TestCase):
         self.assertEqual(withdrawal.status, WithdrawalStatus.PENDING)
         self.assertIsNone(withdrawal.transfer)
         tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CHAIN)
 
 
 class SignerBackendTests(TestCase):
@@ -1590,8 +1572,7 @@ class TxTaskTransitionTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "dd" * 32,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success=None,
+            status=TxTaskStatus.PENDING_CONFIRM,
         )
 
     def test_mark_finalized_success_transitions_correctly(self):
@@ -1600,8 +1581,7 @@ class TxTaskTransitionTests(TestCase):
         )
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(self.task.success, True)
+        self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
     def test_reset_to_pending_chain_transitions_correctly(self):
         updated = TxTask.reset_to_pending_chain(
@@ -1609,8 +1589,7 @@ class TxTaskTransitionTests(TestCase):
         )
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(self.task.success)
+        self.assertEqual(self.task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_mark_finalized_success_can_resolve_old_hash(self):
         old_hash = self.task.tx_hash
@@ -1624,8 +1603,7 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(self.task.success, True)
+        self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
         self.assertEqual(self.task.tx_hash, old_hash)
 
     def test_reset_to_pending_chain_can_resolve_old_hash(self):
@@ -1640,8 +1618,7 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(self.task.success)
+        self.assertEqual(self.task.status, TxTaskStatus.PENDING_CHAIN)
         self.assertEqual(self.task.tx_hash, old_hash)
 
     def test_mark_finalized_failed_transitions_correctly(self):
@@ -1650,19 +1627,17 @@ class TxTaskTransitionTests(TestCase):
         )
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(self.task.success, False)
+        self.assertEqual(self.task.status, TxTaskStatus.FAILED)
 
-    def test_mark_finalized_failed_honors_expected_stage(self):
+    def test_mark_finalized_failed_honors_expected_status(self):
         updated = TxTask.mark_finalized_failed(
             task_id=self.task.pk,
-            expected_stage=TxTaskStage.PENDING_CHAIN,
+            expected_status=TxTaskStatus.PENDING_CHAIN,
         )
 
         self.assertEqual(updated, 0)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(self.task.success)
+        self.assertEqual(self.task.status, TxTaskStatus.PENDING_CONFIRM)
 
     def test_mark_finalized_success_does_not_override_failed_final_state(self):
         TxTask.mark_finalized_failed(
@@ -1676,8 +1651,7 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 0)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(self.task.success, False)
+        self.assertEqual(self.task.status, TxTaskStatus.FAILED)
 
     def test_mark_finalized_failed_does_not_override_success_final_state(self):
         TxTask.mark_finalized_success(
@@ -1691,21 +1665,20 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 0)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(self.task.success, True)
+        self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
     def test_mark_pending_confirm_skips_finalized_tasks(self):
-        # 先将任务标记为已完结
+        # 先将任务标记为已确认终局
         TxTask.mark_finalized_success(
             chain=self.chain, tx_hash=self.task.tx_hash
         )
-        # mark_pending_confirm 不应回退已完结的任务
+        # mark_pending_confirm 不应回退已终局的任务
         updated = TxTask.mark_pending_confirm(
             chain=self.chain, tx_hash=self.task.tx_hash
         )
         self.assertEqual(updated, 0)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.FINALIZED)
+        self.assertEqual(self.task.status, TxTaskStatus.CONFIRMED)
 
     def test_mark_pending_confirm_with_empty_hash_is_noop(self):
         updated = TxTask.mark_pending_confirm(chain=self.chain, tx_hash="")
@@ -1723,14 +1696,12 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 1)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(self.task.success)
+        self.assertEqual(self.task.status, TxTaskStatus.PENDING_CONFIRM)
         self.assertEqual(self.task.tx_hash, old_hash)
 
     def test_reset_to_pending_chain_skips_non_pending_confirm_tasks(self):
         TxTask.objects.filter(pk=self.task.pk).update(
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         updated = TxTask.reset_to_pending_chain(
             chain=self.chain,
@@ -1739,8 +1710,7 @@ class TxTaskTransitionTests(TestCase):
 
         self.assertEqual(updated, 0)
         self.task.refresh_from_db()
-        self.assertEqual(self.task.stage, TxTaskStage.QUEUED)
-        self.assertIsNone(self.task.success)
+        self.assertEqual(self.task.status, TxTaskStatus.QUEUED)
 
 
 class BlockNumberUpdatedCompensationTests(TestCase):

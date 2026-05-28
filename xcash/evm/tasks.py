@@ -9,12 +9,12 @@ from chains.adapters import TxCheckStatus
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
-from evm.internal_tx.routing import NON_TRANSFER_TX_TASK_TYPES
-from evm.internal_tx.routing import get_handler
 from common.decorators import singleton_task
 from common.time import ago
+from evm.internal_tx.routing import NON_TRANSFER_TX_TASK_TYPES
+from evm.internal_tx.routing import get_handler
 from evm.models import EvmTxTask
 from evm.poller import EvmTaskPoller
 from evm.scanner.rpc import EvmScannerRpcError
@@ -41,10 +41,7 @@ def _broadcast_evm_task(pk: int) -> None:
     tx_task = EvmTxTask.objects.select_related("base_task").get(pk=pk)
     # 普通 Celery 入口只负责 QUEUED 首次广播；PENDING_CHAIN 重播统一由
     # poller 在超时与查 receipt 后触发，避免重复消息绕过重播间隔。
-    if (
-        tx_task.base_task.success is not None
-        or tx_task.base_task.stage != TxTaskStage.QUEUED
-    ):
+    if tx_task.base_task.status != TxTaskStatus.QUEUED:
         return
     if tx_task.has_lower_queued_nonce() or tx_task.is_pipeline_full():
         logger.info(
@@ -62,11 +59,8 @@ def _broadcast_evm_task(pk: int) -> None:
         return
     tx_task.broadcast()
     # 广播成功后，链式调度同地址下一个 QUEUED nonce，快速填充 pipeline。
-    tx_task.base_task.refresh_from_db(fields=["stage", "success"])
-    if (
-        tx_task.base_task.stage != TxTaskStage.PENDING_CHAIN
-        or tx_task.base_task.success is not None
-    ):
+    tx_task.base_task.refresh_from_db(fields=["status"])
+    if tx_task.base_task.status != TxTaskStatus.PENDING_CHAIN:
         return
     _chain_dispatch_next(tx_task)
 
@@ -80,7 +74,7 @@ def _chain_dispatch_next(completed_task: EvmTxTask) -> None:
         .filter(
             address=completed_task.address,
             chain=completed_task.chain,
-            base_task__stage=TxTaskStage.QUEUED,
+            base_task__status=TxTaskStatus.QUEUED,
         )
         .order_by("nonce")
         .first()
@@ -107,7 +101,7 @@ def dispatch_evm_tx_tasks() -> None:
         .filter(
             Q(last_attempt_at__isnull=True) | Q(last_attempt_at__lt=ago(minutes=4)),
             created_at__lt=ago(seconds=4),
-            base_task__stage=TxTaskStage.QUEUED,
+            base_task__status=TxTaskStatus.QUEUED,
         )
         .order_by("address_id", "nonce", "created_at")
     )
@@ -136,8 +130,7 @@ def confirm_non_transfer_tx_tasks() -> None:
         .filter(
             chain__type=ChainType.EVM,
             tx_type__in=NON_TRANSFER_TX_TASK_TYPES,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success__isnull=True,
+            status=TxTaskStatus.PENDING_CONFIRM,
             tx_hash__isnull=False,
         )
         .exclude(tx_hash="")
@@ -168,7 +161,7 @@ def confirm_non_transfer_tx_tasks() -> None:
         elif status == TxCheckStatus.FAILED:
             updated = TxTask.mark_finalized_failed(
                 task_id=task.pk,
-                expected_stage=TxTaskStage.PENDING_CONFIRM,
+                expected_status=TxTaskStatus.PENDING_CONFIRM,
             )
             if updated:
                 get_handler(TxTaskType(task.tx_type)).finalize_failed(task)

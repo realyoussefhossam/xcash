@@ -502,11 +502,20 @@ class TransferType(models.TextChoices):
     Collect = "collect", "💰 归集"
 
 
-class TxTaskStage(models.TextChoices):
+class TxTaskStatus(models.TextChoices):
     QUEUED = "queued", _("待广播")
     PENDING_CHAIN = "pending_chain", _("待上链")
     PENDING_CONFIRM = "pending_confirm", _("确认中")
-    FINALIZED = "finalized", _("已完结")
+    CONFIRMED = "confirmed", _("已确认")
+    FAILED = "failed", _("失败")
+
+
+# 终局状态集合：链上交易已得出确定结果（成功确认或永久失败），不再推进。
+# 区块链上链周期是固定的线性流程 + 末端分叉，因此用单枚举表达，
+# 终局态用该集合判定，避免再维护 stage/success 两字段的跨字段不变式。
+TERMINAL_TX_TASK_STATUSES = frozenset(
+    {TxTaskStatus.CONFIRMED, TxTaskStatus.FAILED}
+)
 
 
 class TxHash(models.Model):
@@ -556,8 +565,9 @@ class TxTask(UndeletableModel):
     """跨链统一的链上任务锚点。
 
     设计原则：
-    - stage 只描述当前所处阶段：待广播 / 待上链 / 确认中 / 已完结。
-    - success 只描述终局是否成功：None 表示未知，True 表示成功，False 表示失败。
+    - status 用单枚举描述上链生命周期：待广播 → 待上链 → 确认中 →（已确认 | 失败）。
+      上链周期是固定的线性流程加末端成功/失败分叉，故无需把"阶段"与"结果"
+      拆成两个字段再用跨字段约束维持一致；终局态由 TERMINAL_TX_TASK_STATUSES 判定。
     - 广播重试等实现细节继续留在各链子表，避免把"是否广播"污染到统一领域模型。
     - Withdrawal 等业务对象统一外键到该模型，不再直接依赖具体链实现或 tx hash。
     """
@@ -582,16 +592,10 @@ class TxTask(UndeletableModel):
         blank=True,
         null=True,
     )
-    stage = models.CharField(
-        _("阶段"),
-        choices=TxTaskStage,
-        default=TxTaskStage.QUEUED,
-    )
-    success = models.BooleanField(
-        _("是否成功"),
-        null=True,
-        blank=True,
-        default=None,
+    status = models.CharField(
+        _("状态"),
+        choices=TxTaskStatus,
+        default=TxTaskStatus.QUEUED,
     )
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
     updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
@@ -603,18 +607,6 @@ class TxTask(UndeletableModel):
                 fields=("chain", "tx_hash"),
                 name="uniq_tx_task_chain_hash",
             ),
-            models.CheckConstraint(
-                # 只要出现成功/失败终局结果，就必须已经进入已完结阶段。
-                condition=models.Q(success__isnull=True)
-                | models.Q(stage=TxTaskStage.FINALIZED),
-                name="ck_tx_task_success_requires_finalized_stage",
-            ),
-            models.CheckConstraint(
-                # 已完结任务不能继续保留未知结果，否则会把阶段和结果语义混在一起。
-                condition=~models.Q(stage=TxTaskStage.FINALIZED)
-                | models.Q(success__isnull=False),
-                name="ck_tx_task_finalized_requires_success_value",
-            ),
         ]
         verbose_name = _("链上任务")
         verbose_name_plural = verbose_name
@@ -622,36 +614,25 @@ class TxTask(UndeletableModel):
     def __str__(self):
         return self.tx_hash or f"tx-task-{self.pk or 'unsaved'}"
 
-    def clean(self) -> None:
-        """在模型层显式约束阶段、成功标记二者的一致性。"""
-        super().clean()
-        errors = {}
-
-        if self.success is not None:
-            if self.stage != TxTaskStage.FINALIZED:
-                errors["stage"] = _("成功/失败结果只能出现在已完结阶段。")
-
-        if self.stage == TxTaskStage.FINALIZED and self.success is None:
-            errors["success"] = _("已完结任务必须给出成功或失败结果。")
-
-        if errors:
-            raise ValidationError(errors)
-
     def save(self, *args, **kwargs):
-        # TxTask 是跨链主锚点，统一在保存前执行 full_clean，避免后台和脚本写入脏状态。
+        # TxTask 是跨链主锚点，统一在保存前执行 full_clean，校验 status 取值合法等，
+        # 避免后台和脚本写入脏状态。status 为单枚举，已无需再做跨字段一致性校验。
         self.full_clean()
         return super().save(*args, **kwargs)
 
     @property
     def display_status(self) -> str:
-        """把阶段与结果合成为一个稳定的人类可读状态。"""
-        if self.stage != TxTaskStage.FINALIZED:
-            return self.get_stage_display()
-        return "成功" if self.success else "失败"
+        """面向运营的人类可读状态，直接取单枚举的展示文案。"""
+        return self.get_status_display()
+
+    @property
+    def is_terminal(self) -> bool:
+        """是否已得出确定的链上终局结果（已确认或失败）。"""
+        return self.status in TERMINAL_TX_TASK_STATUSES
 
     @property
     def is_confirmed(self) -> bool:
-        return self.stage == TxTaskStage.FINALIZED and self.success is True
+        return self.status == TxTaskStatus.CONFIRMED
 
     @db_transaction.atomic
     def append_tx_hash(self, tx_hash: str) -> TxHash:
@@ -711,21 +692,24 @@ class TxTask(UndeletableModel):
 
     @staticmethod
     def mark_finalized_success(*, chain: Chain, tx_hash: str) -> int:
-        """将匹配的任务标记为成功终局。
+        """将匹配的任务标记为已确认终局。
 
-        使用 .update() 绕过 save()/full_clean() 以避免逐行加载，
-        依赖 DB CheckConstraint 保证状态三元组一致性。
+        使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
+        排除已处于终局态的任务，保证终局幂等且不被覆盖。
         """
         if not tx_hash:
             return 0
         task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
             return 0
-        updated = TxTask.objects.filter(pk=task.pk, success__isnull=True).update(
-            tx_hash=tx_hash,
-            stage=TxTaskStage.FINALIZED,
-            success=True,
-            updated_at=timezone.now(),
+        updated = (
+            TxTask.objects.filter(pk=task.pk)
+            .exclude(status__in=TERMINAL_TX_TASK_STATUSES)
+            .update(
+                tx_hash=tx_hash,
+                status=TxTaskStatus.CONFIRMED,
+                updated_at=timezone.now(),
+            )
         )
         if updated and task.tx_type == TxTaskType.Withdrawal:
             from withdrawals.models import Withdrawal
@@ -740,39 +724,35 @@ class TxTask(UndeletableModel):
     def mark_finalized_failed(
         *,
         task_id: int,
-        expected_stage: TxTaskStage | None = None,
+        expected_status: TxTaskStatus | None = None,
     ) -> int:
         """将匹配的任务标记为失败终局。"""
-        queryset = TxTask.objects.filter(
-            pk=task_id,
-            success__isnull=True,
+        queryset = TxTask.objects.filter(pk=task_id).exclude(
+            status__in=TERMINAL_TX_TASK_STATUSES
         )
-        if expected_stage is not None:
-            queryset = queryset.filter(stage=expected_stage)
+        if expected_status is not None:
+            queryset = queryset.filter(status=expected_status)
         return queryset.update(
-            stage=TxTaskStage.FINALIZED,
-            success=False,
+            status=TxTaskStatus.FAILED,
             updated_at=timezone.now(),
         )
 
     @staticmethod
     def reset_to_pending_chain(*, chain: Chain, tx_hash: str) -> int:
-        """将匹配的任务回退到待上链阶段（用于 Transfer drop / reorg 恢复）。
+        """将匹配的任务回退到待上链状态（用于 Transfer drop / reorg 恢复）。
 
-        使用 .update() 绕过 save()/full_clean() 以避免逐行加载，
-        依赖 DB CheckConstraint 保证状态三元组一致性。
+        使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
+        只回退仍处于确认中的任务，已终局者不动。
         """
         task = TxTask.resolve_by_hash(chain=chain, tx_hash=tx_hash)
         if task is None:
             return 0
         updated = TxTask.objects.filter(
             pk=task.pk,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success__isnull=True,
+            status=TxTaskStatus.PENDING_CONFIRM,
         ).update(
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
             updated_at=timezone.now(),
         )
         if updated and task.tx_type == TxTaskType.Withdrawal:
@@ -786,10 +766,10 @@ class TxTask(UndeletableModel):
 
     @staticmethod
     def mark_pending_confirm(*, chain: Chain, tx_hash: str) -> int:
-        """链上已观察到交易后，将未终结的任务推进到确认中阶段。
+        """链上已观察到交易后，将未终结的任务推进到确认中状态。
 
-        使用 .update() 绕过 save()/full_clean() 以避免逐行加载，
-        依赖 DB CheckConstraint 保证状态三元组一致性。
+        使用 .update() 绕过 save()/full_clean() 以避免逐行加载；
+        已终局的任务不再回拨。
         """
         if not tx_hash:
             return 0
@@ -798,11 +778,10 @@ class TxTask(UndeletableModel):
             return 0
         updated = (
             TxTask.objects.filter(pk=task.pk)
-            .exclude(stage=TxTaskStage.FINALIZED)
+            .exclude(status__in=TERMINAL_TX_TASK_STATUSES)
             .update(
                 tx_hash=tx_hash,
-                stage=TxTaskStage.PENDING_CONFIRM,
-                success=None,
+                status=TxTaskStatus.PENDING_CONFIRM,
                 updated_at=timezone.now(),
             )
         )

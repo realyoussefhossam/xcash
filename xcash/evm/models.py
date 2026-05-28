@@ -10,13 +10,14 @@ from django.utils.translation import gettext_lazy as _
 from eth_utils import keccak
 from web3 import Web3
 
+from chains.models import TERMINAL_TX_TASK_STATUSES
 from chains.models import AddressChainState
 from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxHash
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.signer import get_signer_backend
 from chains.types import AddressStr
@@ -142,10 +143,7 @@ class VaultSlot(models.Model):
     def is_deployed(self) -> bool:
         if self.deploy_tx_task_id is None:
             return False
-        return (
-            self.deploy_tx_task.base_task.stage == TxTaskStage.FINALIZED
-            and self.deploy_tx_task.base_task.success is True
-        )
+        return self.deploy_tx_task.base_task.status == TxTaskStatus.CONFIRMED
 
     @staticmethod
     def _is_deployed_on_chain(*, chain: Chain, address: AddressStr) -> bool:
@@ -316,9 +314,8 @@ class VaultSlot(models.Model):
 
         if slot.deploy_tx_task_id is not None:
             base_task = slot.deploy_tx_task.base_task
-            if base_task.success is None or (
-                base_task.stage == TxTaskStage.FINALIZED and base_task.success is True
-            ):
+            # 仍在途或已确认成功的部署任务直接复用；只有失败终局才需重建。
+            if base_task.status != TxTaskStatus.FAILED:
                 return slot.deploy_tx_task
 
         system_wallet = SystemWallet.get_current()
@@ -352,9 +349,8 @@ class VaultSlot(models.Model):
                 to=intent.to,
                 data=intent.data,
                 base_task__tx_type=TxTaskType.VaultSlotDeploy,
-                base_task__success__isnull=True,
             )
-            .exclude(base_task__stage=TxTaskStage.FINALIZED)
+            .exclude(base_task__status__in=TERMINAL_TX_TASK_STATUSES)
             .first()
         )
         if existing_task is not None:
@@ -435,9 +431,8 @@ class VaultSlot(models.Model):
                 to=intent.to,
                 data=intent.data,
                 base_task__tx_type=TxTaskType.VaultSlotCollect,
-                base_task__success__isnull=True,
             )
-            .exclude(base_task__stage=TxTaskStage.FINALIZED)
+            .exclude(base_task__status__in=TERMINAL_TX_TASK_STATUSES)
             .first()
         )
         if existing_task is not None:
@@ -520,9 +515,8 @@ class VaultSlot(models.Model):
                 to=intent.to,
                 data=intent.data,
                 base_task__tx_type=TxTaskType.VaultSlotCollect,
-                base_task__success__isnull=True,
             )
-            .exclude(base_task__stage=TxTaskStage.FINALIZED)
+            .exclude(base_task__status__in=TERMINAL_TX_TASK_STATUSES)
             .first()
         )
         if existing_task is not None:
@@ -694,7 +688,7 @@ class EvmTxTask(UndeletableModel):
             raise
         self._mark_pending_chain()
 
-    def _known_tx_hashes(self) -> list[str]:
+    def known_tx_hashes(self) -> list[str]:
         """返回当前任务所有已知 tx_hash，按新版本优先查询。"""
         hashes: list[str] = []
         base_tx_hash = (
@@ -717,7 +711,7 @@ class EvmTxTask(UndeletableModel):
     def _find_receipt_for_known_hashes(self) -> tuple[str | None, dict | None]:
         from web3.exceptions import TransactionNotFound  # noqa: PLC0415
 
-        for tx_hash in self._known_tx_hashes():
+        for tx_hash in self.known_tx_hashes():
             try:
                 receipt = self.chain.w3.eth.get_transaction_receipt(
                     tx_hash
@@ -738,10 +732,8 @@ class EvmTxTask(UndeletableModel):
         中断。再次执行时不能盲目重发或让 nonce too low 卡住队列，应先用历史
         hash 观察链上事实，再回到统一 poller/业务管线。
         """
-        base_task = TxTask.objects.only("stage", "success", "tx_hash").get(
-            pk=self.base_task_id
-        )
-        if base_task.stage != TxTaskStage.QUEUED or base_task.success is not None:
+        base_task = TxTask.objects.only("status", "tx_hash").get(pk=self.base_task_id)
+        if base_task.status != TxTaskStatus.QUEUED:
             return False
 
         tx_hash, receipt = self._find_receipt_for_known_hashes()
@@ -768,13 +760,13 @@ class EvmTxTask(UndeletableModel):
     def _can_broadcast_for_current_stage(
         self, *, allow_pending_chain_rebroadcast: bool
     ) -> bool:
-        """校验当前父任务阶段是否允许进入真实广播副作用。"""
-        base_task = TxTask.objects.only("stage", "success").get(pk=self.base_task_id)
-        if base_task.success is not None:
+        """校验当前父任务状态是否允许进入真实广播副作用。"""
+        base_task = TxTask.objects.only("status").get(pk=self.base_task_id)
+        if base_task.status in TERMINAL_TX_TASK_STATUSES:
             return False
-        if base_task.stage == TxTaskStage.PENDING_CHAIN:
+        if base_task.status == TxTaskStatus.PENDING_CHAIN:
             return allow_pending_chain_rebroadcast
-        return base_task.stage == TxTaskStage.QUEUED
+        return base_task.status == TxTaskStatus.QUEUED
 
     @staticmethod
     def _replacement_gas_price(*, old_gas_price: int, current_gas_price: int) -> int:
@@ -831,10 +823,9 @@ class EvmTxTask(UndeletableModel):
         # 首次成功提交到节点后，统一父任务从"待广播"进入"待上链"。
         TxTask.objects.filter(
             pk=self.base_task_id,
-            stage=TxTaskStage.QUEUED,
-            success__isnull=True,
+            status=TxTaskStatus.QUEUED,
         ).update(
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
             updated_at=timezone.now(),
         )
 
@@ -848,8 +839,7 @@ class EvmTxTask(UndeletableModel):
             address=self.address,
             chain=self.chain,
             nonce__lt=self.nonce,
-            base_task__stage=TxTaskStage.QUEUED,
-            base_task__success__isnull=True,
+            base_task__status=TxTaskStatus.QUEUED,
         ).exists()
 
     def is_pipeline_full(self) -> bool:
@@ -858,8 +848,7 @@ class EvmTxTask(UndeletableModel):
             EvmTxTask.objects.filter(
                 address=self.address,
                 chain=self.chain,
-                base_task__stage=TxTaskStage.PENDING_CHAIN,
-                base_task__success__isnull=True,
+                base_task__status=TxTaskStatus.PENDING_CHAIN,
             ).count()
             >= EVM_PIPELINE_DEPTH
         )
@@ -916,8 +905,7 @@ class EvmTxTask(UndeletableModel):
                 chain=intent.chain,
                 address=intent.address,
                 tx_type=intent.tx_type,
-                stage=TxTaskStage.QUEUED,
-                success=None,
+                status=TxTaskStatus.QUEUED,
             )
 
             return EvmTxTask.objects.create(

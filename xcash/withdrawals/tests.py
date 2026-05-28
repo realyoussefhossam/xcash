@@ -23,7 +23,7 @@ from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from common.error_codes import ErrorCode
@@ -113,8 +113,7 @@ class WithdrawalTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "2" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         EvmTxTask.objects.create(
             base_task=tx_task,
@@ -159,8 +158,7 @@ class WithdrawalTxTaskTests(TestCase):
         self.assertEqual(withdrawal.transfer_id, transfer.id)
         self.assertEqual(withdrawal.status, WithdrawalStatus.CONFIRMING)
         self.assertEqual(transfer.type, TransferType.Withdrawal)
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(tx_task.success)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("withdrawals.service.WebhookService.create_event")
     def test_confirm_withdrawal_emits_completed_webhook(self, create_event_mock):
@@ -1698,7 +1696,7 @@ class WithdrawalStateTransitionTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CONFIRM,
+            status=TxTaskStatus.PENDING_CONFIRM,
         )
         withdrawal = Withdrawal.objects.create(
             project=self.project,
@@ -1721,8 +1719,7 @@ class WithdrawalStateTransitionTests(TestCase):
 
         # TxTask 状态不应被 drop_withdrawal 修改, 保持原状
         tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(tx_task.success)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     # --- fail_withdrawal 测试 ---
 
@@ -1742,8 +1739,7 @@ class WithdrawalStateTransitionTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.FINALIZED,
-            success=False,
+            status=TxTaskStatus.FAILED,
         )
         withdrawal = Withdrawal.objects.create(
             project=self.project,
@@ -1827,8 +1823,7 @@ class WithdrawalStateTransitionTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.FINALIZED,
-            success=False,
+            status=TxTaskStatus.FAILED,
         )
         # 不应抛异常
         WithdrawalService.fail_withdrawal(tx_task=tx_task)
@@ -1901,7 +1896,7 @@ class WithdrawalTryMatchTests(TestCase):
             status=TransferStatus.CONFIRMED,
         )
 
-    def _make_tx_task(self, *, tx_hash, stage=TxTaskStage.PENDING_CHAIN):
+    def _make_tx_task(self, *, tx_hash, status=TxTaskStatus.PENDING_CHAIN):
         """创建完整的 TxTask 对象。"""
         recipient = "0x0000000000000000000000000000000000000002"
         tx_task = TxTask.objects.create(
@@ -1909,8 +1904,7 @@ class WithdrawalTryMatchTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=stage,
-            success=None,
+            status=status,
         )
         EvmTxTask.objects.create(
             base_task=tx_task,
@@ -1958,7 +1952,7 @@ class WithdrawalTryMatchTests(TestCase):
     def test_match_returns_false_when_not_pending(self):
         """非 PENDING 状态的提币收到重复匹配事件应静默跳过。"""
         tx_hash = self._next_hash()
-        tx_task = self._make_tx_task(tx_hash=tx_hash, stage=TxTaskStage.PENDING_CONFIRM)
+        tx_task = self._make_tx_task(tx_hash=tx_hash, status=TxTaskStatus.PENDING_CONFIRM)
         transfer = self._make_transfer(tx_hash=tx_hash)
         Withdrawal.objects.create(
             project=self.project,
@@ -2002,7 +1996,7 @@ class WithdrawalTryMatchTests(TestCase):
         self.assertEqual(withdrawal.transfer, transfer)
 
         tx_task.refresh_from_db()
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CONFIRM)
 
         transfer.refresh_from_db()
         self.assertEqual(transfer.type, TransferType.Withdrawal)

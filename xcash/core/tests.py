@@ -25,7 +25,7 @@ from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from chains.tasks import confirm_transfer
@@ -422,8 +422,7 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "9" * 64,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success=None,
+            status=TxTaskStatus.PENDING_CONFIRM,
         )
         transfer = Transfer.objects.create(
             chain=chain,
@@ -468,5 +467,4 @@ class LocalEvmScannerIntegrationTests(LocalChainIntegrationMixin, TestCase):
         tx_task.refresh_from_db()
         self.assertEqual(withdrawal.status, WithdrawalStatus.PENDING)
         self.assertIsNone(withdrawal.transfer_id)
-        self.assertEqual(tx_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(tx_task.success)
+        self.assertEqual(tx_task.status, TxTaskStatus.PENDING_CHAIN)

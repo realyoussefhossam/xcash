@@ -6,11 +6,11 @@ from web3 import Web3
 from chains.models import Address
 from chains.models import AddressChainState
 from chains.models import AddressUsage
-from chains.models import TxTask
-from chains.models import TxTaskStage
-from chains.models import TxTaskType
 from chains.models import Chain
 from chains.models import ChainType
+from chains.models import TxTask
+from chains.models import TxTaskStatus
+from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import Crypto
 from evm.choices import TxKind
@@ -89,8 +89,7 @@ class EvmTxTaskScheduleTests(TestCase):
         self.assertEqual(base_task.chain, intent.chain)
         self.assertEqual(base_task.address, intent.address)
         self.assertEqual(base_task.tx_type, intent.tx_type)
-        self.assertEqual(base_task.stage, TxTaskStage.QUEUED)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.QUEUED)
 
         state = AddressChainState.objects.get(address=self.address, chain=self.chain)
         self.assertEqual(state.address, self.address)

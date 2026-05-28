@@ -14,7 +14,7 @@ from chains.models import Chain
 from chains.models import Transfer
 from chains.models import TransferType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from evm.choices import TxKind
 from evm.intents import build_vault_slot_collect_intent
@@ -22,7 +22,6 @@ from evm.internal_tx import routing
 from evm.internal_tx.processor import process_internal_transaction
 from evm.internal_tx.routing import INTERNAL_TX_HANDLERS
 from evm.internal_tx.routing import INTERNAL_TX_MATCHERS
-from evm.internal_tx.routing import MatchedTransferFact
 from evm.models import EvmTxTask
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
@@ -67,8 +66,7 @@ def _base_task_without_asset_fields(*, chain, address, tx_type, tx_hash_suffix):
         address=address,
         tx_type=tx_type,
         tx_hash=make_tx_hash(tx_hash_suffix),
-        stage=TxTaskStage.PENDING_CHAIN,
-        success=None,
+        status=TxTaskStatus.PENDING_CHAIN,
     )
 
 
@@ -202,13 +200,11 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         self.assertEqual(transfer.block_hash, "0x" + "ab" * 32)
 
         task.refresh_from_db()
-        self.assertEqual(task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(task.success)
+        self.assertEqual(task.status, TxTaskStatus.PENDING_CONFIRM)
 
         transfer.confirm()
         task.refresh_from_db()
-        self.assertEqual(task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(task.success, True)
+        self.assertEqual(task.status, TxTaskStatus.CONFIRMED)
 
     def test_vault_slot_deploy_success_enters_pending_confirm_without_transfer(self):
         chain = Chain.objects.create(code=ChainCode.Anvil, rpc="", active=True)
@@ -244,8 +240,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
 
         task.refresh_from_db()
         self.assertIsNone(result)
-        self.assertEqual(task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(task.success)
+        self.assertEqual(task.status, TxTaskStatus.PENDING_CONFIRM)
         self.assertFalse(Transfer.objects.filter(hash=task.tx_hash).exists())
 
     def test_native_withdrawal_matches_from_withdrawal_and_evm_task(self):
@@ -289,14 +284,19 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
                     "value": value_raw,
                     "input": "0x",
                 },
-                receipt={"status": 1, "logs": [], "blockNumber": 10},
+                receipt={
+                    "status": 1,
+                    "logs": [],
+                    "blockNumber": 10,
+                    "blockHash": make_tx_hash("bd"),
+                },
             )
 
         transfer = Transfer.objects.get(hash=base_task.tx_hash)
         transfer.process()
         withdrawal = Withdrawal.objects.get(tx_task=base_task)
         assert withdrawal.transfer_id == transfer.pk
-        assert transfer.crypto_id == chain.native_coin_id
+        assert transfer.crypto_id == chain.native_coin.pk
         assert transfer.to_address == recipient
         assert transfer.value == Decimal(value_raw)
 
@@ -311,7 +311,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
             address=address,
             tx_type=TxTaskType.Withdrawal,
             tx_hash_suffix="7171",
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         _native_evm_task(
             base_task=task,
@@ -334,8 +334,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         )
 
         task.refresh_from_db()
-        assert task.stage == TxTaskStage.PENDING_CHAIN
-        assert task.success is None
+        assert task.status == TxTaskStatus.PENDING_CHAIN
         assert not Transfer.objects.filter(hash=task.tx_hash).exists()
 
     def test_native_internal_transfer_fails_when_real_tx_value_differs(self):
@@ -348,7 +347,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
             address=address,
             tx_type=TxTaskType.Withdrawal,
             tx_hash_suffix="7474",
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         _native_evm_task(
             base_task=task,
@@ -371,8 +370,7 @@ class DirectInternalLifecycleWithoutBroadcastAssetFieldsTests(TestCase):
         )
 
         task.refresh_from_db()
-        assert task.stage == TxTaskStage.PENDING_CHAIN
-        assert task.success is None
+        assert task.status == TxTaskStatus.PENDING_CHAIN
         assert not Transfer.objects.filter(hash=task.tx_hash).exists()
 
 
@@ -385,7 +383,7 @@ class ProcessorFailureAtomicityTests(TestCase):
             address=address,
             tx_type=TxTaskType.Withdrawal,
             tx_hash_suffix="fa11",
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         original_handler = routing.INTERNAL_TX_HANDLERS[TxTaskType.Withdrawal]
         handler = MagicMock()
@@ -402,8 +400,7 @@ class ProcessorFailureAtomicityTests(TestCase):
             routing.INTERNAL_TX_HANDLERS[TxTaskType.Withdrawal] = original_handler
 
         task.refresh_from_db()
-        assert task.stage == TxTaskStage.PENDING_CHAIN
-        assert task.success is None
+        assert task.status == TxTaskStatus.PENDING_CHAIN
 
     def test_failed_finalize_skips_handler_when_task_already_finalized(self):
         chain = make_evm_chain(code="eth-finalize-once", chain_id=43015)
@@ -413,11 +410,10 @@ class ProcessorFailureAtomicityTests(TestCase):
             address=address,
             tx_type=TxTaskType.Withdrawal,
             tx_hash_suffix="7676",
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxTask.objects.filter(pk=task.pk).update(
-            stage=TxTaskStage.FINALIZED,
-            success=False,
+            status=TxTaskStatus.FAILED,
         )
         original_handler = routing.INTERNAL_TX_HANDLERS[TxTaskType.Withdrawal]
         handler = MagicMock()
@@ -432,44 +428,3 @@ class ProcessorFailureAtomicityTests(TestCase):
             routing.INTERNAL_TX_HANDLERS[TxTaskType.Withdrawal] = original_handler
 
         handler.finalize_failed.assert_not_called()
-
-
-class ProcessorTimestampReuseTests(TestCase):
-    def test_supplied_block_time_skips_block_lookup(self):
-        chain = make_evm_chain(code="eth-ts", chain_id=43002)
-        address = make_evm_system_address(suffix="a8")
-        task = make_tx_task(
-            chain=chain,
-            address=address,
-            tx_type=TxTaskType.Withdrawal,
-            tx_hash_suffix="55",
-            stage=TxTaskStage.PENDING_CHAIN,
-        )
-        fact = MatchedTransferFact(
-            from_address=address.address,
-            to_address="0x00000000000000000000000000000000000000ff",
-            crypto=chain.native_coin,
-            value=Decimal("1000000000000000000"),
-            amount=Decimal("1"),
-        )
-        original_matcher = routing.INTERNAL_TX_MATCHERS[TxTaskType.Withdrawal]
-        routing.INTERNAL_TX_MATCHERS[TxTaskType.Withdrawal] = (
-            lambda *, chain, tx_task, receipt, tx=None: fact
-        )
-        try:
-            with patch("evm.internal_tx.processor._lookup_block_timestamp") as lookup:
-                process_internal_transaction(
-                    chain=chain,
-                    tx={"hash": task.tx_hash, "from": address.address},
-                    receipt={
-                        "status": 1,
-                        "logs": [],
-                        "blockNumber": 1234,
-                        "blockHash": make_tx_hash("bc"),
-                    },
-                    block_timestamp=1_700_000_000,
-                    occurred_at=timezone.now(),
-                )
-            lookup.assert_not_called()
-        finally:
-            routing.INTERNAL_TX_MATCHERS[TxTaskType.Withdrawal] = original_matcher

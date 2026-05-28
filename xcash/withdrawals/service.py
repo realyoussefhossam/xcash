@@ -704,7 +704,7 @@ class WithdrawalService:
 
         TxTask 会被 Transfer.drop() 回退到 PENDING_CHAIN 继续观察/重广播。
         Withdrawal 应同步回退到 PENDING 并清除 transfer 关联，等待交易重新出现在链上。
-        只有 TxTask 真正 FINALIZED + FAILED 时才应由 fail_withdrawal 终局为 FAILED。
+        只有 TxTask 真正进入 FAILED 终局时才应由 fail_withdrawal 终局为 FAILED。
         """
         # 对 Withdrawal 加行锁，防止并发 drop 同一笔提币
         withdrawal = Withdrawal.objects.select_for_update().get(transfer=transfer)
@@ -735,7 +735,7 @@ class WithdrawalService:
     def fail_withdrawal(cls, *, tx_task) -> None:
         """TxTask 确认链上交易永久失败时，将提币终局为 FAILED。
 
-        调用时机：TxTask 进入 FINALIZED + FAILED 状态后，由链特定模块回调。
+        调用时机：TxTask 进入 FAILED 终局状态后，由链特定模块回调。
         与 REJECTED（人工审核拒绝）语义完全不同：FAILED 表示链上执行失败。
         """
         try:

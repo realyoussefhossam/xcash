@@ -62,7 +62,7 @@ def _finalize_failed(*, tx_task: TxTask) -> None:
     with db_transaction.atomic():
         updated = TxTask.mark_finalized_failed(
             task_id=tx_task.pk,
-            expected_stage=None,
+            expected_status=None,
         )
         if not updated:
             return
@@ -78,8 +78,6 @@ def process_internal_transaction(
     chain: Chain,
     tx: dict,
     receipt: dict,
-    block_timestamp: int | None = None,
-    occurred_at: datetime | None = None,
 ) -> ObservedTransferCreateResult | None:
     """处理 tx.from 已识别为系统地址的 EVM 交易。"""
     tx_hash = _normalize_tx_hash(tx["hash"])
@@ -115,11 +113,10 @@ def process_internal_transaction(
         return None
 
     block_number = int(receipt["blockNumber"])
-    if block_timestamp is None or occurred_at is None:
-        block_timestamp, occurred_at = _lookup_block_timestamp(
-            chain=chain,
-            receipt=receipt,
-        )
+    block_timestamp, occurred_at = _lookup_block_timestamp(
+        chain=chain,
+        receipt=receipt,
+    )
     payload = ObservedTransferPayload(
         chain=chain,
         block=block_number,

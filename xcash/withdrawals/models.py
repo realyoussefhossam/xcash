@@ -39,7 +39,7 @@ class WithdrawalStatus(models.TextChoices):
     COMPLETED = "completed", _("已完成")
     # 人工审核拒绝（管理员在 REVIEWING 阶段主动拒绝）
     REJECTED = "rejected", _("已拒绝")
-    # 链上交易最终失败（TxTask 确认 FINALIZED + FAILED）
+    # 链上交易最终失败（TxTask 进入 FAILED 终局）
     FAILED = "failed", _("已失败")
 
 

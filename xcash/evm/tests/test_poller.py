@@ -32,7 +32,7 @@ from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import ChainToken
@@ -209,8 +209,7 @@ class ProcessSucceededReceiptNativeTest(TestCase):
             chain=self.chain,
             address=self.address,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         self.evm_task = EvmTxTask.objects.create(
             base_task=self.base_task,
@@ -303,8 +302,7 @@ class ProcessSucceededReceiptErc20Test(TestCase):
             chain=self.chain,
             address=self.address,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         # ERC-20 发送时 value=0，data 包含 transfer calldata
         self.evm_task = EvmTxTask.objects.create(
@@ -458,8 +456,7 @@ class PollerIntegrationTest(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -511,8 +508,7 @@ class PollerIntegrationTest(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -581,8 +577,7 @@ class PollerIntegrationTest(TestCase):
             address=self.addr,
             tx_type=TxTaskType.VaultSlotCollect,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -614,8 +609,7 @@ class PollerIntegrationTest(TestCase):
             address=self.addr,
             tx_type=TxTaskType.VaultSlotDeploy,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -805,7 +799,7 @@ class PollerIntegrationTest(TestCase):
 
         # TxTask 应已被推进到 PENDING_CONFIRM
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch("chains.tasks.process_transfer.apply_async")
     @patch.object(Chain, "w3", new_callable=PropertyMock)
@@ -838,7 +832,7 @@ class PollerIntegrationTest(TestCase):
         transfer.refresh_from_db()
         base_task.refresh_from_db()
         self.assertEqual(transfer.type, TransferType.Collect)
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CONFIRM)
 
     @patch.object(Chain, "w3", new_callable=PropertyMock)
     def test_vault_slot_deploy_poller_marks_pending_confirm_without_transfer(
@@ -853,8 +847,7 @@ class PollerIntegrationTest(TestCase):
         EvmTaskPoller.poll_chain(chain=self.chain)
 
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CONFIRM)
         self.assertFalse(
             Transfer.objects.filter(chain=self.chain, hash=tx_hash).exists()
         )
@@ -878,8 +871,7 @@ class PollerIntegrationTest(TestCase):
         confirm_non_transfer_tx_tasks()
 
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(base_task.success, True)
+        self.assertEqual(base_task.status, TxTaskStatus.CONFIRMED)
 
     # ---- Test 2 ----
 
@@ -943,7 +935,7 @@ class PollerIntegrationTest(TestCase):
         transfer.refresh_from_db()
         self.assertEqual(withdrawal.status, WithdrawalStatus.PENDING)
         self.assertIsNone(withdrawal.transfer_id)
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
         self.assertEqual(transfer.type, "")
         self.assertIsNotNone(transfer.processed_at)
 
@@ -1026,7 +1018,7 @@ class PollerIntegrationTest(TestCase):
         )
         # TxTask 仍被推进到 PENDING_CONFIRM（幂等路径也会调用 mark_pending_confirm）
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CONFIRM)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CONFIRM)
         # 幂等路径不应派发 process（created=False）
         process_mock.assert_not_called()
 
@@ -1057,8 +1049,7 @@ class PollerIntegrationTest(TestCase):
 
         base_task.refresh_from_db()
         withdrawal.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.FINALIZED)
-        self.assertIs(base_task.success, False)
+        self.assertEqual(base_task.status, TxTaskStatus.FAILED)
         self.assertEqual(withdrawal.status, WithdrawalStatus.FAILED)
         # 失败交易不应创建 Transfer
         self.assertEqual(
@@ -1077,8 +1068,7 @@ class PollerIntegrationTest(TestCase):
                 address=self.addr,
                 tx_type=TxTaskType.Withdrawal,
                 tx_hash=tx_hash,
-                stage=TxTaskStage.PENDING_CHAIN,
-                success=None,
+                status=TxTaskStatus.PENDING_CHAIN,
             )
             return EvmTxTask.objects.create(
                 base_task=base_task,

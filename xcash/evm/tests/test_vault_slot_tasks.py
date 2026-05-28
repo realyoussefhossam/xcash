@@ -15,7 +15,7 @@ from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from core.models import SystemWallet
@@ -315,9 +315,8 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         with signer_patch:
             existing_task = VaultSlot.schedule_deploy(slot.pk)
-        existing_task.base_task.stage = TxTaskStage.FINALIZED
-        existing_task.base_task.success = True
-        existing_task.base_task.save(update_fields=["stage", "success", "updated_at"])
+        existing_task.base_task.status = TxTaskStatus.CONFIRMED
+        existing_task.base_task.save(update_fields=["status", "updated_at"])
 
         with signer_patch, patch.object(EvmTxTask, "schedule") as schedule:
             task = VaultSlot.schedule_deploy(slot.pk)
@@ -331,9 +330,8 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         with signer_patch:
             failed_task = VaultSlot.schedule_deploy(slot.pk)
-        failed_task.base_task.stage = TxTaskStage.FINALIZED
-        failed_task.base_task.success = False
-        failed_task.base_task.save(update_fields=["stage", "success", "updated_at"])
+        failed_task.base_task.status = TxTaskStatus.FAILED
+        failed_task.base_task.save(update_fields=["status", "updated_at"])
 
         with signer_patch:
             new_task = VaultSlot.schedule_deploy(slot.pk)
@@ -612,29 +610,27 @@ class VaultSlotAddressSchedulingTests(TestCase):
         slot = self._create_vault_slot()
         signer_patch = self._patch_signer()
 
-        for index, stage in enumerate(
+        for index, status in enumerate(
             (
-                TxTaskStage.QUEUED,
-                TxTaskStage.PENDING_CHAIN,
-                TxTaskStage.PENDING_CONFIRM,
+                TxTaskStatus.QUEUED,
+                TxTaskStatus.PENDING_CHAIN,
+                TxTaskStatus.PENDING_CONFIRM,
             ),
             start=1,
         ):
             deposit = self._create_deposit(slot=slot, tx_hash_suffix=str(index))
             with signer_patch:
                 existing = VaultSlot.schedule_collect_for_deposit(deposit.pk)
-            existing.base_task.stage = stage
-            existing.base_task.success = None
-            existing.base_task.save(update_fields=["stage", "success", "updated_at"])
+            existing.base_task.status = status
+            existing.base_task.save(update_fields=["status", "updated_at"])
 
             with signer_patch, patch.object(EvmTxTask, "schedule") as schedule:
                 task = VaultSlot.schedule_collect_for_deposit(deposit.pk)
 
             self.assertEqual(task.pk, existing.pk)
             schedule.assert_not_called()
-            existing.base_task.stage = TxTaskStage.FINALIZED
-            existing.base_task.success = False
-            existing.base_task.save(update_fields=["stage", "success", "updated_at"])
+            existing.base_task.status = TxTaskStatus.FAILED
+            existing.base_task.save(update_fields=["status", "updated_at"])
 
     def test_schedule_collect_for_deposit_recreates_after_finalized_failed_task(self):
         slot = self._create_vault_slot()
@@ -643,9 +639,8 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         with signer_patch:
             failed_task = VaultSlot.schedule_collect_for_deposit(deposit.pk)
-        failed_task.base_task.stage = TxTaskStage.FINALIZED
-        failed_task.base_task.success = False
-        failed_task.base_task.save(update_fields=["stage", "success", "updated_at"])
+        failed_task.base_task.status = TxTaskStatus.FAILED
+        failed_task.base_task.save(update_fields=["status", "updated_at"])
 
         with signer_patch:
             new_task = VaultSlot.schedule_collect_for_deposit(deposit.pk)

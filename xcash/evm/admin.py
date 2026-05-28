@@ -56,9 +56,8 @@ class EvmTxTaskAdmin(ReadOnlyModelAdmin):
             "待广播": "warning",
             "待上链": "warning",
             "确认中": "info",
-            "成功": "success",
+            "已确认": "success",
             "失败": "danger",
-            "已完结": "info",
         },
     )
     def display_status(self, instance: EvmTxTask):

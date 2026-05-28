@@ -7,7 +7,7 @@ from web3.exceptions import TransactionNotFound
 from chains.adapters import TxCheckStatus
 from chains.models import Chain
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from common.time import ago
 from evm.constants import EVM_PENDING_REBROADCAST_TIMEOUT
 from evm.constants import EVM_PENDING_RECEIPT_POLL_DELAY
@@ -31,8 +31,7 @@ class EvmTaskPoller:
             EvmTxTask.objects.select_related("base_task", "address")
             .filter(
                 chain=chain,
-                base_task__stage=TxTaskStage.PENDING_CHAIN,
-                base_task__success__isnull=True,
+                base_task__status=TxTaskStatus.PENDING_CHAIN,
                 last_attempt_at__lt=ago(seconds=EVM_PENDING_RECEIPT_POLL_DELAY),
             )
             .order_by("address_id", "nonce", "created_at")
@@ -117,7 +116,7 @@ class EvmTaskPoller:
         - 全部未找到 -> (MISSING, None, None)
         - RPC 异常 -> (Exception, None, None)
         """
-        for tx_hash in evm_task._known_tx_hashes():
+        for tx_hash in evm_task.known_tx_hashes():
             try:
                 receipt = evm_task.chain.w3.eth.get_transaction_receipt(tx_hash)
             except TransactionNotFound:
@@ -159,15 +158,12 @@ class EvmTaskPoller:
         locked_task = EvmTxTask.objects.select_for_update().get(pk=evm_task.pk)
 
         base_task = locked_task.base_task
-        if (
-            base_task.stage != TxTaskStage.PENDING_CHAIN
-            or base_task.success is not None
-        ):
+        if base_task.status != TxTaskStatus.PENDING_CHAIN:
             return False
 
         updated = TxTask.mark_finalized_failed(
             task_id=base_task.pk,
-            expected_stage=TxTaskStage.PENDING_CHAIN,
+            expected_status=TxTaskStatus.PENDING_CHAIN,
         )
         if not updated:
             return False

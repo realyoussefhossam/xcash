@@ -10,7 +10,7 @@ from web3 import Web3
 from chains.models import Transfer
 from chains.models import TxHash
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from currencies.models import ChainToken
@@ -265,7 +265,7 @@ class EvmLogScannerTests(TestCase):
             address=self.vault,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         TxHash.objects.create(
             tx_task=base_task,

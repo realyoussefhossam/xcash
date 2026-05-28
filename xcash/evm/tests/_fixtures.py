@@ -12,7 +12,7 @@ from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import Crypto
@@ -99,14 +99,12 @@ def make_tx_task(
     amount: Decimal = Decimal("1.0"),
     recipient_suffix: str = "ff",
     tx_hash_suffix: str = "01",
-    stage: TxTaskStage = TxTaskStage.PENDING_CHAIN,
-    success: bool | None = None,
+    status: TxTaskStatus = TxTaskStatus.PENDING_CHAIN,
 ) -> TxTask:
     return TxTask.objects.create(
         chain=chain,
         address=address,
         tx_type=tx_type,
         tx_hash=make_tx_hash(tx_hash_suffix),
-        stage=stage,
-        success=success,
+        status=status,
     )

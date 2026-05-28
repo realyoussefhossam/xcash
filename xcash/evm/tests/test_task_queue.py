@@ -8,10 +8,10 @@ from web3 import Web3
 
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import TxTask
-from chains.models import TxTaskStage
 from chains.models import Chain
 from chains.models import ChainType
+from chains.models import TxTask
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import Crypto
@@ -57,8 +57,7 @@ class EvmTaskQueueTests(TestCase):
         self,
         *,
         tx_hash: str,
-        stage: str,
-        success: bool | None,
+        status: str,
         nonce: int | None = None,
         address: Address | None = None,
     ) -> EvmTxTask:
@@ -74,8 +73,7 @@ class EvmTaskQueueTests(TestCase):
             address=task_address,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=stage,
-            success=success,
+            status=status,
         )
         return EvmTxTask.objects.create(
             base_task=base_task,
@@ -104,8 +102,7 @@ class EvmTaskQueueTests(TestCase):
                 chain=self.chain,
                 address=address,
                 tx_type=TxTaskType.Withdrawal,
-                stage=TxTaskStage.FINALIZED,
-                success=True,
+                status=TxTaskStatus.CONFIRMED,
             )
             EvmTxTask.objects.create(
                 base_task=filler_base,
@@ -128,8 +125,7 @@ class EvmTaskQueueTests(TestCase):
 
         tx_task = self._create_evm_task(
             tx_hash="0x" + "a" * 64,
-            stage=TxTaskStage.FINALIZED,
-            success=True,
+            status=TxTaskStatus.CONFIRMED,
         )
 
         _broadcast_evm_task.run(tx_task.pk)
@@ -146,8 +142,7 @@ class EvmTaskQueueTests(TestCase):
 
         tx_task = self._create_evm_task(
             tx_hash="0x" + "aa" * 32,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
 
         _broadcast_evm_task.run(tx_task.pk)
@@ -174,25 +169,21 @@ class EvmTaskQueueTests(TestCase):
 
         due_queued = self._create_evm_task(
             tx_hash="0x" + "b" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         # PENDING_CHAIN 任务不应被 dispatch 重新选中（已在 mempool 中等待确认）。
         self._create_evm_task(
             tx_hash="0x" + "c" * 64,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
             address=other_addr,
         )
         recent_task = self._create_evm_task(
             tx_hash="0x" + "d" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         finalized_task = self._create_evm_task(
             tx_hash="0x" + "e" * 64,
-            stage=TxTaskStage.FINALIZED,
-            success=True,
+            status=TxTaskStatus.CONFIRMED,
         )
 
         stale_created_at = timezone.now() - timedelta(seconds=8)
@@ -227,14 +218,12 @@ class EvmTaskQueueTests(TestCase):
 
         self._create_evm_task(
             tx_hash="0x" + "1" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
         )
         higher_task = self._create_evm_task(
             tx_hash="0x" + "2" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=2,
         )
 
@@ -252,14 +241,12 @@ class EvmTaskQueueTests(TestCase):
 
         self._create_evm_task(
             tx_hash="0x" + "11" * 32,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success=None,
+            status=TxTaskStatus.PENDING_CONFIRM,
             nonce=1,
         )
         higher_task = self._create_evm_task(
             tx_hash="0x" + "12" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=2,
         )
 
@@ -286,20 +273,17 @@ class EvmTaskQueueTests(TestCase):
         )
         lower_task = self._create_evm_task(
             tx_hash="0x" + "3" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=5,
         )
         blocked_higher_task = self._create_evm_task(
             tx_hash="0x" + "4" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=6,
         )
         other_account_task = self._create_evm_task(
             tx_hash="0x" + "5" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
             address=other_addr,
         )
@@ -330,14 +314,12 @@ class EvmTaskQueueTests(TestCase):
 
         lower_confirming_task = self._create_evm_task(
             tx_hash="0x" + "13" * 32,
-            stage=TxTaskStage.PENDING_CONFIRM,
-            success=None,
+            status=TxTaskStatus.PENDING_CONFIRM,
             nonce=1,
         )
         higher_task = self._create_evm_task(
             tx_hash="0x" + "14" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=2,
         )
 
@@ -379,23 +361,20 @@ class EvmTaskQueueTests(TestCase):
         )
         lower_task = self._create_evm_task(
             tx_hash="0x" + "6" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
         )
         blocked_tasks = [
             self._create_evm_task(
                 tx_hash=f"0x{i:064x}",
-                stage=TxTaskStage.QUEUED,
-                success=None,
+                status=TxTaskStatus.QUEUED,
                 nonce=i,
             )
             for i in range(2, 10)
         ]
         other_account_task = self._create_evm_task(
             tx_hash="0x" + "7" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
             address=other_addr,
         )
@@ -434,8 +413,7 @@ class EvmTaskQueueTests(TestCase):
         cache.set(self.queue_lock_key, "true", 60)
         due_task = self._create_evm_task(
             tx_hash="0x" + "f" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         EvmTxTask.objects.filter(pk=due_task.pk).update(
             created_at=timezone.now() - timedelta(seconds=8),
@@ -463,14 +441,12 @@ class EvmTaskQueueTests(TestCase):
 
         self._create_evm_task(
             tx_hash="0x" + "a1" * 32,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
             nonce=1,
         )
         higher_task = self._create_evm_task(
             tx_hash="0x" + "a2" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=2,
         )
 
@@ -490,14 +466,12 @@ class EvmTaskQueueTests(TestCase):
         for i in range(EVM_PIPELINE_DEPTH):
             self._create_evm_task(
                 tx_hash=f"0x{i:064x}",
-                stage=TxTaskStage.PENDING_CHAIN,
-                success=None,
+                status=TxTaskStatus.PENDING_CHAIN,
                 nonce=i,
             )
         next_task = self._create_evm_task(
             tx_hash="0x" + "b1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=EVM_PIPELINE_DEPTH,
         )
 
@@ -517,24 +491,21 @@ class EvmTaskQueueTests(TestCase):
         pending_tasks = [
             self._create_evm_task(
                 tx_hash=f"0x{i:064x}",
-                stage=TxTaskStage.PENDING_CHAIN,
-                success=None,
+                status=TxTaskStatus.PENDING_CHAIN,
                 nonce=i,
             )
             for i in range(EVM_PIPELINE_DEPTH)
         ]
         next_task = self._create_evm_task(
             tx_hash="0x" + "c1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=EVM_PIPELINE_DEPTH,
         )
 
         # 模拟一笔完成，腾出 pipeline 空位
         first = pending_tasks[0]
         TxTask.objects.filter(pk=first.base_task_id).update(
-            stage=TxTaskStage.FINALIZED,
-            success=True,
+            status=TxTaskStatus.CONFIRMED,
         )
 
         _broadcast_evm_task.run(next_task.pk)
@@ -548,14 +519,12 @@ class EvmTaskQueueTests(TestCase):
 
         self._create_evm_task(
             tx_hash="0x" + "d1" * 32,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
             nonce=0,
         )
         queued_task = self._create_evm_task(
             tx_hash="0x" + "d2" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
         )
 
@@ -582,14 +551,12 @@ class EvmTaskQueueTests(TestCase):
         for i in range(EVM_PIPELINE_DEPTH):
             self._create_evm_task(
                 tx_hash=f"0x{0xE0 + i:064x}",
-                stage=TxTaskStage.PENDING_CHAIN,
-                success=None,
+                status=TxTaskStatus.PENDING_CHAIN,
                 nonce=i,
             )
         blocked_task = self._create_evm_task(
             tx_hash="0x" + "e1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=EVM_PIPELINE_DEPTH,
         )
 
@@ -616,20 +583,18 @@ class EvmTaskQueueTests(TestCase):
 
         current_task = self._create_evm_task(
             tx_hash="0x" + "f1" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=0,
         )
         next_task = self._create_evm_task(
             tx_hash="0x" + "f2" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
         )
 
         def mark_pending(*args, **kwargs):
             TxTask.objects.filter(pk=current_task.base_task_id).update(
-                stage=TxTaskStage.PENDING_CHAIN,
+                status=TxTaskStatus.PENDING_CHAIN,
             )
 
         broadcast_mock.side_effect = mark_pending
@@ -652,14 +617,12 @@ class EvmTaskQueueTests(TestCase):
 
         current_task = self._create_evm_task(
             tx_hash="0x" + "f5" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=0,
         )
         self._create_evm_task(
             tx_hash="0x" + "f6" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=1,
         )
 
@@ -683,28 +646,25 @@ class EvmTaskQueueTests(TestCase):
         for i in range(EVM_PIPELINE_DEPTH - 1):
             self._create_evm_task(
                 tx_hash=f"0x{0xF0 + i:064x}",
-                stage=TxTaskStage.PENDING_CHAIN,
-                success=None,
+                status=TxTaskStatus.PENDING_CHAIN,
                 nonce=i,
             )
         # 当前任务广播后 pipeline 刚好满
         current_task = self._create_evm_task(
             tx_hash="0x" + "f3" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=EVM_PIPELINE_DEPTH - 1,
         )
         # 还有一个排队中的任务
         self._create_evm_task(
             tx_hash="0x" + "f4" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
             nonce=EVM_PIPELINE_DEPTH,
         )
 
         def mark_pending(*args, **kwargs):
             TxTask.objects.filter(pk=current_task.base_task_id).update(
-                stage=TxTaskStage.PENDING_CHAIN,
+                status=TxTaskStatus.PENDING_CHAIN,
             )
 
         broadcast_mock.side_effect = mark_pending

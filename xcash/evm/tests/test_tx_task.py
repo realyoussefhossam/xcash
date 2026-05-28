@@ -12,12 +12,12 @@ from web3.exceptions import TransactionNotFound
 from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
-from chains.models import TxTask
-from chains.models import TxTaskStage
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import TxTaskType
 from chains.models import TxHash
+from chains.models import TxTask
+from chains.models import TxTaskStatus
+from chains.models import TxTaskType
 from chains.models import Wallet
 from currencies.models import Crypto
 from evm.choices import TxKind
@@ -54,8 +54,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
 
         with self.assertRaises(IntegrityError), transaction.atomic():
@@ -106,7 +105,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "a1" * 32,
-            stage=TxTaskStage.QUEUED,
+            status=TxTaskStatus.QUEUED,
         )
         EvmTxTask.objects.create(
             base_task=base_task,
@@ -160,8 +159,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -224,8 +222,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "d" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -244,8 +241,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.QUEUED)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.QUEUED)
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_not_called()
         self.assertIsNotNone(tx_task.last_attempt_at)
@@ -287,8 +283,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -309,7 +304,7 @@ class EvmTxTaskTests(TestCase):
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_broadcast_preflight_success_proceeds_to_send(self):
         # pre-flight 通过时继续进入 send_raw_transaction 流程，base_task 进入 PENDING_CHAIN。
@@ -355,8 +350,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -375,8 +369,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
         estimate_gas_mock.assert_not_called()
         send_raw_mock.assert_called_once()
         self.assertIsNotNone(tx_task.last_attempt_at)
@@ -429,8 +422,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -495,8 +487,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -552,8 +543,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -573,7 +563,7 @@ class EvmTxTaskTests(TestCase):
 
         send_raw_mock.assert_not_called()
         base_task.refresh_from_db()
-        assert base_task.stage == TxTaskStage.QUEUED
+        assert base_task.status == TxTaskStatus.QUEUED
 
     @patch.object(EvmTxTask, "is_pipeline_full", return_value=True)
     def test_pending_chain_rebroadcast_ignores_pipeline_full(self, _pipeline_full_mock):
@@ -619,8 +609,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -681,8 +670,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "a5" * 32,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -746,8 +734,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "2" * 64,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -770,8 +757,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_broadcast_reraises_nonce_too_low_without_marking_pending(self):
         native = Crypto.objects.create(
@@ -814,8 +800,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "3" * 64,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -835,8 +820,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_broadcast_blocks_higher_nonce_until_lower_nonce_settles(self):
         native = Crypto.objects.create(
@@ -877,8 +861,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         EvmTxTask.objects.create(
             base_task=lower_base_task,
@@ -899,8 +882,7 @@ class EvmTxTaskTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -919,8 +901,7 @@ class EvmTxTaskTests(TestCase):
 
         send_raw_transaction_mock.assert_not_called()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.QUEUED)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.QUEUED)
         self.assertIsNone(tx_task.last_attempt_at)
 
     def test_broadcast_treats_already_known_as_idempotent_success(self):
@@ -964,8 +945,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "4" * 64,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -984,8 +964,7 @@ class EvmTxTaskTests(TestCase):
 
         base_task.refresh_from_db()
         tx_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_queued_task_with_existing_hash_recovers_from_confirmed_receipt(self):
         """首播已被节点接受但阶段仍是 QUEUED 时，应先查 receipt 自愈而不是重发。"""
@@ -1029,8 +1008,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -1059,7 +1037,7 @@ class EvmTxTaskTests(TestCase):
         send_raw_mock.assert_not_called()
         process_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_nonce_too_low_checks_existing_hash_before_reraising(self):
         """nonce too low 时若历史 hash 已有 receipt，应自动恢复而不是继续卡 QUEUED。"""
@@ -1106,8 +1084,7 @@ class EvmTxTaskTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         TxHash.objects.create(
             tx_task=base_task,
@@ -1136,4 +1113,4 @@ class EvmTxTaskTests(TestCase):
         send_raw_mock.assert_called_once()
         process_mock.assert_called_once()
         base_task.refresh_from_db()
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)

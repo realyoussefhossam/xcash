@@ -15,7 +15,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
@@ -208,8 +208,7 @@ class EvmErc20ScannerTests(TestCase):
             address=self.addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash=tx_hash,
-            stage=TxTaskStage.PENDING_CHAIN,
-            success=None,
+            status=TxTaskStatus.PENDING_CHAIN,
         )
         EvmTxTask.objects.create(
             base_task=base_task,
@@ -507,8 +506,7 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction_receipt.assert_not_called()
         self.assertEqual(created, 0)
         self.assertFalse(Transfer.objects.filter(hash=tx_hash).exists())
-        self.assertEqual(base_task.stage, TxTaskStage.PENDING_CHAIN)
-        self.assertIsNone(base_task.success)
+        self.assertEqual(base_task.status, TxTaskStatus.PENDING_CHAIN)
 
     def test_erc20_scanner_skips_known_internal_hash_even_when_receipt_would_match(
         self,

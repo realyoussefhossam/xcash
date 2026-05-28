@@ -14,7 +14,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxHash
 from chains.models import TxTask
-from chains.models import TxTaskStage
+from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import Wallet
 from chains.service import ObservedTransferPayload
@@ -158,8 +158,7 @@ class EvmChainScannerServiceTests(TestCase):
             chain=chain,
             address=addr,
             tx_type=TxTaskType.Withdrawal,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         tx_task = EvmTxTask.objects.create(
             base_task=base_task,
@@ -330,8 +329,7 @@ class EvmChainScannerServiceTests(TestCase):
                 chain=chain,
                 address=addr,
                 tx_type=TxTaskType.Withdrawal,
-                stage=TxTaskStage.FINALIZED,
-                success=True,
+                status=TxTaskStatus.CONFIRMED,
             )
             EvmTxTask.objects.create(
                 base_task=filler_base,
@@ -351,8 +349,7 @@ class EvmChainScannerServiceTests(TestCase):
             address=addr,
             tx_type=TxTaskType.Withdrawal,
             tx_hash="0x" + "ef" * 32,
-            stage=TxTaskStage.QUEUED,
-            success=None,
+            status=TxTaskStatus.QUEUED,
         )
         EvmTxTask.objects.create(
             base_task=base_task,
