@@ -185,7 +185,7 @@ class VaultSlot(models.Model):
         raise ValueError(f"unsupported VaultSlot usage: {usage}")
 
     @staticmethod
-    def get_deposit_address(chain: Chain, customer: Customer) -> AddressStr:
+    def ensure_deposit_address(chain: Chain, customer: Customer) -> AddressStr:
         if chain.type != ChainType.EVM:
             raise ValueError("VaultSlot 仅支持 EVM 链")
 
@@ -244,7 +244,12 @@ class VaultSlot(models.Model):
         return slot.address
 
     @staticmethod
-    def get_invoice_address(*, project, chain: Chain, invoice_index: int) -> AddressStr:
+    def ensure_invoice_address(
+        *,
+        project,
+        chain: Chain,
+        invoice_index: int,
+    ) -> AddressStr:
         if chain.type != ChainType.EVM:
             raise ValueError("VaultSlot 仅支持 EVM 链")
 

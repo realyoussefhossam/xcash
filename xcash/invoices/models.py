@@ -8,6 +8,7 @@ from django.db import IntegrityError
 from django.db import models
 from django.db import transaction as db_transaction
 from django.db.models import Max
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -44,18 +45,6 @@ class InvoiceProtocol(models.TextChoices):
     EPAY_V1 = "epay_v1", _("EPay V1")
 
 
-class InvoicePaySlotStatus(models.TextChoices):
-    ACTIVE = "active", _("生效中")
-    MATCHED = "matched", _("已命中")
-    DISCARDED = "discarded", _("已丢弃")
-
-
-class InvoicePaySlotDiscardReason(models.TextChoices):
-    OVERFLOW = "overflow", _("超上限淘汰")
-    EXPIRED = "expired", _("账单过期")
-    SETTLED = "settled", _("已被其他付款占用")
-
-
 class InvoiceBillingMode(models.TextChoices):
     DIFFER = "differ", _("差额")
     CONTRACT = "contract", _("合约")
@@ -63,7 +52,6 @@ class InvoiceBillingMode(models.TextChoices):
 
 class Invoice(models.Model):
     MAX_ALLOCATION_RETRY = 5
-    MAX_ACTIVE_PAY_SLOTS = 2
 
     # 保留类属性别名，使 Invoice.InvoiceAllocationError 继续可用。
     InvoiceAllocationError = InvoiceAllocationError
@@ -185,6 +173,11 @@ class Invoice(models.Model):
                 fields=("project", "out_no"),
                 name="uniq_invoice_project_out_no",
             ),
+            models.UniqueConstraint(
+                fields=("project", "crypto", "chain", "pay_address", "pay_amount"),
+                condition=Q(status=InvoiceStatus.WAITING),
+                name="uniq_invoice_active_payment",
+            ),
         ]
 
     def __str__(self):
@@ -194,16 +187,6 @@ class Invoice(models.Model):
     def is_crypto_fixed(self):
         """是否为固定加密货币模式"""
         return CryptoService.exists(self.currency)
-
-    @property
-    def active_pay_slots(self):
-        # 账单允许保留多个历史支付槽位；当前仍可命中的集合统一以 active 状态为准。
-        return self.pay_slots.filter(status=InvoicePaySlotStatus.ACTIVE)
-
-    @property
-    def current_pay_slot(self):
-        # 展示层快照优先跟随最近一次仍生效的支付槽位。
-        return self.active_pay_slots.order_by("-version", "-created_at", "-pk").first()
 
     @classmethod
     def available_methods(cls, project: Project) -> dict[str, list[str]]:
@@ -225,13 +208,13 @@ class Invoice(models.Model):
             methods=methods,
         )
 
-    def _allocate_differ_slot(
+    def _allocate_differ_payment(
         self,
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> tuple[str, Decimal]:
-        """差额账单:沿用 get_pay_differ 寻找空闲的 (pay_address, pay_amount)。"""
+        """差额账单：寻找空闲的 (pay_address, pay_amount) 支付组合。"""
         detail = (
             f"project={self.project_id}, crypto={crypto.symbol}, chain={chain.code}"
         )
@@ -257,17 +240,20 @@ class Invoice(models.Model):
         chain: "Chain",
         crypto_amount: Decimal,
     ) -> bool:
-        # 同一个合约收款槽位只在"币种 + 金额 + 支付有效期"同时重合时不可复用；
-        # 不同金额或已过期账单可以复用同一 VaultSlot 地址。
-        return InvoicePaySlot.objects.filter(
+        # 同一个合约收款槽位只在"币种 + 金额"重合且对方仍为 WAITING 时不可复用；
+        # 不同金额可以复用同一 VaultSlot 地址。
+        # 占用判据与 uniq_invoice_active_payment 约束保持一致——只看 status=WAITING，
+        # 不叠加 expires_at 过滤：过期账单要等状态翻成 EXPIRED 才真正释放槽位，否则约束
+        # 仍锁着该 (pay_address, pay_amount) 组合，而这里若漏判就会让分配陷入
+        # IntegrityError 重试死循环（同 get_pay_differ 的处理）。
+        return Invoice.objects.filter(
             project=self.project,
             crypto=crypto,
             chain=chain,
             pay_address=slot.address,
             pay_amount=crypto_amount,
             billing_mode=InvoiceBillingMode.CONTRACT,
-            status=InvoicePaySlotStatus.ACTIVE,
-            invoice__expires_at__gte=timezone.now(),
+            status=InvoiceStatus.WAITING,
         ).exists()
 
     def _get_contract_vault_slot(
@@ -306,7 +292,7 @@ class Invoice(models.Model):
         ]
         invoice_index = 0 if latest_index is None else latest_index + 1
         try:
-            VaultSlot.get_invoice_address(
+            VaultSlot.ensure_invoice_address(
                 project=self.project,
                 chain=chain,
                 invoice_index=invoice_index,
@@ -325,28 +311,27 @@ class Invoice(models.Model):
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
-    ) -> tuple[str, str, Decimal]:
+    ) -> tuple[str, Decimal]:
         """合约账单：按 XcashVaultSlotFactory 获取本次账单使用的 VaultSlot。"""
         slot = self._get_contract_vault_slot(
             crypto=crypto,
             chain=chain,
             crypto_amount=crypto_amount,
         )
-        return slot.address, slot.project.vault, crypto_amount
+        return slot.address, crypto_amount
 
     @db_transaction.atomic
     def select_method(self, crypto: "Crypto", chain: "Chain"):
-        # 先锁账单行，保证同一账单的多次切链/切币不会并发写出超过上限的活跃槽位。
+        # 先锁账单行，保证同一账单的多次切链/切币只能留下一个当前支付指引。
         Invoice.objects.select_for_update().get(pk=self.pk)
         self.refresh_from_db()
 
-        current_slot = self.current_pay_slot
         if (
-            current_slot is not None
-            and current_slot.crypto_id == crypto.id
-            and current_slot.chain_id == chain.id
+            self.crypto_id == crypto.id
+            and self.chain_id == chain.id
+            and self.pay_address
+            and self.pay_amount is not None
         ):
-            self._sync_snapshot_from_slot(current_slot)
             return True
 
         if self.is_crypto_fixed:
@@ -365,43 +350,30 @@ class Invoice(models.Model):
             try:
                 with db_transaction.atomic():
                     if self.billing_mode == InvoiceBillingMode.CONTRACT:
-                        pay_address, recipient_address, pay_amount = (
-                            self._allocate_contract_slot(
-                                crypto,
-                                chain,
-                                crypto_amount,
-                            )
-                        )
-                    else:
-                        pay_address, pay_amount = self._allocate_differ_slot(
+                        pay_address, pay_amount = self._allocate_contract_slot(
                             crypto,
                             chain,
                             crypto_amount,
                         )
-                        recipient_address = None
+                    else:
+                        pay_address, pay_amount = self._allocate_differ_payment(
+                            crypto,
+                            chain,
+                            crypto_amount,
+                        )
 
                     created_at = timezone.now()
-                    pay_slot = InvoicePaySlot.objects.create(
-                        invoice=self,
-                        project=self.project,
-                        version=self._next_pay_slot_version(),
+                    self._set_current_payment(
                         crypto=crypto,
                         chain=chain,
                         pay_address=pay_address,
                         pay_amount=pay_amount,
-                        billing_mode=self.billing_mode,
-                        recipient_address=recipient_address,
-                        status=InvoicePaySlotStatus.ACTIVE,
-                    )
-                    self._discard_excess_active_slots(created_slot=pay_slot)
-                    self._sync_snapshot_from_slot(
-                        pay_slot,
                         started_at=created_at,
                     )
                     return True
             except IntegrityError:
                 logger.warning(
-                    "Invoice pay slot conflicted, retrying",
+                    "Invoice payment allocation conflicted, retrying",
                     detail=detail,
                 )
                 continue
@@ -423,14 +395,12 @@ class Invoice(models.Model):
            浮动范围极小（通常 < 0.001%），对买家感知影响可忽略。
         2. 先遍历金额再遍历地址（双层循环），保证同一账单产生的差额尽量小——
            优先在最小差额下轮换地址，地址不够时才升档。
-        3. 并发安全由 InvoicePaySlot 的部分唯一约束（uniq_invoice_pay_slot_active）保证，
+        3. 并发安全由 Invoice 的部分唯一约束（uniq_invoice_active_payment）保证，
            冲突时由 select_method() 的 IntegrityError 重试循环处理。
            不使用 SELECT FOR UPDATE——悲观锁范围过广（101×N 行）会与 FK 约束检查
            形成环形等待，导致死锁。
         4. 若 101 × N 个组合全部被占用，返回 (None, None) 表示分配失败。
         """
-        now = timezone.now()
-
         amounts = [crypto_amount + step * crypto.differ_step for step in range(101)]
         addresses = list(
             ProjectService.invoice_recipient_addresses(
@@ -441,18 +411,24 @@ class Invoice(models.Model):
         if not addresses:
             return None, None
 
-        # 乐观并发：普通 SELECT 读取已占用的槽位，不加行锁。
-        # 并发事务可能同时选中同一空隙，由 uniq_invoice_pay_slot_active 约束拦截，
-        # 外层 select_method() 捕获 IntegrityError 后重试即可。
+        # 乐观并发：普通 SELECT 读取已占用的当前支付指引，不加行锁。
+        # 占用判据必须与 uniq_invoice_active_payment 约束严格一致——只看 status=WAITING，
+        # 不能再叠加 expires_at 过滤。约束是 partial unique index，无法引用 now()，因此
+        # 凡 status=WAITING 的账单（哪怕已过期但状态尚未被过期任务翻成 EXPIRED）都仍然
+        # 锁着其 (pay_address, pay_amount) 组合。若这里按 expires_at 把"过期未翻转"的账单
+        # 当成空闲返回，_set_current_payment 的 UPDATE 必然命中约束抛 IntegrityError，
+        # 而重试会反复返回同一组合无法前进，最终耗尽 MAX_ALLOCATION_RETRY 抛
+        # InvoiceAllocationError——即便仍有大量真正空闲组合也分配不出去。
+        # 过期账单的组合由 check_expired / fallback_invoice_expired 把状态翻成 EXPIRED 后
+        # 自然释放。并发选中同一空隙的情形仍由约束拦截，外层 select_method() 重试推进。
         existing = set(
-            InvoicePaySlot.objects.filter(
+            Invoice.objects.filter(
                 project=project,
                 crypto=crypto,
                 chain=chain,
-                status=InvoicePaySlotStatus.ACTIVE,
+                status=InvoiceStatus.WAITING,
                 pay_amount__in=amounts,
                 pay_address__in=addresses,
-                invoice__expires_at__gte=now,
             ).values_list("pay_address", "pay_amount")
         )
 
@@ -469,43 +445,34 @@ class Invoice(models.Model):
             return self.crypto.address(self.chain)
         return None
 
-    def _next_pay_slot_version(self) -> int:
-        # 版本号只在当前账单内单调递增，用于稳定表达"支付指引被更新了多少次"。
-        latest_version = (
-            self.pay_slots.order_by("-version")
-            .values_list(
-                "version",
-                flat=True,
-            )
-            .first()
-        )
-        return (latest_version or 0) + 1
-
-    def _sync_snapshot_from_slot(
+    def _set_current_payment(
         self,
-        pay_slot: "InvoicePaySlot",
         *,
+        crypto: "Crypto",
+        chain: "Chain",
+        pay_address: str,
+        pay_amount: Decimal,
         started_at=None,
     ) -> None:
-        # 主表继续保留最新展示快照，避免现有 API / admin 一次性大范围改动。
+        # Invoice 当前字段就是唯一支付指引；切换支付方式时直接覆盖旧指引。
         try:
-            worth = pay_slot.crypto.to_fiat(
+            worth = crypto.to_fiat(
                 fiat=FiatService.get_by_code("USD"),
-                amount=pay_slot.pay_amount,
+                amount=pay_amount,
             )
         except (KeyError, TypeError):
             # 价格数据不完整时（如新上线币种尚未同步 USD 价格），
             # 降级为 0 而非中断整个匹配/选方式流程。
             logger.warning(
                 "crypto price missing for USD",
-                crypto=pay_slot.crypto_id,
+                crypto=crypto.pk,
             )
             worth = Decimal("0")
         updated_values = {
-            "crypto_id": pay_slot.crypto_id,
-            "chain_id": pay_slot.chain_id,
-            "pay_address": pay_slot.pay_address,
-            "pay_amount": pay_slot.pay_amount,
+            "crypto_id": crypto.pk,
+            "chain_id": chain.pk,
+            "pay_address": pay_address,
+            "pay_amount": pay_amount,
             "worth": worth,
             "updated_at": timezone.now(),
         }
@@ -514,134 +481,6 @@ class Invoice(models.Model):
 
         Invoice.objects.filter(pk=self.pk).update(**updated_values)
         self.refresh_from_db()
-
-    def _discard_excess_active_slots(self, *, created_slot: "InvoicePaySlot") -> None:
-        # 产品策略：每张账单最多保留两个仍可命中的支付槽位，超出的最旧槽位立即失效。
-        active_slot_ids = list(
-            self.active_pay_slots.order_by("created_at", "pk").values_list(
-                "pk", flat=True
-            )
-        )
-        overflow = len(active_slot_ids) - self.MAX_ACTIVE_PAY_SLOTS
-        if overflow <= 0:
-            return
-
-        discarded_at = timezone.now()
-        slots_to_discard = active_slot_ids[:overflow]
-        InvoicePaySlot.objects.filter(pk__in=slots_to_discard).update(
-            status=InvoicePaySlotStatus.DISCARDED,
-            discard_reason=InvoicePaySlotDiscardReason.OVERFLOW,
-            discarded_at=discarded_at,
-            updated_at=discarded_at,
-        )
-        if created_slot.pk in slots_to_discard:
-            raise self.InvoiceAllocationError(
-                "newly created slot was unexpectedly discarded"
-            )
-
-
-class InvoicePaySlot(models.Model):
-    # project 冗余存储到槽位表，用于把"全项目活跃支付槽唯一"下沉到数据库约束层。
-    # db_constraint=False: 去掉 DB 层 FK 约束, 避免 INSERT 时的 FOR KEY SHARE
-    # 锁定 Project 行导致高并发死锁. 数据完整性由 select_method 的 Invoice->Project
-    # 引用链保证, PaySlot.project 始终等于 Invoice.project.
-    project = models.ForeignKey(
-        "projects.Project",
-        on_delete=models.CASCADE,
-        db_constraint=False,
-        editable=False,
-        verbose_name=_("项目"),
-    )
-    invoice = models.ForeignKey(
-        "invoices.Invoice",
-        on_delete=models.CASCADE,
-        related_name="pay_slots",
-        verbose_name=_("账单"),
-    )
-    version = models.PositiveIntegerField(_("版本"))
-    crypto = models.ForeignKey(
-        "currencies.Crypto",
-        on_delete=models.PROTECT,
-        verbose_name=_("加密货币"),
-    )
-    chain = models.ForeignKey(
-        "chains.Chain",
-        on_delete=models.CASCADE,
-        verbose_name=_("链"),
-    )
-    pay_amount = models.DecimalField(
-        verbose_name=_("支付加密货币数量"),
-        max_digits=32,
-        decimal_places=8,
-    )
-    pay_address = AddressField(
-        verbose_name=_("支付地址"),
-        db_index=True,
-    )
-    billing_mode = models.CharField(
-        choices=InvoiceBillingMode,
-        default=InvoiceBillingMode.DIFFER,
-        max_length=16,
-        verbose_name=_("计费模式"),
-    )
-    recipient_address = AddressField(
-        blank=True,
-        null=True,
-        verbose_name=_("派生 collector 时使用的归集目标地址"),
-        help_text=_(
-            "仅合约账单填写,差额账单留空。后续部署 collector 时使用此值,保证地址不漂移。"
-        ),
-    )
-    status = models.CharField(
-        choices=InvoicePaySlotStatus,
-        default=InvoicePaySlotStatus.ACTIVE,
-        max_length=16,
-        verbose_name=_("状态"),
-    )
-    discard_reason = models.CharField(  # noqa: DJ001
-        choices=InvoicePaySlotDiscardReason,
-        max_length=16,
-        blank=True,
-        null=True,  # None 表示"未丢弃"，语义上与 "" 不同，故保留 null=True
-        verbose_name=_("丢弃原因"),
-    )
-    matched_at = models.DateTimeField(_("命中时间"), blank=True, null=True)
-    discarded_at = models.DateTimeField(_("丢弃时间"), blank=True, null=True)
-    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
-    updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
-
-    class Meta:
-        ordering = ("-version", "-created_at", "-pk")
-        verbose_name = _("账单支付槽位")
-        verbose_name_plural = _("账单支付槽位")
-        constraints = [
-            models.UniqueConstraint(
-                fields=("invoice", "version"),
-                name="uniq_invoice_pay_slot_version",
-            ),
-            models.UniqueConstraint(
-                fields=("project", "crypto", "chain", "pay_address", "pay_amount"),
-                # mypy 对 UniqueConstraint.condition 的泛型推断有已知误报，实际运行正确
-                condition=models.Q(status=InvoicePaySlotStatus.ACTIVE),  # type: ignore[attr-defined]
-                name="uniq_invoice_pay_slot_active",
-            ),
-        ]
-
-    def __str__(self):
-        return f"{self.invoice.sys_no}-v{self.version}"
-
-    def save(self, *args, **kwargs):
-        # 冗余 project 必须与所属 invoice 一致，否则活跃槽位唯一约束会失真。
-        invoice_project_id = getattr(self.invoice, "project_id", None)
-        if invoice_project_id is None and self.invoice_id is not None:
-            invoice_project_id = (
-                Invoice.objects.only("project_id").get(pk=self.invoice_id).project_id
-            )
-        if invoice_project_id is not None:
-            if self.project_id is not None and self.project_id != invoice_project_id:
-                raise ValueError("InvoicePaySlot.project must match invoice.project")
-            self.project_id = invoice_project_id
-        return super().save(*args, **kwargs)
 
 
 class EpayMerchant(models.Model):

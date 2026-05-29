@@ -284,7 +284,7 @@ class StressService:
         return resp.json()
 
     @staticmethod
-    def get_deposit_address(case: DepositStressCase) -> str:
+    def ensure_deposit_address(case: DepositStressCase) -> str:
         """调用 API 获取客户充值地址。"""
         project = case.stress_run.project
         base_url = settings.STRESS_WEBHOOK_BASE_URL

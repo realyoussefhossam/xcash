@@ -91,5 +91,5 @@ class DepositViewSet(viewsets.GenericViewSet):
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
 
-        deposit_address = VaultSlot.get_deposit_address(chain, customer)
+        deposit_address = VaultSlot.ensure_deposit_address(chain, customer)
         return Response({"deposit_address": deposit_address})

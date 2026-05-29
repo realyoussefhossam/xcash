@@ -803,7 +803,7 @@ class StressPaymentTaskTests(SimpleTestCase):
 
         with (
             patch(
-                "stress.tasks.StressService.get_deposit_address",
+                "stress.tasks.StressService.ensure_deposit_address",
                 return_value="0xdepositaddr",
             ),
             patch(

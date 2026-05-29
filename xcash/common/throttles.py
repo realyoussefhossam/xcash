@@ -46,7 +46,7 @@ class VaultSlotThrottle(AppidThrottle):
 class InvoiceSelectMethodThrottle(BaseInvoiceThrottle):
     """公开切换支付方式接口的频率限制。
 
-    防止攻击者无凭证枚举账单或滥用 select_method 消耗 PaySlot 配额。
+    防止攻击者无凭证枚举账单或滥用 select_method 占用支付组合。
     """
 
     scope = "invoice_select_method"

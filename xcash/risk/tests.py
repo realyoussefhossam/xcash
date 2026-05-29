@@ -33,7 +33,6 @@ from currencies.models import Crypto
 from currencies.models import Fiat
 from deposits.models import Deposit
 from invoices.models import Invoice
-from invoices.models import InvoicePaySlot
 from invoices.models import InvoiceStatus
 from invoices.service import InvoiceService
 from projects.models import Project
@@ -712,14 +711,13 @@ class RiskBusinessDispatchTests(RiskTestMixin, TestCase):
             worth=Decimal("500"),
             expires_at=timezone.now() + timedelta(minutes=10),
         )
-        InvoicePaySlot.objects.create(
-            invoice=invoice,
-            version=1,
+        Invoice.objects.filter(pk=invoice.pk).update(
             crypto=self.native,
             chain=self.chain,
             pay_address=self.transfer.to_address,
             pay_amount=self.transfer.amount,
         )
+        invoice.refresh_from_db()
         self.transfer.datetime = timezone.now()
         self.transfer.save(update_fields=["datetime"])
 

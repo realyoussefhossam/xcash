@@ -11,35 +11,7 @@ from common.utils.math import format_decimal_stripped
 
 from .models import EpayOrder
 from .models import Invoice
-from .models import InvoicePaySlot
 from .models import InvoiceProtocol
-
-
-class InvoicePaySlotInline(admin.TabularInline):
-    model = InvoicePaySlot
-    extra = 0
-    can_delete = False
-    verbose_name = _("支付槽位")
-    verbose_name_plural = _("支付槽位")
-    fields = (
-        "version",
-        "crypto",
-        "chain",
-        "pay_address",
-        "pay_amount",
-        "billing_mode",
-        "recipient_address",
-        "status",
-        "discard_reason",
-        "matched_at",
-        "discarded_at",
-        "created_at",
-    )
-    readonly_fields = fields
-    ordering = ("-version",)
-
-    def has_add_permission(self, request, obj=None):
-        return False
 
 
 class EpayOrderInline(StackedInline):
@@ -72,7 +44,7 @@ class EpayOrderInline(StackedInline):
 
 @admin.register(Invoice)
 class InvoiceAdmin(ReadOnlyModelAdmin):
-    inlines = (InvoicePaySlotInline, EpayOrderInline)
+    inlines = (EpayOrderInline,)
     readonly_fields = (
         "display_crypto",
         "display_chain",

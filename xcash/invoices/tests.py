@@ -37,9 +37,6 @@ from invoices.exceptions import InvoiceAllocationError
 from invoices.exceptions import InvoiceStatusError
 from invoices.models import Invoice
 from invoices.models import InvoiceBillingMode
-from invoices.models import InvoicePaySlot
-from invoices.models import InvoicePaySlotDiscardReason
-from invoices.models import InvoicePaySlotStatus
 from invoices.models import InvoiceProtocol
 from invoices.models import InvoiceStatus
 from invoices.service import InvoiceService
@@ -199,9 +196,9 @@ class InvoiceInitializationTests(TestCase):
         select_method_mock.assert_called_once_with(self.eth, self.chain)
 
 
-class InvoicePaySlotTests(TestCase):
+class InvoicePaymentSelectionTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create(username="merchant-slots")
+        self.user = User.objects.create(username="merchant-payments")
         self.project = Project.objects.create(
             name="SlotProject",
             wallet=Wallet.objects.create(),
@@ -229,7 +226,7 @@ class InvoicePaySlotTests(TestCase):
             address="0x00000000000000000000000000000000000000A1",
         )
 
-    def create_invoice(self, *, out_no: str = "slot-order") -> Invoice:
+    def create_invoice(self, *, out_no: str = "payment-order") -> Invoice:
         return Invoice.objects.create(
             project=self.project,
             out_no=out_no,
@@ -258,76 +255,55 @@ class InvoicePaySlotTests(TestCase):
             datetime=now,
         )
 
-    def test_select_method_keeps_only_two_newest_slots(self):
-        # 账单切换支付方式时最多保留两个活跃槽位，更老的槽位直接失效。
+    def test_select_method_replaces_current_payment(self):
+        # 账单切换支付方式后，只保留当前支付指引，旧指引不再参与自动匹配。
         invoice = self.create_invoice()
 
         invoice.select_method(self.crypto, self.chain_a)
+        first_pay_address = invoice.pay_address
+        first_pay_amount = invoice.pay_amount
         invoice.select_method(self.crypto, self.chain_b)
-        invoice.select_method(self.crypto, self.chain_a)
 
         invoice.refresh_from_db()
-        pay_slots = list(invoice.pay_slots.order_by("version"))
-        self.assertEqual([slot.version for slot in pay_slots], [1, 2, 3])
-        self.assertEqual(
-            [slot.status for slot in pay_slots],
-            [
-                InvoicePaySlotStatus.DISCARDED,
-                InvoicePaySlotStatus.ACTIVE,
-                InvoicePaySlotStatus.ACTIVE,
-            ],
-        )
-        self.assertEqual(
-            pay_slots[0].discard_reason,
-            InvoicePaySlotDiscardReason.OVERFLOW,
-        )
-        self.assertEqual(invoice.pay_address, pay_slots[2].pay_address)
-        self.assertEqual(invoice.pay_amount, pay_slots[2].pay_amount)
+        self.assertEqual(invoice.chain, self.chain_b)
+        self.assertEqual(invoice.pay_address, first_pay_address)
+        self.assertEqual(invoice.pay_amount, first_pay_amount)
 
-    def test_try_match_invoice_supports_previous_active_slot(self):
-        # 当前快照虽然指向最新槽位，但历史上仍 active 的上一槽位付款依然必须命中同一账单。
-        invoice = self.create_invoice(out_no="slot-match")
+    def test_try_match_invoice_rejects_previous_payment_after_switch(self):
+        # 旧支付方式不再作为账单入口；用户切换后打到旧链/旧指引，不自动命中该账单。
+        invoice = self.create_invoice(out_no="payment-match")
 
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
+        first_pay_address = invoice.pay_address
+        first_pay_amount = invoice.pay_amount
         invoice.select_method(self.crypto, self.chain_b)
-        second_slot = invoice.pay_slots.get(version=2)
 
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=first_pay_amount,
+            pay_address=first_pay_address,
         )
 
         matched = InvoiceService.try_match_invoice(transfer)
 
-        self.assertTrue(matched)
+        self.assertFalse(matched)
         invoice.refresh_from_db()
-        first_slot.refresh_from_db()
-        second_slot.refresh_from_db()
         transfer.refresh_from_db()
-        self.assertEqual(invoice.status, InvoiceStatus.CONFIRMING)
-        self.assertEqual(invoice.transfer_id, transfer.pk)
-        self.assertEqual(invoice.pay_address, first_slot.pay_address)
-        self.assertEqual(invoice.pay_amount, first_slot.pay_amount)
-        self.assertEqual(first_slot.status, InvoicePaySlotStatus.MATCHED)
-        self.assertEqual(second_slot.status, InvoicePaySlotStatus.DISCARDED)
-        self.assertEqual(
-            second_slot.discard_reason,
-            InvoicePaySlotDiscardReason.SETTLED,
-        )
-        self.assertEqual(transfer.type, TransferType.Invoice)
+        self.assertEqual(invoice.status, InvoiceStatus.WAITING)
+        self.assertIsNone(invoice.transfer_id)
+        self.assertNotEqual(transfer.type, TransferType.Invoice)
 
-    def test_drop_invoice_reactivates_matched_slot(self):
-        # 若链上观测后来被回滚，命中过的槽位要恢复为可再次匹配，避免账单永久卡死。
-        invoice = self.create_invoice(out_no="slot-drop")
+    def test_drop_invoice_keeps_current_payment_when_not_reused(self):
+        # 若链上观测后来被回滚，未被复用的当前支付指引可继续等待再次匹配。
+        invoice = self.create_invoice(out_no="payment-drop")
 
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
+        pay_address = invoice.pay_address
+        pay_amount = invoice.pay_amount
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=pay_amount,
+            pay_address=pay_address,
         )
         InvoiceService.try_match_invoice(transfer)
         invoice.refresh_from_db()
@@ -335,18 +311,81 @@ class InvoicePaySlotTests(TestCase):
         InvoiceService.drop_invoice(invoice)
 
         invoice.refresh_from_db()
-        first_slot.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.WAITING)
         self.assertIsNone(invoice.transfer_id)
-        self.assertEqual(first_slot.status, InvoicePaySlotStatus.ACTIVE)
-        self.assertIsNone(first_slot.discard_reason)
-        self.assertIsNone(first_slot.matched_at)
+        self.assertEqual(invoice.pay_address, pay_address)
+        self.assertEqual(invoice.pay_amount, pay_amount)
 
-    def test_check_expired_discards_active_slots(self):
-        # 账单过期后必须释放活跃槽位，否则新的账单永远拿不到这组地址/金额组合。
-        invoice = self.create_invoice(out_no="slot-expire")
+    def test_select_method_skips_expired_waiting_payment_combo(self):
+        # 回归：旧账单已过 expires_at 但状态仍是 WAITING 时，其 (pay_address, pay_amount)
+        # 组合仍被 uniq_invoice_active_payment 约束锁定。差额分配必须把它视为已占用、
+        # 跳到下一档金额，而不是当成空闲再次返回（那会触发约束冲突并陷入重试死循环）。
+        first = self.create_invoice(out_no="expired-waiting-first")
+        first.select_method(self.crypto, self.chain_a)
+        first.refresh_from_db()
+        first_combo = (first.pay_address, first.pay_amount)
+
+        # 让 first 过期，但保持 WAITING（模拟过期任务尚未翻转的时间窗口）。
+        Invoice.objects.filter(pk=first.pk).update(
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        second = self.create_invoice(out_no="expired-waiting-second")
+        second.select_method(self.crypto, self.chain_a)
+        second.refresh_from_db()
+        second_combo = (second.pay_address, second.pay_amount)
+
+        # second 必须拿到不同于 first 的组合；first 的过期 WAITING 组合不被复用。
+        self.assertNotEqual(second_combo, first_combo)
+        # first 的组合保持不变，未被 second 抢占。
+        first.refresh_from_db()
+        self.assertEqual((first.pay_address, first.pay_amount), first_combo)
+
+    def test_drop_invoice_clears_payment_when_occupied_by_expired_waiting_invoice(self):
+        # 回归：账单 CONFIRMING 期间其组合脱离 uniq_invoice_active_payment 约束，可能被
+        # 新的 WAITING 账单复用。若该占用者已过 expires_at 但状态仍是 WAITING（过期任务
+        # 尚未翻转），drop_invoice 的占用判定必须仍能识别它、先清空当前支付指引再回退
+        # 状态——否则回退为 WAITING 会命中约束抛 IntegrityError，账单将卡死在 CONFIRMING。
+        confirming = self.create_invoice(out_no="drop-occupied-confirming")
+        confirming.select_method(self.crypto, self.chain_a)
+        confirming.refresh_from_db()
+        pay_address = confirming.pay_address
+        pay_amount = confirming.pay_amount
+
+        # 推进到 CONFIRMING（此时其组合脱离约束）。
+        transfer = self.create_transfer(
+            chain=self.chain_a,
+            pay_amount=pay_amount,
+            pay_address=pay_address,
+        )
+        InvoiceService.try_match_invoice(transfer)
+        confirming.refresh_from_db()
+        self.assertEqual(confirming.status, InvoiceStatus.CONFIRMING)
+
+        # 新账单合法复用同一组合（因 confirming 已不在约束内），随后过期但保持 WAITING。
+        occupant = self.create_invoice(out_no="drop-occupied-waiting")
+        Invoice.objects.filter(pk=occupant.pk).update(
+            crypto=self.crypto,
+            chain=self.chain_a,
+            pay_address=pay_address,
+            pay_amount=pay_amount,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        # 回退 confirming：不应抛 IntegrityError，且应清空被占用的支付指引。
+        InvoiceService.drop_invoice(confirming)
+
+        confirming.refresh_from_db()
+        self.assertEqual(confirming.status, InvoiceStatus.WAITING)
+        self.assertIsNone(confirming.transfer_id)
+        self.assertIsNone(confirming.pay_address)
+        self.assertIsNone(confirming.pay_amount)
+        self.assertIsNone(confirming.crypto_id)
+        self.assertIsNone(confirming.chain_id)
+
+    def test_check_expired_marks_waiting_invoice_expired(self):
+        invoice = self.create_invoice(out_no="payment-expire")
         invoice.select_method(self.crypto, self.chain_a)
-        active_slot = invoice.pay_slots.get(version=1)
 
         # 将账单设为已过期（check_expired 会校验 expires_at <= now）
         Invoice.objects.filter(pk=invoice.pk).update(
@@ -356,30 +395,23 @@ class InvoicePaySlotTests(TestCase):
         check_expired(invoice.pk)
 
         invoice.refresh_from_db()
-        active_slot.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.EXPIRED)
-        self.assertEqual(active_slot.status, InvoicePaySlotStatus.DISCARDED)
-        self.assertEqual(
-            active_slot.discard_reason,
-            InvoicePaySlotDiscardReason.EXPIRED,
-        )
 
     @patch("invoices.service.WebhookService.create_event")
     def test_pre_notify_enabled_emits_confirming_webhook(self, create_event_mock):
         # 开启 pre_notify 时，try_match_invoice 应发送 confirmed=False 的预通知。
         self.project.pre_notify = True
         self.project.save(update_fields=["pre_notify"])
-        invoice = self.create_invoice(out_no="slot-prenotify")
+        invoice = self.create_invoice(out_no="payment-prenotify")
         Invoice.objects.filter(pk=invoice.pk).update(
             notify_url="https://merchant.example.com/invoice-prenotify"
         )
         invoice.refresh_from_db()
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         matched = InvoiceService.try_match_invoice(transfer)
         self.assertTrue(matched)
@@ -395,13 +427,12 @@ class InvoicePaySlotTests(TestCase):
     @patch("invoices.service.WebhookService.create_event")
     def test_pre_notify_disabled_does_not_emit_webhook(self, create_event_mock):
         # 关闭 pre_notify 时，try_match_invoice 不应发送任何 webhook。
-        invoice = self.create_invoice(out_no="slot-noprenotify")
+        invoice = self.create_invoice(out_no="payment-noprenotify")
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         matched = InvoiceService.try_match_invoice(transfer)
         self.assertTrue(matched)
@@ -415,13 +446,12 @@ class InvoicePaySlotTests(TestCase):
         # 预通知发送异常时，invoice 匹配与状态推进不应被回滚。
         self.project.pre_notify = True
         self.project.save(update_fields=["pre_notify"])
-        invoice = self.create_invoice(out_no="slot-prenotify-fail")
+        invoice = self.create_invoice(out_no="payment-prenotify-fail")
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         matched = InvoiceService.try_match_invoice(transfer)
         self.assertTrue(matched)
@@ -440,13 +470,12 @@ class InvoicePaySlotTests(TestCase):
 
         self.project.pre_notify = True
         self.project.save(update_fields=["pre_notify"])
-        invoice = self.create_invoice(out_no="slot-prenotify-dberror")
+        invoice = self.create_invoice(out_no="payment-prenotify-dberror")
         invoice.select_method(self.crypto, self.chain_a)
-        first_slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=first_slot.pay_amount,
-            pay_address=first_slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         with patch(
             "invoices.service.WebhookService.create_event",
@@ -455,15 +484,13 @@ class InvoicePaySlotTests(TestCase):
             matched = InvoiceService.try_match_invoice(transfer)
         self.assertTrue(matched)
         invoice.refresh_from_db()
-        first_slot.refresh_from_db()
         transfer.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.CONFIRMING)
         self.assertEqual(invoice.transfer_id, transfer.pk)
-        self.assertEqual(first_slot.status, InvoicePaySlotStatus.MATCHED)
         self.assertEqual(transfer.type, TransferType.Invoice)
 
 
-class InvoicePaySlotConcurrencyTests(TransactionTestCase):
+class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create(username="merchant-concurrency")
         self.project = Project.objects.create(
@@ -489,8 +516,8 @@ class InvoicePaySlotConcurrencyTests(TransactionTestCase):
             address="0x00000000000000000000000000000000000000A1",
         )
 
-    def test_select_method_allocates_distinct_slots_under_concurrency(self):
-        # 两个并发账单抢同一条链/币种支付槽时，必须各自拿到不同 pay slot。
+    def test_select_method_allocates_distinct_payments_under_concurrency(self):
+        # 两个并发账单抢同一条链/币种支付组合时，必须各自拿到不同当前支付指引。
         invoice1 = Invoice.objects.create(
             project=self.project,
             out_no="con-1",
@@ -520,12 +547,11 @@ class InvoicePaySlotConcurrencyTests(TransactionTestCase):
                 barrier.wait()
                 invoice.select_method(self.crypto, self.chain)
                 invoice.refresh_from_db()
-                active_slot = invoice.pay_slots.get(status=InvoicePaySlotStatus.ACTIVE)
                 results.append(
                     (
                         invoice.pk,
-                        active_slot.pay_address,
-                        str(active_slot.pay_amount),
+                        invoice.pay_address,
+                        str(invoice.pay_amount),
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -879,7 +905,7 @@ class InvoiceWebhookPayloadTests(TestCase):
 
 
 class InvoiceExpiredMatchTests(TestCase):
-    """过期 Invoice 仍可被链上付款命中的集成测试。"""
+    """过期 Invoice 的当前支付指引仍可按链上发生时间命中。"""
 
     def setUp(self):
         self.user = User.objects.create(username="merchant-expired-match")
@@ -909,8 +935,9 @@ class InvoiceExpiredMatchTests(TestCase):
             address=self.recipient_address,
         )
 
-    def test_expired_invoice_can_still_be_matched_by_transfer(self):
-        # 产品宽容逻辑：账单过期后，如果链上付款仍匹配，应该接受而非拒绝。
+    def test_expired_invoice_can_still_match_current_payment_by_transfer_time(self):
+        # scanner 可能晚于过期任务看到链上交易；只要交易发生在账单窗口内，
+        # 当前支付指引仍应命中，避免误拒绝已按时付款的用户。
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="expired-match-order",
@@ -921,30 +948,17 @@ class InvoiceExpiredMatchTests(TestCase):
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         invoice.select_method(self.crypto, self.chain)
-        slot = invoice.pay_slots.get(version=1)
+        pay_address = invoice.pay_address
+        pay_amount = invoice.pay_amount
 
-        # 模拟过期：直接用 update 把状态设为 EXPIRED + 槽位设为 DISCARDED，
-        # 模拟 check_expired 正常执行后的结果（避免时间线依赖）。
         expired_at = timezone.now()
         Invoice.objects.filter(pk=invoice.pk).update(
             status=InvoiceStatus.EXPIRED,
             updated_at=expired_at,
         )
 
-        InvoicePaySlot.objects.filter(
-            invoice=invoice,
-            status=InvoicePaySlotStatus.ACTIVE,
-        ).update(
-            status=InvoicePaySlotStatus.DISCARDED,
-            discard_reason=InvoicePaySlotDiscardReason.EXPIRED,
-            discarded_at=expired_at,
-            updated_at=expired_at,
-        )
         invoice.refresh_from_db()
-        slot.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.EXPIRED)
-        self.assertEqual(slot.status, InvoicePaySlotStatus.DISCARDED)
-        self.assertEqual(slot.discard_reason, InvoicePaySlotDiscardReason.EXPIRED)
 
         # 链上付款在过期前发生（datetime 在 started_at 和 expires_at 之间）
         transfer_time = invoice.started_at + timedelta(seconds=30)
@@ -957,9 +971,9 @@ class InvoiceExpiredMatchTests(TestCase):
             from_address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000F1"
             ),
-            to_address=slot.pay_address,
-            value=Decimal(slot.pay_amount * Decimal("100000000")),
-            amount=slot.pay_amount,
+            to_address=pay_address,
+            value=Decimal(pay_amount * Decimal("100000000")),
+            amount=pay_amount,
             timestamp=int(transfer_time.timestamp()),
             datetime=transfer_time,
         )
@@ -1002,8 +1016,8 @@ class FallbackInvoiceExpiredTests(TestCase):
             ),
         )
 
-    def test_fallback_expires_waiting_invoices_and_discards_slots(self):
-        # fallback 任务应批量将过期的 WAITING 账单标记为 EXPIRED，并释放活跃槽位。
+    def test_fallback_expires_waiting_invoices(self):
+        # fallback 任务应批量将过期的 WAITING 账单标记为 EXPIRED。
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="fallback-order",
@@ -1015,15 +1029,11 @@ class FallbackInvoiceExpiredTests(TestCase):
             expires_at=timezone.now() - timedelta(minutes=1),
         )
         invoice.select_method(self.crypto, self.chain)
-        slot = invoice.pay_slots.get(version=1)
 
         fallback_invoice_expired()
 
         invoice.refresh_from_db()
-        slot.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.EXPIRED)
-        self.assertEqual(slot.status, InvoicePaySlotStatus.DISCARDED)
-        self.assertEqual(slot.discard_reason, InvoicePaySlotDiscardReason.EXPIRED)
 
     def test_fallback_skips_confirming_invoice(self):
         # 已进入 CONFIRMING 的账单不应被 fallback 误过期。
@@ -1088,7 +1098,6 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             expires_at=timezone.now() + timedelta(minutes=10),
         )
         invoice.select_method(self.crypto, self.chain)
-        slot = invoice.pay_slots.get(version=1)
 
         # 模拟在 check_expired 执行前，账单已被匹配
         now = timezone.now()
@@ -1101,9 +1110,9 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             from_address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000B7"
             ),
-            to_address=slot.pay_address,
-            value=Decimal(slot.pay_amount * Decimal("100000000")),
-            amount=slot.pay_amount,
+            to_address=invoice.pay_address,
+            value=Decimal(invoice.pay_amount * Decimal("100000000")),
+            amount=invoice.pay_amount,
             timestamp=int(now.timestamp()),
             datetime=now,
         )
@@ -1128,7 +1137,7 @@ class InvoiceAllocationRetryExhaustedTests(InvoiceTestMixin, TestCase):
             chain_name=ChainCode.BSC,
         )
 
-    def test_select_method_raises_when_all_slots_occupied(self):
+    def test_select_method_raises_when_all_payments_occupied(self):
         # 当所有地址/金额组合都被占用时，应抛出 InvoiceAllocationError。
         invoice = self.create_test_invoice(out_no="retry-order")
 
@@ -1350,7 +1359,7 @@ class InvoiceCreatePermissionCheckTests(TestCase):
         self.assertEqual(response.data["code"], ErrorCode.ACCOUNT_FROZEN.code)
 
 
-class InvoiceSelectForUpdateLockScopeTests(InvoicePaySlotTests):
+class InvoiceSelectForUpdateLockScopeTests(InvoicePaymentSelectionTests):
     """select_for_update(of=("self",)) 回归测试。
 
     StressRun 高并发压测时，三处 `select_for_update().select_related("project")`
@@ -1396,11 +1405,10 @@ class InvoiceSelectForUpdateLockScopeTests(InvoicePaySlotTests):
     def test_try_match_invoice_locks_only_self_rows(self):
         invoice = self.create_invoice(out_no="lock-scope-match")
         invoice.select_method(self.crypto, self.chain_a)
-        slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=slot.pay_amount,
-            pay_address=slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
 
         with CaptureQueriesContext(connection) as captured:
@@ -1411,11 +1419,10 @@ class InvoiceSelectForUpdateLockScopeTests(InvoicePaySlotTests):
     def test_confirm_invoice_locks_only_self_rows(self):
         invoice = self.create_invoice(out_no="lock-scope-confirm")
         invoice.select_method(self.crypto, self.chain_a)
-        slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=slot.pay_amount,
-            pay_address=slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         InvoiceService.try_match_invoice(transfer)
         invoice.refresh_from_db()
@@ -1428,11 +1435,10 @@ class InvoiceSelectForUpdateLockScopeTests(InvoicePaySlotTests):
     def test_drop_invoice_locks_only_self_rows(self):
         invoice = self.create_invoice(out_no="lock-scope-drop")
         invoice.select_method(self.crypto, self.chain_a)
-        slot = invoice.pay_slots.get(version=1)
         transfer = self.create_transfer(
             chain=self.chain_a,
-            pay_amount=slot.pay_amount,
-            pay_address=slot.pay_address,
+            pay_amount=invoice.pay_amount,
+            pay_address=invoice.pay_address,
         )
         InvoiceService.try_match_invoice(transfer)
         invoice.refresh_from_db()
@@ -1448,18 +1454,26 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
     def _make_minimal_invoice(self):
         return self.create_test_invoice(out_no="billing-mode-test")
 
+    def _set_invoice_payment(
+        self,
+        invoice: Invoice,
+        *,
+        crypto: Crypto,
+        chain: Chain,
+        pay_address: str,
+        pay_amount: Decimal,
+    ) -> None:
+        Invoice.objects.filter(pk=invoice.pk).update(
+            crypto=crypto,
+            chain=chain,
+            pay_address=pay_address,
+            pay_amount=pay_amount,
+        )
+        invoice.refresh_from_db()
+
     def test_invoice_default_billing_mode_is_differ(self):
         invoice = self._make_minimal_invoice()
         self.assertEqual(invoice.billing_mode, InvoiceBillingMode.DIFFER)
-
-    def test_pay_slot_default_billing_mode_is_differ(self):
-        slot = InvoicePaySlot(billing_mode=InvoiceBillingMode.DIFFER.value)
-        self.assertEqual(slot.billing_mode, InvoiceBillingMode.DIFFER)
-
-    def test_pay_slot_recipient_address_nullable(self):
-        field = InvoicePaySlot._meta.get_field("recipient_address")
-        self.assertTrue(field.null)
-        self.assertTrue(field.blank)
 
     def test_contract_slot_uses_project_vault(self):
         vault_address = Web3.to_checksum_address(
@@ -1472,7 +1486,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-        pay_address, recipient_address, pay_amount = invoice._allocate_contract_slot(
+        pay_address, pay_amount = invoice._allocate_contract_slot(
             self.crypto,
             self.chain,
             Decimal("10"),
@@ -1485,7 +1499,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
 
         self.assertEqual(pay_address, slot.address)
-        self.assertEqual(recipient_address, vault_address)
         self.assertEqual(pay_amount, Decimal("10"))
 
     def test_contract_slot_creates_invoice_vault_slot_with_index_without_customer(
@@ -1502,7 +1515,7 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
 
         with self.captureOnCommitCallbacks(execute=False):
-            pay_address, recipient_address, pay_amount = (
+            pay_address, pay_amount = (
                 invoice._allocate_contract_slot(
                     self.crypto,
                     self.chain,
@@ -1518,7 +1531,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         self.assertIsNone(slot.customer_id)
         self.assertEqual(slot.address, pay_address)
-        self.assertEqual(recipient_address, vault_address)
         self.assertEqual(pay_amount, Decimal("10"))
 
     def test_contract_slot_selection_returns_invoice_vault_slot(self):
@@ -1546,7 +1558,10 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.assertIsNone(slot.customer_id)
         self.assertEqual(slot.project.vault, vault_address)
 
-    def test_contract_slot_reuses_existing_slot_when_payment_does_not_overlap(self):
+    def test_contract_slot_reuses_slot_when_existing_invoice_expired(self):
+        # 旧账单已被过期任务翻成 EXPIRED 后，其 (pay_address, pay_amount) 组合脱离
+        # uniq_invoice_active_payment 约束（约束只覆盖 status=WAITING），新合约账单
+        # 可以安全复用同一 VaultSlot 地址。
         vault_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000F03"
         )
@@ -1555,33 +1570,27 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         first_invoice = self.create_test_invoice(
             out_no="contract-reuse-first",
             billing_mode=InvoiceBillingMode.CONTRACT,
+            status=InvoiceStatus.EXPIRED,
             expires_at=timezone.now() - timedelta(minutes=1),
         )
-        first_pay_address, first_recipient_address, first_pay_amount = (
-            first_invoice._allocate_contract_slot(
-                self.crypto,
-                self.chain,
-                Decimal("10"),
-            )
+        first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
         )
-        InvoicePaySlot.objects.create(
-            invoice=first_invoice,
-            project=self.project,
-            version=1,
+        self._set_invoice_payment(
+            first_invoice,
             crypto=self.crypto,
             chain=self.chain,
             pay_address=first_pay_address,
             pay_amount=first_pay_amount,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=first_recipient_address,
-            status=InvoicePaySlotStatus.ACTIVE,
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-second",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-        second_pay_address, _, _ = second_invoice._allocate_contract_slot(
+        second_pay_address, _ = second_invoice._allocate_contract_slot(
             self.crypto,
             self.chain,
             Decimal("10"),
@@ -1597,6 +1606,57 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             1,
         )
 
+    def test_contract_slot_not_reused_when_existing_invoice_waiting_but_expired(self):
+        # 回归：旧账单已过 expires_at 但状态仍是 WAITING（过期任务尚未翻转）时，
+        # uniq_invoice_active_payment 约束仍锁着其 (pay_address, pay_amount) 组合。
+        # 占用判定必须只看 status=WAITING、不看 expires_at，否则复用同一槽位会在后续
+        # _set_current_payment 命中约束、陷入 IntegrityError 重试死循环。
+        # 正确行为：改用下一个 invoice_index 的新 VaultSlot。
+        vault_address = Web3.to_checksum_address(
+            "0x0000000000000000000000000000000000000F05"
+        )
+        self.project.vault = vault_address
+        self.project.save(update_fields=["vault"])
+        first_invoice = self.create_test_invoice(
+            out_no="contract-waiting-expired-first",
+            billing_mode=InvoiceBillingMode.CONTRACT,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
+        )
+        self._set_invoice_payment(
+            first_invoice,
+            crypto=self.crypto,
+            chain=self.chain,
+            pay_address=first_pay_address,
+            pay_amount=first_pay_amount,
+        )
+        # first_invoice 仍是默认 WAITING，只是 expires_at 已过——典型的"过期未翻转"窗口。
+        self.assertEqual(first_invoice.status, InvoiceStatus.WAITING)
+
+        second_invoice = self.create_test_invoice(
+            out_no="contract-waiting-expired-second",
+            billing_mode=InvoiceBillingMode.CONTRACT,
+        )
+        second_pay_address, _ = second_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
+        )
+
+        self.assertNotEqual(second_pay_address, first_pay_address)
+        self.assertEqual(
+            VaultSlot.objects.filter(
+                project=self.project,
+                usage=VaultSlotUsage.INVOICE,
+                chain=self.chain,
+            ).count(),
+            2,
+        )
+
     def test_contract_slot_reuses_existing_slot_when_amount_differs(self):
         vault_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000F13"
@@ -1607,31 +1667,24 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             out_no="contract-reuse-amount-first",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
-        first_pay_address, first_recipient_address, first_pay_amount = (
-            first_invoice._allocate_contract_slot(
-                self.crypto,
-                self.chain,
-                Decimal("10"),
-            )
+        first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
         )
-        InvoicePaySlot.objects.create(
-            invoice=first_invoice,
-            project=self.project,
-            version=1,
+        self._set_invoice_payment(
+            first_invoice,
             crypto=self.crypto,
             chain=self.chain,
             pay_address=first_pay_address,
             pay_amount=first_pay_amount,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=first_recipient_address,
-            status=InvoicePaySlotStatus.ACTIVE,
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-amount-second",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-        second_pay_address, _, _ = second_invoice._allocate_contract_slot(
+        second_pay_address, _ = second_invoice._allocate_contract_slot(
             self.crypto,
             self.chain,
             Decimal("10.00000001"),
@@ -1663,31 +1716,24 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             out_no="contract-reuse-crypto-first",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
-        first_pay_address, first_recipient_address, first_pay_amount = (
-            first_invoice._allocate_contract_slot(
-                self.crypto,
-                self.chain,
-                Decimal("10"),
-            )
+        first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
         )
-        InvoicePaySlot.objects.create(
-            invoice=first_invoice,
-            project=self.project,
-            version=1,
+        self._set_invoice_payment(
+            first_invoice,
             crypto=self.crypto,
             chain=self.chain,
             pay_address=first_pay_address,
             pay_amount=first_pay_amount,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=first_recipient_address,
-            status=InvoicePaySlotStatus.ACTIVE,
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-crypto-second",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-        second_pay_address, _, _ = second_invoice._allocate_contract_slot(
+        second_pay_address, _ = second_invoice._allocate_contract_slot(
             other_crypto,
             self.chain,
             Decimal("10"),
@@ -1713,31 +1759,24 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             out_no="contract-overlap-first",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
-        first_pay_address, first_recipient_address, first_pay_amount = (
-            first_invoice._allocate_contract_slot(
-                self.crypto,
-                self.chain,
-                Decimal("10"),
-            )
+        first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
+            self.crypto,
+            self.chain,
+            Decimal("10"),
         )
-        InvoicePaySlot.objects.create(
-            invoice=first_invoice,
-            project=self.project,
-            version=1,
+        self._set_invoice_payment(
+            first_invoice,
             crypto=self.crypto,
             chain=self.chain,
             pay_address=first_pay_address,
             pay_amount=first_pay_amount,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-            recipient_address=first_recipient_address,
-            status=InvoicePaySlotStatus.ACTIVE,
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-overlap-second",
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-        second_pay_address, _, _ = second_invoice._allocate_contract_slot(
+        second_pay_address, _ = second_invoice._allocate_contract_slot(
             self.crypto,
             self.chain,
             Decimal("10"),
@@ -1773,12 +1812,12 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
         with self.captureOnCommitCallbacks(execute=False):
-            VaultSlot.get_invoice_address(
+            VaultSlot.ensure_invoice_address(
                 project=self.project,
                 chain=self.chain,
                 invoice_index=0,
             )
-            VaultSlot.get_invoice_address(
+            VaultSlot.ensure_invoice_address(
                 project=self.project,
                 chain=self.chain,
                 invoice_index=1,
@@ -1795,16 +1834,16 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
             usage=VaultSlotUsage.INVOICE,
             invoice_index=1,
         )
-        original_create = InvoicePaySlot.objects.create
+        original_set_current_payment = invoice._set_current_payment
 
-        def create_with_first_conflict(*args, **kwargs):
-            if create_with_first_conflict.calls == 0:
-                create_with_first_conflict.calls += 1
-                raise IntegrityError("simulated active pay slot conflict")
-            create_with_first_conflict.calls += 1
-            return original_create(*args, **kwargs)
+        def set_current_payment_with_first_conflict(*args, **kwargs):
+            if set_current_payment_with_first_conflict.calls == 0:
+                set_current_payment_with_first_conflict.calls += 1
+                raise IntegrityError("simulated active payment conflict")
+            set_current_payment_with_first_conflict.calls += 1
+            return original_set_current_payment(*args, **kwargs)
 
-        create_with_first_conflict.calls = 0
+        set_current_payment_with_first_conflict.calls = 0
 
         with (
             patch.object(
@@ -1813,18 +1852,16 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
                 side_effect=[slot0, slot1],
             ) as slot_selector,
             patch.object(
-                InvoicePaySlot.objects,
-                "create",
-                side_effect=create_with_first_conflict,
-            ) as create_mock,
+                invoice,
+                "_set_current_payment",
+                side_effect=set_current_payment_with_first_conflict,
+            ) as update_mock,
         ):
             invoice.select_method(self.crypto, self.chain)
 
         invoice.refresh_from_db()
-        active_slot = invoice.pay_slots.get(status=InvoicePaySlotStatus.ACTIVE)
         self.assertEqual(slot_selector.call_count, 2)
-        self.assertEqual(create_mock.call_count, 2)
-        self.assertEqual(active_slot.pay_address, slot1.address)
+        self.assertEqual(update_mock.call_count, 2)
         self.assertEqual(invoice.pay_address, slot1.address)
 
     def test_contract_slot_rejects_project_without_vault(self):
@@ -1853,18 +1890,14 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
         self.slot_address = Web3.to_checksum_address(
             "0x00000000000000000000000000000000000000ce"
         )
-        self.contract_slot = InvoicePaySlot.objects.create(
-            invoice=self.invoice,
-            project=self.invoice.project,
-            version=1,
+        Invoice.objects.filter(pk=self.invoice.pk).update(
             crypto=self.crypto,
             chain=self.chain,
             pay_address=self.slot_address,
             pay_amount=Decimal("100"),
-            recipient_address=self.recipient_address,
             billing_mode=InvoiceBillingMode.CONTRACT,
-            status=InvoicePaySlotStatus.ACTIVE,
         )
+        self.invoice.refresh_from_db()
 
     def _make_transfer(self, amount: Decimal) -> Transfer:
         now = timezone.now()

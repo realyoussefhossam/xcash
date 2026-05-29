@@ -5,9 +5,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import IntegrityError
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 from risk.tasks import mark_invoice_risk
 
@@ -25,9 +23,6 @@ from webhooks.service import WebhookService
 from .exceptions import InvoiceStatusError
 from .models import Invoice
 from .models import InvoiceBillingMode
-from .models import InvoicePaySlot
-from .models import InvoicePaySlotDiscardReason
-from .models import InvoicePaySlotStatus
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
 
@@ -61,7 +56,7 @@ class InvoiceService:
 
     @staticmethod
     def try_auto_select_single_method(invoice: Invoice) -> None:
-        """仅当 methods 唯一时自动分配 pay slot，替代历史 post_save signal。"""
+        """仅当 methods 唯一时自动分配当前支付指引，替代历史 post_save signal。"""
         methods = invoice.methods or {}
         if len(methods) != 1:
             return
@@ -139,25 +134,15 @@ class InvoiceService:
     def try_match_invoice(
         transfer: Transfer,
     ):
-        # 第一步：不加锁地找到候选槽位，仅用于定位归属的 Invoice ID。
-        # 避免先锁 PaySlot 再锁 Invoice 的顺序——select_method 先锁 Invoice 再锁
-        # PaySlot，两者顺序相反会在并发时形成死锁。
-        base_filter = (
-            InvoicePaySlot.objects.filter(
-                chain=transfer.chain,
-                crypto=transfer.crypto,
-                pay_address=transfer.to_address,
-                invoice__started_at__lte=transfer.datetime,
-                invoice__expires_at__gte=transfer.datetime,
-                invoice__status__in=[InvoiceStatus.WAITING, InvoiceStatus.EXPIRED],
-            )
-            .filter(
-                Q(status=InvoicePaySlotStatus.ACTIVE)
-                | Q(
-                    status=InvoicePaySlotStatus.DISCARDED,
-                    discard_reason=InvoicePaySlotDiscardReason.EXPIRED,
-                )
-            )
+        # 只匹配账单当前支付指引。用户切换支付方式后，旧指引不再作为该账单的
+        # 自动入账入口，避免为低概率误付款保留多槽位状态机。
+        base_filter = Invoice.objects.filter(
+            chain=transfer.chain,
+            crypto=transfer.crypto,
+            pay_address=transfer.to_address,
+            started_at__lte=transfer.datetime,
+            expires_at__gte=transfer.datetime,
+            status__in=[InvoiceStatus.WAITING, InvoiceStatus.EXPIRED],
         )
 
         differ_candidate = (
@@ -165,8 +150,8 @@ class InvoiceService:
                 billing_mode=InvoiceBillingMode.DIFFER,
                 pay_amount=transfer.amount,
             )
-            .order_by("-version", "-created_at", "-pk")
-            .values("pk", "invoice_id")
+            .order_by("-started_at", "-pk")
+            .values("pk")
             .first()
         )
         contract_candidate = (
@@ -174,46 +159,31 @@ class InvoiceService:
                 billing_mode=InvoiceBillingMode.CONTRACT,
                 pay_amount__lte=transfer.amount,
             )
-            .order_by("-version", "-created_at", "-pk")
-            .values("pk", "invoice_id")
+            .order_by("-started_at", "-pk")
+            .values("pk")
             .first()
         )
         candidate = differ_candidate or contract_candidate
         if candidate is None:
             return False
 
-        # 第二步：先锁 Invoice（与 select_method 保持相同的加锁顺序，防死锁）。
+        # 锁住 Invoice（与 select_method 保持相同的加锁对象，防止切换支付方式
+        # 与链上匹配并发覆盖）。
         # of=("self",) 限定行锁只作用于 invoices_invoice，避免 select_related 触发
         # PostgreSQL 把 projects_project / currencies_crypto 等 join 父表也锁成
         # FOR UPDATE，与并发 INSERT/UPDATE 子表时 PG 自动加的 FK FOR KEY SHARE 互斥而死锁。
         invoice = (
             Invoice.objects.select_for_update(of=("self",))
-            .select_related("project")
-            .get(pk=candidate["invoice_id"])
-        )
-
-        # 第三步：Invoice 锁住后再锁 PaySlot，并重新验证槽位状态（防止锁外失效）。
-        # 同样用 of=("self",) 把锁限定在 PaySlot 本行，select_related 仅做读优化。
-        pay_slot = (
-            InvoicePaySlot.objects.select_for_update(of=("self",))
-            .select_related("invoice", "invoice__project", "crypto", "chain")
-            .filter(
-                pk=candidate["pk"],
-            )
-            .filter(
-                Q(status=InvoicePaySlotStatus.ACTIVE)
-                | Q(
-                    status=InvoicePaySlotStatus.DISCARDED,
-                    discard_reason=InvoicePaySlotDiscardReason.EXPIRED,
-                )
-            )
+            .select_related("project", "crypto", "chain")
+            .filter(pk=candidate["pk"])
             .first()
         )
-        if pay_slot is None:
-            # 锁住 Invoice 后发现槽位已被其他事务处理，放弃本次匹配。
+        if invoice is None:
             return False
 
-        invoice._sync_snapshot_from_slot(pay_slot)
+        if not InvoiceService._transfer_matches_current_payment(invoice, transfer):
+            return False
+
         confirm_mode = (
             ConfirmMode.QUICK
             if invoice.project.fast_confirm_threshold > invoice.worth
@@ -223,24 +193,6 @@ class InvoiceService:
             transfer, TransferType.Invoice, confirm_mode
         )
 
-        matched_at = timezone.now()
-        # 命中任一槽位后，账单就只认这次付款，其余仍 active 的旧槽位立即作废。
-        InvoicePaySlot.objects.filter(
-            invoice=invoice, status=InvoicePaySlotStatus.ACTIVE
-        ).exclude(pk=pay_slot.pk).update(
-            status=InvoicePaySlotStatus.DISCARDED,
-            discard_reason=InvoicePaySlotDiscardReason.SETTLED,
-            discarded_at=matched_at,
-            updated_at=matched_at,
-        )
-        InvoicePaySlot.objects.filter(pk=pay_slot.pk).update(
-            status=InvoicePaySlotStatus.MATCHED,
-            discard_reason=None,
-            matched_at=matched_at,
-            discarded_at=None,
-            updated_at=matched_at,
-        )
-        pay_slot.refresh_from_db()
         # 账单状态更新不依赖 post_save 副作用，直接 update 可避免实例整行回写。
         Invoice.objects.filter(pk=invoice.pk).update(
             transfer_id=transfer.pk,
@@ -272,6 +224,20 @@ class InvoiceService:
                 logger.exception("发送账单预通知失败", invoice_id=invoice.pk)
 
         return True
+
+    @staticmethod
+    def _transfer_matches_current_payment(invoice: Invoice, transfer: Transfer) -> bool:
+        if invoice.status not in [InvoiceStatus.WAITING, InvoiceStatus.EXPIRED]:
+            return False
+        if invoice.crypto_id != transfer.crypto_id or invoice.chain_id != transfer.chain_id:
+            return False
+        if invoice.pay_address != transfer.to_address:
+            return False
+        if not (invoice.started_at <= transfer.datetime <= invoice.expires_at):
+            return False
+        if invoice.billing_mode == InvoiceBillingMode.CONTRACT:
+            return invoice.pay_amount is not None and invoice.pay_amount <= transfer.amount
+        return invoice.pay_amount == transfer.amount
 
     @classmethod
     @transaction.atomic
@@ -340,42 +306,13 @@ class InvoiceService:
         if invoice.status != InvoiceStatus.CONFIRMING:
             raise InvoiceStatusError("Invoice must be confirming")
 
-        matched_slot = (
-            invoice.pay_slots.filter(status=InvoicePaySlotStatus.MATCHED)
-            .order_by("-matched_at", "-version", "-pk")
-            .first()
-        )
-        if matched_slot is not None:
-            # 尝试重激活已匹配的槽位；若唯一约束冲突（同地址+金额组合已被其他账单占用），
-            # 则放弃重激活，仅清理快照字段。
-            reactivated_at = timezone.now()
-            try:
-                InvoicePaySlot.objects.filter(pk=matched_slot.pk).update(
-                    status=InvoicePaySlotStatus.ACTIVE,
-                    discard_reason=None,
-                    matched_at=None,
-                    discarded_at=None,
-                    updated_at=reactivated_at,
-                )
-                matched_slot.refresh_from_db()
-                invoice._sync_snapshot_from_slot(matched_slot)
-            except IntegrityError:
-                # 唯一约束冲突：另一张账单已占用该地址+金额组合，无法重激活。
-                # 清空快照字段，让账单回到"未选择支付方式"的初始状态。
-                logger.warning(
-                    "drop_invoice: slot reactivation conflict, clearing snapshot",
-                    invoice=invoice.sys_no,
-                    slot_pk=matched_slot.pk,
-                )
-                Invoice.objects.filter(pk=invoice.pk).update(
-                    crypto=None,
-                    chain=None,
-                    pay_address=None,
-                    pay_amount=None,
-                    updated_at=reactivated_at,
-                )
-        else:
-            # matched_slot 不存在时（异常场景），同样清空快照字段避免显示过期的支付信息。
+        if InvoiceService._current_payment_is_occupied_by_waiting_invoice(invoice):
+            # 账单确认被回退时，当前支付组合可能已经被新的 WAITING 账单复用。
+            # 此时不能重新占用旧组合，直接清空支付指引，让用户重新选择。
+            logger.warning(
+                "drop_invoice: current payment occupied, clearing payment",
+                invoice=invoice.sys_no,
+            )
             Invoice.objects.filter(pk=invoice.pk).update(
                 crypto=None,
                 chain=None,
@@ -396,3 +333,25 @@ class InvoiceService:
             updated_at=timezone.now(),
         )
         invoice.refresh_from_db()
+
+    @staticmethod
+    def _current_payment_is_occupied_by_waiting_invoice(invoice: Invoice) -> bool:
+        if (
+            invoice.crypto_id is None
+            or invoice.chain_id is None
+            or not invoice.pay_address
+            or invoice.pay_amount is None
+        ):
+            return False
+        # 占用判据与 uniq_invoice_active_payment 约束保持一致——只看 status=WAITING，
+        # 不叠加 expires_at 过滤：约束锁定所有 WAITING 账单的 (pay_address, pay_amount)
+        # 组合，若这里漏判"过期未翻转"的占用者，drop_invoice 把本账单回退为 WAITING 时
+        # 会命中约束抛 IntegrityError，而 drop_invoice 未捕获，账单将卡死在 CONFIRMING。
+        return Invoice.objects.filter(
+            project=invoice.project,
+            crypto=invoice.crypto,
+            chain=invoice.chain,
+            pay_address=invoice.pay_address,
+            pay_amount=invoice.pay_amount,
+            status=InvoiceStatus.WAITING,
+        ).exclude(pk=invoice.pk).exists()

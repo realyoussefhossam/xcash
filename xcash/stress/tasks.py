@@ -417,7 +417,7 @@ def _execute_deposit(case: DepositStressCase) -> None:
     注意：保持 case.status 为 CREATING，由 payment task 推进到 PAYING/PAID。
     """
     # 阶段 1: 获取充值地址
-    deposit_address = StressService.get_deposit_address(case)
+    deposit_address = StressService.ensure_deposit_address(case)
     case.deposit_address = deposit_address
     case.api_done_at = timezone.now()
     case.save(update_fields=["deposit_address", "api_done_at"])
