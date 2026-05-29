@@ -1,4 +1,5 @@
 from django.contrib import admin
+from unfold.admin import TabularInline
 from unfold.decorators import display
 
 from common.admin import ReadOnlyModelAdmin
@@ -9,8 +10,24 @@ from evm.models import VaultSlot
 from evm.models import VaultSlotCollectSchedule
 
 
+class VaultSlotCollectScheduleInline(TabularInline):
+    model = VaultSlotCollectSchedule
+    extra = 0
+    can_delete = False
+    fields = ("crypto", "due_at", "tx_task", "created_at", "updated_at")
+    readonly_fields = fields
+    ordering = ("-due_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("crypto", "tx_task")
+
+
 @admin.register(VaultSlot)
 class VaultSlotAdmin(ReadOnlyModelAdmin):
+    inlines = (VaultSlotCollectScheduleInline,)
     list_display = ("customer", "chain", "address", "created_at")
     list_filter = ("chain",)
     search_fields = ("customer__uid", "address")
