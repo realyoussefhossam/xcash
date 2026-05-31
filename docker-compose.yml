@@ -33,7 +33,7 @@ services:
       - redis_data:/data
 
   django-db:
-    image: postgres:18.3-trixie
+    image: postgres:18.4-trixie
     container_name: xcash_django_db
     restart: unless-stopped
     environment:
@@ -44,7 +44,7 @@ services:
       - django_db_data:/var/lib/postgresql
 
   migration-rehearsal-db:
-    image: postgres:18.3-trixie
+    image: postgres:18.4-trixie
     container_name: xcash_migration_rehearsal_db
     profiles: ["migration-rehearsal"]
     environment:
