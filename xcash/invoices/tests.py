@@ -1459,8 +1459,11 @@ class InvoiceCreatePermissionCheckTests(TestCase):
         )
 
     @patch("invoices.viewsets.check_saas_permission")
-    def test_create_checks_each_requested_method(self, mock_check):
-        """账单创建时，每个 methods 链币组合都必须经过 SaaS 白名单校验。"""
+    def test_create_relies_on_finalized_methods_without_per_method_recheck(
+        self,
+        mock_check,
+    ):
+        """创建阶段 methods 已由 available_methods 收敛，不再逐项重复复检。"""
         serializer_stub = self._make_serializer_stub()
         serializer_stub.validated_data["methods"] = {
             "USDT": ["ethereum-mainnet", "bsc-mainnet"],
@@ -1488,26 +1491,10 @@ class InvoiceCreatePermissionCheckTests(TestCase):
         ):
             InvoiceViewSet.as_view({"post": "create"})(self._make_request())
 
-        mock_check.assert_any_call(appid=self.project.appid, action="invoice")
-        mock_check.assert_any_call(
+        mock_check.assert_called_once_with(
             appid=self.project.appid,
             action="invoice",
-            chain_code="ethereum-mainnet",
-            crypto_symbol="USDT",
         )
-        mock_check.assert_any_call(
-            appid=self.project.appid,
-            action="invoice",
-            chain_code="bsc-mainnet",
-            crypto_symbol="USDT",
-        )
-        mock_check.assert_any_call(
-            appid=self.project.appid,
-            action="invoice",
-            chain_code="ethereum-mainnet",
-            crypto_symbol="USDC",
-        )
-        self.assertEqual(mock_check.call_count, 4)
 
     @patch("invoices.viewsets.check_saas_permission")
     def test_select_method_checks_selected_chain_and_crypto(self, mock_check):

@@ -48,6 +48,22 @@ def _normalize_whitelist(values):
     return values or None
 
 
+def normalize_chain_whitelist(values):
+    """链 code 以小写比较，兼容 SaaS 白名单大小写漂移。"""
+    normalized = _normalize_whitelist(values)
+    if normalized is None:
+        return None
+    return {str(code).lower() for code in normalized}
+
+
+def normalize_crypto_whitelist(values):
+    """币种 symbol 以大写比较，兼容 SaaS 白名单大小写漂移。"""
+    normalized = _normalize_whitelist(values)
+    if normalized is None:
+        return None
+    return {str(symbol).upper() for symbol in normalized}
+
+
 def _schedule_refresh(appid: str) -> None:
     """派发异步刷新任务；同一 appid 在 REFRESH_AFTER 秒内只派发一次。"""
     # cache.add 是原子操作：仅当 key 不存在时写入并返回 True，避免并发请求重复派发
@@ -121,19 +137,21 @@ def check_saas_permission(
     ):
         raise APIError(ErrorCode.FEATURE_NOT_ENABLED, detail=action)
 
-    allowed_chain_codes = _normalize_whitelist(perm.get("allowed_chain_codes"))
+    allowed_chain_codes = normalize_chain_whitelist(perm.get("allowed_chain_codes"))
     if (
         chain_code is not None
         and allowed_chain_codes is not None
-        and chain_code not in allowed_chain_codes
+        and str(chain_code).lower() not in allowed_chain_codes
     ):
         raise APIError(ErrorCode.FEATURE_NOT_ENABLED, detail=chain_code)
 
-    allowed_crypto_symbols = _normalize_whitelist(perm.get("allowed_crypto_symbols"))
+    allowed_crypto_symbols = normalize_crypto_whitelist(
+        perm.get("allowed_crypto_symbols")
+    )
     if (
         crypto_symbol is not None
         and allowed_crypto_symbols is not None
-        and crypto_symbol not in allowed_crypto_symbols
+        and str(crypto_symbol).upper() not in allowed_crypto_symbols
     ):
         raise APIError(ErrorCode.FEATURE_NOT_ENABLED, detail=crypto_symbol)
 
@@ -158,19 +176,9 @@ def filter_saas_allowed_methods(
     if perm.get("frozen"):
         return {}
 
-    allowed_chain_codes = _normalize_whitelist(perm.get("allowed_chain_codes"))
-    allowed_crypto_symbols = _normalize_whitelist(perm.get("allowed_crypto_symbols"))
-    allowed_crypto_set = (
-        {str(symbol).upper() for symbol in allowed_crypto_symbols}
-        if allowed_crypto_symbols is not None
-        else None
-    )
-    # 系统 Chain.code 统一小写（ethereum/bsc/tron…）。SaaS 侧白名单大小写不保证一致，
-    # 故归一到小写后再比对，避免大小写差异导致链币组合被静默过滤掉。
-    allowed_chain_set = (
-        {str(code).lower() for code in allowed_chain_codes}
-        if allowed_chain_codes is not None
-        else None
+    allowed_chain_set = normalize_chain_whitelist(perm.get("allowed_chain_codes"))
+    allowed_crypto_set = normalize_crypto_whitelist(
+        perm.get("allowed_crypto_symbols")
     )
 
     filtered: dict[str, list[str]] = {}

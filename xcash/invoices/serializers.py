@@ -23,6 +23,7 @@ from .models import Invoice
 from .models import InvoiceBillingMode
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
+from .service import InvoiceService
 
 
 class InvoiceSetCryptoChainSerializer(Serializer):
@@ -97,62 +98,6 @@ class InvoiceCreateSerializer(Serializer):
             )
         return self._project
 
-    def finalize_methods(self, *, project, billing_mode, requested):
-        """按 billing_mode 生成/收敛最终 methods——账单可付组合的唯一真源。
-
-        available_methods(project, billing_mode) 已是该模式下真正可付的 crypto→链集合
-        （合约需 vault 且仅 EVM；差额需对应 chain_type 的收款地址）。
-        - 商户未传 methods → 直接采用全部可用方式（系统按 billing_mode 动态生成）。
-        - 商户传了 methods → 与可用集合逐项求交集校验，任何越界组合直接拒绝。
-        """
-        available = Invoice.available_methods(project, billing_mode)
-        if not available:
-            raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
-
-        if not requested:
-            return available
-
-        if not isinstance(requested, dict):
-            raise APIError(ErrorCode.PARAMETER_ERROR, detail="methods")
-
-        sanitized: dict[str, list[str]] = {}
-        for crypto_symbol, chain_codes in requested.items():
-            if not isinstance(chain_codes, (list, tuple)):
-                raise APIError(ErrorCode.PARAMETER_ERROR, detail=crypto_symbol)
-
-            try:
-                CryptoService.get_by_symbol(crypto_symbol)
-            except ObjectDoesNotExist as exc:
-                raise APIError(ErrorCode.INVALID_CRYPTO, detail=crypto_symbol) from exc
-
-            available_chains = set(available.get(crypto_symbol, []))
-            if not available_chains:
-                raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS, detail=crypto_symbol)
-
-            normalized_codes: list[str] = []
-            for chain_code in chain_codes:
-                if not isinstance(chain_code, str):
-                    raise APIError(ErrorCode.PARAMETER_ERROR, detail=crypto_symbol)
-
-                try:
-                    ChainService.get_by_code(chain_code)
-                except ObjectDoesNotExist as exc:
-                    raise APIError(ErrorCode.INVALID_CHAIN, detail=chain_code) from exc
-                if chain_code not in available_chains:
-                    raise APIError(
-                        ErrorCode.NO_RECIPIENT_ADDRESS,
-                        detail=f"{crypto_symbol}:{chain_code}",
-                    )
-                normalized_codes.append(chain_code)
-
-            if normalized_codes:
-                sanitized[crypto_symbol] = normalized_codes
-
-        if not sanitized:
-            raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
-
-        return sanitized
-
     def validate_currency(self, value):  # noqa
         if not (CryptoService.exists(value) or FiatService.exists(value)):
             raise APIError(ErrorCode.INVALID_INVOICE_CURRENCY)
@@ -177,19 +122,12 @@ class InvoiceCreateSerializer(Serializer):
 
         # billing_mode 决定可付组合：合约（EVM+vault）与差额（对应 chain_type 收款地址）
         # 各自的可用方式不同，最终 methods 由 finalize_methods 按模式动态生成/收敛。
-        attrs["methods"] = self.finalize_methods(
+        attrs["methods"] = InvoiceService.finalize_methods(
             project=project,
             billing_mode=attrs.get("billing_mode", InvoiceBillingMode.DIFFER),
             requested=attrs.get("methods") or {},
+            currency=attrs["currency"],
         )
-
-        # 计价货币为加密货币时，账单只为该币种收款，methods 收敛到单一币种。
-        if CryptoService.exists(attrs["currency"]):
-            currency = attrs["currency"]
-            chains = attrs["methods"].get(currency, [])
-            if not chains:
-                raise APIError(ErrorCode.NO_AVAILABLE_METHOD)
-            attrs["methods"] = {currency: chains}
 
         return attrs
 

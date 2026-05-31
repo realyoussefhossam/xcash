@@ -87,14 +87,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not serializer.is_valid():
             raise APIError(ErrorCode.PARAMETER_ERROR, detail=serializer.errors)
         validated_data = serializer.validated_data
-        for crypto_symbol, chain_codes in validated_data["methods"].items():
-            for chain_code in chain_codes:
-                check_saas_permission(
-                    appid=request.headers.get(APPID_HEADER),
-                    action="invoice",
-                    chain_code=chain_code,
-                    crypto_symbol=crypto_symbol,
-                )
 
         try:
             invoice = Invoice.objects.create(

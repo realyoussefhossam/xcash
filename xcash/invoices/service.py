@@ -13,6 +13,8 @@ from chains.models import ConfirmMode
 from chains.models import TransferType
 from chains.service import ChainService
 from chains.service import TransferService
+from common.error_codes import ErrorCode
+from common.exceptions import APIError
 from common.internal_callback import send_internal_callback
 from common.utils.math import format_decimal_stripped
 from currencies.service import CryptoService
@@ -33,6 +35,86 @@ logger = structlog.get_logger()
 
 
 class InvoiceService:
+    @staticmethod
+    def finalize_methods(
+        *,
+        project,
+        billing_mode: str,
+        requested,
+        currency: str | None = None,
+    ) -> dict[str, list[str]]:
+        """按 billing_mode 生成/收敛账单最终 methods。
+
+        Invoice.available_methods(project, billing_mode) 是该模式下真正可付款的
+        crypto -> chain 集合；调用方未指定 methods 时直接采用全集，指定时必须是全集
+        子集。计价货币本身是加密货币时，最终 methods 还会收敛到该单一币种。
+        """
+        available = Invoice.available_methods(project, billing_mode)
+        if not available:
+            raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
+
+        if not requested:
+            finalized = available
+        else:
+            if not isinstance(requested, dict):
+                raise APIError(ErrorCode.PARAMETER_ERROR, detail="methods")
+
+            finalized: dict[str, list[str]] = {}
+            for crypto_symbol, chain_codes in requested.items():
+                if not isinstance(chain_codes, (list, tuple)):
+                    raise APIError(ErrorCode.PARAMETER_ERROR, detail=crypto_symbol)
+
+                try:
+                    CryptoService.get_by_symbol(crypto_symbol)
+                except ObjectDoesNotExist as exc:
+                    raise APIError(
+                        ErrorCode.INVALID_CRYPTO,
+                        detail=crypto_symbol,
+                    ) from exc
+
+                available_chains = set(available.get(crypto_symbol, []))
+                if not available_chains:
+                    raise APIError(
+                        ErrorCode.NO_RECIPIENT_ADDRESS,
+                        detail=crypto_symbol,
+                    )
+
+                normalized_codes: list[str] = []
+                for chain_code in chain_codes:
+                    if not isinstance(chain_code, str):
+                        raise APIError(
+                            ErrorCode.PARAMETER_ERROR,
+                            detail=crypto_symbol,
+                        )
+
+                    try:
+                        ChainService.get_by_code(chain_code)
+                    except ObjectDoesNotExist as exc:
+                        raise APIError(
+                            ErrorCode.INVALID_CHAIN,
+                            detail=chain_code,
+                        ) from exc
+                    if chain_code not in available_chains:
+                        raise APIError(
+                            ErrorCode.NO_RECIPIENT_ADDRESS,
+                            detail=f"{crypto_symbol}:{chain_code}",
+                        )
+                    normalized_codes.append(chain_code)
+
+                if normalized_codes:
+                    finalized[crypto_symbol] = normalized_codes
+
+            if not finalized:
+                raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
+
+        if currency and CryptoService.exists(currency):
+            chains = finalized.get(currency, [])
+            if not chains:
+                raise APIError(ErrorCode.NO_AVAILABLE_METHOD)
+            return {currency: chains}
+
+        return finalized
+
     @staticmethod
     def refresh_initial_worth(invoice: Invoice) -> None:
         """在账单创建后立即固化基础 worth，避免继续依赖隐式 post_save signal。"""

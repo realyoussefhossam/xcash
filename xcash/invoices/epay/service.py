@@ -11,6 +11,7 @@ from django.db import IntegrityError
 from django.db import transaction
 from django.utils import timezone
 
+from common.exceptions import APIError
 from common.permission_check import check_saas_permission
 
 from ..models import EpayMerchant
@@ -149,7 +150,15 @@ class EpaySubmitService:
         project = merchant.project
         # EPay V1 账单不传 billing_mode，落库即模型默认 DIFFER；methods 必须按差额模式
         # 生成，否则会混入仅合约可付的 EVM 链，买家选中后差额分配必失败。
-        methods = Invoice.available_methods(project, InvoiceBillingMode.DIFFER)
+        try:
+            methods = InvoiceService.finalize_methods(
+                project=project,
+                billing_mode=InvoiceBillingMode.DIFFER,
+                requested={},
+                currency=params["currency"],
+            )
+        except APIError as exc:
+            raise EpaySubmitError("no available payment methods") from exc
         if not methods:
             raise EpaySubmitError("no available payment methods")
 

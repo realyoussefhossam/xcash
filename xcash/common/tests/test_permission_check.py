@@ -187,6 +187,28 @@ class CheckSaasPermissionTest(TestCase):
             crypto_symbol="USDT",
         )
 
+    def test_allowed_chain_and_crypto_match_case_insensitively(self):
+        """SaaS 白名单用大小写归一比较，避免生成 methods 与复检路径漂移。"""
+
+        cache.set(
+            "saas:permission:XC-allowed-case",
+            {
+                "frozen": False,
+                "enable_deposit_withdrawal": True,
+                "allowed_chain_codes": ["ETHEREUM-MAINNET"],
+                "allowed_crypto_symbols": ["usdt"],
+                "_fetched_at": time.time(),
+            },
+            None,
+        )
+
+        check_saas_permission(
+            appid="XC-allowed-case",
+            action="invoice",
+            chain_code="ethereum-mainnet",
+            crypto_symbol="USDT",
+        )
+
     def test_empty_chain_and_crypto_whitelists_mean_all_supported(self):
         """SaaS 传空白名单时按未限制处理，兼容未设置的 Tier。"""
 

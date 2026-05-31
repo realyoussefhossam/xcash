@@ -2,31 +2,19 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 from django.utils import timezone
-from internal_api.serializers.invoices import InternalInvoiceCreateSerializer
 from internal_api.serializers.invoices import InternalInvoiceDetailSerializer
+from internal_api.viewsets.invoices import InternalInvoiceViewSet
 
 from invoices.models import Invoice
 from invoices.models import InvoiceBillingMode
 from invoices.models import InvoiceProtocol
 
 
-class InternalInvoiceDurationValidationTests(SimpleTestCase):
-    """内部 API 账单有效期边界测试。"""
+class InternalInvoiceCreateDeprecatedTests(SimpleTestCase):
+    """内部 API 不再承担 Invoice 创建职责。"""
 
-    def test_duration_over_thirty_minutes_is_rejected(self):
-        serializer = InternalInvoiceCreateSerializer(
-            data={
-                "out_no": "internal-duration-order",
-                "title": "Internal duration",
-                "currency": "USD",
-                "amount": Decimal("10"),
-                "methods": {"ETH": ["eth"]},
-                "duration": 31,
-            }
-        )
-
-        self.assertFalse(serializer.is_valid())
-        self.assertIn("duration", serializer.errors)
+    def test_internal_invoice_api_disables_post(self):
+        self.assertNotIn("post", InternalInvoiceViewSet.http_method_names)
 
 
 class InternalInvoiceDetailSerializerTests(SimpleTestCase):
