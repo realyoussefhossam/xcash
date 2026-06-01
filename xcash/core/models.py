@@ -201,7 +201,7 @@ class SystemWallet(models.Model):
         verbose_name_plural = verbose_name
 
     def __str__(self):
-        return _("系统级热钱包")
+        return str(_("系统级热钱包"))
 
     def save(self, *args, **kwargs):
         # 强制收口为单例记录，避免系统级热钱包入口分叉。

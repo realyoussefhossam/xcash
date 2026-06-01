@@ -90,6 +90,11 @@ SIDEBAR_UNFOLD = {
                         "link": reverse_lazy("admin:index"),
                     },
                     {
+                        "title": _("系统钱包"),
+                        "icon": "account_balance_wallet",
+                        "link": reverse_lazy("admin:core_systemwallet_changelist"),
+                    },
+                    {
                         "title": _("系统参数"),
                         "icon": "tune",
                         "link": reverse_lazy("admin:core_systemsettings_changelist"),

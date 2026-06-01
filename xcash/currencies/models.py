@@ -81,7 +81,8 @@ class Crypto(models.Model):
         return ChainToken.objects.get(crypto=self, chain=chain).decimals
 
     def supported_chains(self) -> str:
-        return ", ".join(self.chains.values_list("name", flat=True))
+        chain_tokens = self.chain_tokens.select_related("chain").all()
+        return ", ".join(chain_token.chain.name for chain_token in chain_tokens)
 
     @classmethod
     def all_methods(cls):

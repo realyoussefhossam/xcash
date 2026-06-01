@@ -21,6 +21,9 @@ class ChainTokenInline(TabularInline):
 class CryptoAdmin(ModelAdmin):
     inlines = (ChainTokenInline,)
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("chain_tokens__chain")
+
     def get_readonly_fields(self, request, obj=None):
         if obj:
             return "symbol", "prices"
@@ -31,7 +34,6 @@ class CryptoAdmin(ModelAdmin):
         "symbol",
         "supported_chains",
         "display_type",
-        "is_native",
         "active",
     )
     list_filter = ("active", "is_native")
