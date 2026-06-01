@@ -317,8 +317,9 @@ class InvoiceService:
             return False
         if not (invoice.started_at <= transfer.datetime <= invoice.expires_at):
             return False
-        if invoice.billing_mode == InvoiceBillingMode.CONTRACT:
-            return invoice.pay_amount is not None and invoice.pay_amount <= transfer.amount
+        # CONTRACT 与 DIFFER 现统一要求 pay_amount 与到账金额精确相等：候选已在
+        # try_match_invoice 用精确金额选出，复核保持同一口径，杜绝溢付被误判匹配。
+        # pay_amount 为 None 时 == 比较天然返回 False，无需单独判空。
         return invoice.pay_amount == transfer.amount
 
     @classmethod

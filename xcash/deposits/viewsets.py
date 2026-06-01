@@ -1,6 +1,7 @@
 import re
 import time
 
+import structlog
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction as db_transaction
@@ -23,8 +24,14 @@ from evm.models import VaultSlot
 from projects.models import Customer
 from projects.models import Project
 
+logger = structlog.get_logger()
+
 # uid 合法字符：字母、数字、下划线、中划线，长度 1~128
 _UID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]{1,128}$")
+
+# 本地联调（DEBUG）下同步等待 VaultSlot 充币地址上链的有界轮询参数。
+_DEPLOY_WAIT_TIMEOUT_SECONDS = 30.0
+_DEPLOY_WAIT_POLL_INTERVAL_SECONDS = 0.2
 
 
 @method_decorator(db_transaction.non_atomic_requests, name="dispatch")
@@ -103,5 +110,28 @@ class DepositViewSet(viewsets.GenericViewSet):
 
 
 def wait_deposit_address_deployed(*, chain: Chain, address: str) -> None:
-    while len(chain.w3.eth.get_code(address)) == 0:  # noqa: SLF001
-        time.sleep(0.2)
+    """本地联调（DEBUG）下同步等待充币地址对应的 VaultSlot 合约上链。
+
+    仅用于本地端到端验证，让端点返回时地址即可用。有界轮询 + 异常容忍：节点抖动时
+    记日志后继续重试，到 _DEPLOY_WAIT_TIMEOUT_SECONDS 仍未部署则记日志后放行（地址
+    本身有效，部署最终异步完成），避免请求线程被无限挂起。
+    """
+    deadline = time.monotonic() + _DEPLOY_WAIT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            if len(chain.w3.eth.get_code(address)) > 0:  # noqa: SLF001
+                return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "deposits.wait_deposit_address_deployed_error",
+                chain=chain.code,
+                address=address,
+                error=str(exc),
+            )
+        time.sleep(_DEPLOY_WAIT_POLL_INTERVAL_SECONDS)
+    logger.warning(
+        "deposits.wait_deposit_address_deployed_timeout",
+        chain=chain.code,
+        address=address,
+        timeout=_DEPLOY_WAIT_TIMEOUT_SECONDS,
+    )
