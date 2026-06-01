@@ -24,10 +24,6 @@ WEBHOOK_EVENTS_SCHEDULE_SECONDS = get_int_default(
     "CELERY_WEBHOOK_EVENTS_SCHEDULE_SECONDS",
     15,
 )
-LATEST_BLOCK_SCHEDULE_SECONDS = get_int_default(
-    "CELERY_LATEST_BLOCK_SCHEDULE_SECONDS",
-    8,
-)
 FALLBACK_PROCESS_TRANSFER_SCHEDULE_SECONDS = get_int_default(
     "CELERY_FALLBACK_PROCESS_TRANSFER_SCHEDULE_SECONDS",
     20,
@@ -78,10 +74,6 @@ webhooks_tasks = {
 # chains app
 # ---------------------------
 chains_tasks = {
-    "update_latest_block": {
-        "task": "chains.tasks.update_latest_block",
-        "schedule": LATEST_BLOCK_SCHEDULE_SECONDS,
-    },
     "fallback_process_transfer": {
         "task": "chains.tasks.fallback_process_transfer",
         "schedule": FALLBACK_PROCESS_TRANSFER_SCHEDULE_SECONDS,

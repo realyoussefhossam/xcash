@@ -11,6 +11,7 @@ from chains.models import ChainType
 from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
+from chains.tasks import dispatch_block_confirmation_checks_if_needed
 from common.decorators import singleton_task
 from common.time import ago
 from evm.internal_tx.routing import NON_TRANSFER_TX_TASK_TYPES
@@ -181,6 +182,7 @@ def execute_due_vault_slot_collect_schedules() -> None:
 def _scan_evm_chain(chain_pk: int) -> None:
     """按链执行一次 EVM VaultSlot 充值日志统一扫描。"""
     chain = Chain.objects.get(pk=chain_pk)
+    previous_latest_block = chain.latest_block_number
 
     try:
         try:
@@ -188,6 +190,10 @@ def _scan_evm_chain(chain_pk: int) -> None:
         except EvmScannerRpcError:
             logger.warning("EVM 自扫描 RPC 失败", chain=chain.name)
 
+        dispatch_block_confirmation_checks_if_needed(
+            chain=chain,
+            previous_latest_block=previous_latest_block,
+        )
         EvmTaskPoller.poll_chain(chain=chain)
         logger.info("EVM 自扫描完成", chain=chain.name)
     finally:

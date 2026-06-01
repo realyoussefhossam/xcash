@@ -17,8 +17,6 @@ from tron.watchers import load_tron_filter_addresses
 
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import Transfer
-from chains.models import TransferStatus
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
 from currencies.models import ChainToken
@@ -128,17 +126,12 @@ class TronUsdtPaymentScanner:
                 scanned_block=last_successfully_scanned,
             )
 
-        if (
-            latest_block > previous_latest_block
-            and Transfer.objects.filter(
-                chain=chain,
-                status=TransferStatus.CONFIRMING,
-                processed_at__isnull=False,
-            ).exists()
-        ):
-            from chains.tasks import block_number_updated
+        from chains.tasks import dispatch_block_confirmation_checks_if_needed
 
-            block_number_updated.apply_async(args=(chain.pk,), countdown=2)
+        dispatch_block_confirmation_checks_if_needed(
+            chain=chain,
+            previous_latest_block=previous_latest_block,
+        )
 
         return TronScanSummary(
             filter_addresses=len(filter_addresses),

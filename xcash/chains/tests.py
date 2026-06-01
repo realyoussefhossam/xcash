@@ -1274,28 +1274,6 @@ class SignerSystemCheckTests(TestCase):
         self.assertIn("chains.E003", error_ids)
 
 
-class UpdateLatestBlockTaskConfigTests(TestCase):
-    @patch("chains.tasks.block_number_updated.delay")
-    def test_update_the_latest_block_keeps_tron_height_without_rpc_polling(
-        self,
-        block_number_updated_delay_mock,
-    ):
-        from chains.tasks import update_the_latest_block
-
-        chain = Chain.objects.create(
-            code=ChainCode.Tron,
-            rpc="http://tron.invalid",
-            active=True,
-            latest_block_number=456,
-        )
-
-        update_the_latest_block.run(chain.pk)
-
-        chain.refresh_from_db()
-        self.assertEqual(chain.latest_block_number, 456)
-        block_number_updated_delay_mock.assert_not_called()
-
-
 class TransferServiceCreateObservedTests(TestCase):
     """覆盖 TransferService.create_observed_transfer 的幂等与冲突场景。"""
 

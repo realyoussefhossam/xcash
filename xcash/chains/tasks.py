@@ -149,24 +149,26 @@ def block_number_updated(chain_pk):
         block_number_updated.apply_async(args=(chain_pk,), countdown=2)
 
 
-@shared_task(ignore_result=True, time_limit=40)
-@singleton_task(timeout=5, use_params=True)
-def update_the_latest_block(pk):
-    chain = Chain.objects.get(pk=pk)
-    old_latest_block = chain.latest_block_number
+def dispatch_block_confirmation_checks_if_needed(
+    *,
+    chain: Chain,
+    previous_latest_block: int,
+) -> None:
+    """链扫描推进高度后，按需派发 Transfer 确认检查。
 
-    chain.latest_block_number = chain.get_latest_block_number
-    # 链高度刷新不依赖 save() 信号，直接 update 可减少实例级整行写入。
-    Chain.objects.filter(pk=chain.pk).update(
-        latest_block_number=chain.latest_block_number
-    )
+    链高事实由各链扫描器在同一链路内刷新；确认调度只关心“高度确实前进”
+    且存在已完成业务归类的 CONFIRMING 转账，避免空链每轮扫描都投递任务。
+    """
+    chain.refresh_from_db(fields=["latest_block_number"])
+    if chain.latest_block_number <= previous_latest_block:
+        return
 
-    if chain.latest_block_number > old_latest_block:
-        block_number_updated.delay(chain.pk)
+    has_pending_confirmations = Transfer.objects.filter(
+        chain=chain,
+        status=TransferStatus.CONFIRMING,
+        processed_at__isnull=False,
+    ).exists()
+    if not has_pending_confirmations:
+        return
 
-
-@shared_task
-@singleton_task(timeout=5)
-def update_latest_block():
-    for chain in Chain.objects.filter(active=True):
-        update_the_latest_block.delay(chain.pk)
+    block_number_updated.delay(chain.pk)

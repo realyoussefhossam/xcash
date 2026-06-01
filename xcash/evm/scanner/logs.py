@@ -49,7 +49,9 @@ class EvmLogScanner:
 
         try:
             latest_block = rpc_client.get_latest_block_number()
-            Chain.objects.filter(pk=chain.pk).update(latest_block_number=latest_block)
+            Chain.objects.filter(pk=chain.pk).update(
+                latest_block_number=Greatest(F("latest_block_number"), latest_block)
+            )
 
             watch_set = load_watch_set(chain=chain)
             scan_window = cls._compute_scan_window(

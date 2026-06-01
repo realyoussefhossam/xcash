@@ -800,6 +800,25 @@ class EvmErc20ScannerTests(TestCase):
         self.assertEqual(get_logs_mock.call_count, 1)
         self.assertIsNone(get_logs_mock.call_args.kwargs["addresses"])
 
+    @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
+    @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
+    def test_scan_chain_never_rewinds_chain_latest_block_number(
+        self,
+        get_latest_block_number_mock,
+        get_logs_mock,
+    ):
+        # 扫描链路只接受更高链高，避免异常 RPC / 节点回退把确认进度倒拨。
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=200)
+        self.chain.refresh_from_db()
+        EvmScanCursor.objects.create(chain=self.chain, last_scanned_block=100)
+        get_latest_block_number_mock.return_value = 120
+        get_logs_mock.return_value = []
+
+        EvmLogScanner.scan_chain(chain=self.chain, batch_size=32)
+
+        self.chain.refresh_from_db()
+        self.assertEqual(self.chain.latest_block_number, 200)
+
     @patch("evm.tasks.EvmTaskPoller.poll_chain")
     @patch("evm.tasks.EvmScannerService.scan_chain")
     def test_scan_evm_chain_task_dispatches_combined_scanner(
@@ -815,6 +834,42 @@ class EvmErc20ScannerTests(TestCase):
         _scan_evm_chain(self.chain.pk)
 
         scan_chain_mock.assert_called_once()
+        poll_chain_mock.assert_called_once()
+
+    @patch("chains.tasks.block_number_updated.delay")
+    @patch("evm.tasks.EvmTaskPoller.poll_chain")
+    @patch("evm.tasks.EvmScannerService.scan_chain")
+    def test_scan_evm_chain_dispatches_confirmation_checks_after_block_advance(
+        self,
+        scan_chain_mock,
+        poll_chain_mock,
+        block_number_updated_delay_mock,
+    ):
+        # EVM 链高由扫描链路刷新；一旦高度前进，已完成业务归类的 CONFIRMING
+        # 转账必须继续进入统一确认检查，替代旧的 update_latest_block beat。
+        Transfer.objects.create(
+            chain=self.chain,
+            block=10,
+            block_hash="0x" + "11" * 32,
+            hash="0x" + "12" * 32,
+            crypto=self.token,
+            from_address=self.addr.address,
+            to_address=self.vault_slot.address,
+            value=1,
+            amount=Decimal("1"),
+            timestamp=1,
+            datetime=timezone.now(),
+            processed_at=timezone.now(),
+        )
+
+        def advance_block(chain):
+            Chain.objects.filter(pk=chain.pk).update(latest_block_number=20)
+
+        scan_chain_mock.side_effect = advance_block
+
+        _scan_evm_chain(self.chain.pk)
+
+        block_number_updated_delay_mock.assert_called_once_with(self.chain.pk)
         poll_chain_mock.assert_called_once()
 
     @patch("evm.tasks._scan_evm_chain.delay")

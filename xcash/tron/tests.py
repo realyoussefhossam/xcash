@@ -1228,6 +1228,41 @@ class TronUsdtPaymentScannerTests(TestCase):
         self.chain.refresh_from_db()
         self.assertEqual(self.chain.latest_block_number, 200)
 
+    @patch("chains.tasks.block_number_updated.delay")
+    @patch("chains.service.TransferService.enqueue_processing")
+    @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_dispatches_confirmation_checks_after_block_advance(
+        self,
+        client_cls,
+        _enqueue_processing_mock,
+        block_number_updated_delay_mock,
+    ):
+        from tron.scanner import TronUsdtPaymentScanner
+
+        Transfer.objects.create(
+            chain=self.chain,
+            block=100,
+            block_hash="0x" + "33" * 32,
+            hash="c" * 64,
+            crypto=self.usdt,
+            from_address=self.sender_address,
+            to_address=self.watch_address,
+            value=1,
+            amount=Decimal("0.000001"),
+            timestamp=1,
+            datetime=timezone.now(),
+            processed_at=timezone.now(),
+        )
+        self._get_or_create_contract_cursor(last_scanned_block=110)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = 120
+        client.get_solid_block_id.return_value = "0" * 64
+        client.list_confirmed_contract_events.return_value = {"data": [], "meta": {}}
+
+        TronUsdtPaymentScanner.scan_chain(chain=self.chain)
+
+        block_number_updated_delay_mock.assert_called_once_with(self.chain.pk)
+
     @patch("chains.tasks.confirm_transfer.delay")
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("tron.adapter.TronHttpClient.get_transaction_info_by_id")
