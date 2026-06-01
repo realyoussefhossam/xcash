@@ -1,9 +1,9 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
-from unfold.admin import TabularInline
 from unfold.decorators import display
 
 from common.admin import ModelAdmin
+from common.admin import TabularInline
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat

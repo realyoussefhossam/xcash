@@ -1,8 +1,8 @@
 from django.contrib import admin
-from unfold.admin import TabularInline
 from unfold.decorators import display
 
 from common.admin import ReadOnlyModelAdmin
+from common.admin import TabularInline
 from common.admin_scan_cursor import SyncScanCursorToLatestActionMixin
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask

@@ -3,8 +3,8 @@ from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect
 from django.urls import reverse
 from django_celery_results.models import TaskResult
-from unfold.admin import ModelAdmin
 
+from common.admin import ModelAdmin
 from core.models import SystemSettings
 from core.models import SystemWallet
 

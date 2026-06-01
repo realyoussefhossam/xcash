@@ -8,8 +8,6 @@ from django.forms.formsets import all_valid
 from django.utils.html import format_html
 from django.utils.html import format_html_join
 from django.utils.translation import gettext_lazy as _
-from unfold.admin import StackedInline
-from unfold.admin import TabularInline
 from unfold.decorators import display
 from unfold.widgets import UnfoldAdminTextInputWidget
 from web3 import Web3
@@ -24,6 +22,8 @@ from chains.models import AddressUsage
 from chains.models import Chain
 from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
+from common.admin import StackedInline
+from common.admin import TabularInline
 from invoices.models import EpayMerchant
 from projects.models import Customer
 from projects.models import DifferRecipientAddress
@@ -60,6 +60,13 @@ MULTISIG_WALLET_ABI = [
 
 
 class ProjectForm(forms.ModelForm):
+    webhook = forms.URLField(
+        label=_("通知地址"),
+        required=False,
+        assume_scheme="https",
+        help_text=_("用于本网关发送通知到商户后端"),
+    )
+
     class Meta:
         model = Project
         fields = (

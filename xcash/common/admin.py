@@ -1,13 +1,27 @@
 from django.db import models
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
+from unfold.admin import StackedInline as UnfoldStackedInline
+from unfold.admin import TabularInline as UnfoldTabularInline
 
 
-class ModelAdmin(UnfoldModelAdmin):
+class URLFieldFormfieldMixin:
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         if isinstance(db_field, models.URLField):
             # 后台表单显式采用 https 作为 URLField 默认 scheme，避免依赖 Django 6.0 过渡设置。
             kwargs.setdefault("assume_scheme", "https")
         return super().formfield_for_dbfield(db_field, request, **kwargs)
+
+
+class ModelAdmin(URLFieldFormfieldMixin, UnfoldModelAdmin):
+    pass
+
+
+class StackedInline(URLFieldFormfieldMixin, UnfoldStackedInline):
+    pass
+
+
+class TabularInline(URLFieldFormfieldMixin, UnfoldTabularInline):
+    pass
 
 
 class ReadOnlyModelAdmin(ModelAdmin):

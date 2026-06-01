@@ -5,9 +5,9 @@ from django.db import connection
 from django.db import transaction
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
-from unfold.admin import ModelAdmin
-from unfold.admin import TabularInline
 
+from common.admin import ModelAdmin
+from common.admin import TabularInline
 from .models import DepositStressCase
 from .models import DepositStressCaseStatus
 from .models import InvoiceStressCase

@@ -6,13 +6,13 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
-from unfold.admin import StackedInline
 from unfold.decorators import display
 
 from alerts.models import ProjectAlertState
 from alerts.models import ProjectTelegramAlertConfig
 from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
+from common.admin import StackedInline
 
 
 class TelegramTestDispatchError(Exception):

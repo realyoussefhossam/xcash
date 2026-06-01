@@ -3,10 +3,10 @@ from __future__ import annotations
 from django.contrib import admin
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from unfold.admin import StackedInline
 from unfold.decorators import display
 
 from common.admin import ReadOnlyModelAdmin
+from common.admin import StackedInline
 from common.utils.math import format_decimal_stripped
 
 from .models import EpayOrder
