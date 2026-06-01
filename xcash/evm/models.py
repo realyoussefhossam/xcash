@@ -612,6 +612,20 @@ class VaultSlotCollectSchedule(models.Model):
         return created_count
 
 
+class DepositVaultSlot(VaultSlot):
+    class Meta:
+        proxy = True
+        verbose_name = _("充币收款地址")
+        verbose_name_plural = verbose_name
+
+
+class InvoiceVaultSlot(VaultSlot):
+    class Meta:
+        proxy = True
+        verbose_name = _("账单收款地址")
+        verbose_name_plural = verbose_name
+
+
 class EvmScanCursor(models.Model):
     """记录某条 EVM 链上日志扫描器的推进位置与最近错误。
 

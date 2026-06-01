@@ -4,10 +4,12 @@ from unfold.decorators import display
 from common.admin import ReadOnlyModelAdmin
 from common.admin import TabularInline
 from common.admin_scan_cursor import SyncScanCursorToLatestActionMixin
+from evm.models import DepositVaultSlot
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
-from evm.models import VaultSlot
+from evm.models import InvoiceVaultSlot
 from evm.models import VaultSlotCollectSchedule
+from evm.models import VaultSlotUsage
 
 
 class VaultSlotCollectScheduleInline(TabularInline):
@@ -25,19 +27,41 @@ class VaultSlotCollectScheduleInline(TabularInline):
         return super().get_queryset(request).select_related("crypto", "tx_task")
 
 
-@admin.register(VaultSlot)
-class VaultSlotAdmin(ReadOnlyModelAdmin):
+class VaultSlotAdminBase(ReadOnlyModelAdmin):
     inlines = (VaultSlotCollectScheduleInline,)
-    list_display = ("customer", "chain", "address", "created_at")
     list_filter = ("chain",)
-    search_fields = ("customer__uid", "address")
     readonly_fields = (
+        "project",
         "customer",
+        "invoice_index",
         "chain",
         "address",
         "salt",
         "created_at",
     )
+    usage = None
+
+    def get_queryset(self, request):
+        qs = (
+            super()
+            .get_queryset(request)
+            .select_related("chain", "customer", "project")
+        )
+        return qs.filter(usage=self.usage)
+
+
+@admin.register(DepositVaultSlot)
+class DepositVaultSlotAdmin(VaultSlotAdminBase):
+    list_display = ("customer", "project", "chain", "address", "created_at")
+    search_fields = ("customer__uid", "project__name", "address")
+    usage = VaultSlotUsage.DEPOSIT
+
+
+@admin.register(InvoiceVaultSlot)
+class InvoiceVaultSlotAdmin(VaultSlotAdminBase):
+    list_display = ("project", "invoice_index", "chain", "address", "created_at")
+    search_fields = ("project__name", "address")
+    usage = VaultSlotUsage.INVOICE
 
 
 @admin.register(VaultSlotCollectSchedule)

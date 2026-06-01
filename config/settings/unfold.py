@@ -121,6 +121,11 @@ SIDEBAR_UNFOLD = {
                         "icon": "receipt_long",
                         "link": reverse_lazy("admin:invoices_invoice_changelist"),
                     },
+                    {
+                        "title": _("收款地址"),
+                        "icon": "add_card",
+                        "link": reverse_lazy("admin:evm_invoicevaultslot_changelist"),
+                    },
                 ],
             },
             {
@@ -133,9 +138,9 @@ SIDEBAR_UNFOLD = {
                         "link": reverse_lazy("admin:deposits_deposit_changelist"),
                     },
                     {
-                        "title": _("VaultSlot"),
+                        "title": _("收款地址"),
                         "icon": "add_card",
-                        "link": reverse_lazy("admin:evm_vaultslot_changelist"),
+                        "link": reverse_lazy("admin:evm_depositvaultslot_changelist"),
                     },
                 ],
             },
