@@ -9,14 +9,6 @@ class ChainProductCapabilityService:
     INVOICE_RECIPIENT_CHAIN_TYPES = frozenset({ChainType.EVM, ChainType.TRON})
     DEPOSIT_CHAIN_TYPES = frozenset({ChainType.EVM})
 
-    @staticmethod
-    def _is_chain_native_crypto(*, chain, crypto) -> bool:
-        chain_native_id = getattr(chain, "native_coin_id", None)
-        crypto_id = getattr(crypto, "id", None)
-        if chain_native_id is not None and crypto_id is not None:
-            return chain_native_id == crypto_id
-        return getattr(chain, "native_coin", None) == crypto
-
     @classmethod
     def supports_existing_invoice_method(cls, *, chain, crypto) -> bool:
         """判断已存在 ChainToken 关系的链币组合是否可用于 Invoice。"""
