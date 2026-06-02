@@ -7,7 +7,6 @@ from decimal import Decimal
 
 import pytest
 
-from chains.models import Wallet
 from invoices.models import Invoice
 from invoices.models import InvoiceStatus
 from projects.models import Project
@@ -17,8 +16,7 @@ AUTH = "Bearer test-internal-token"
 
 @pytest.fixture
 def project(db):
-    wallet = Wallet.objects.create()
-    return Project.objects.create(name="stats-test", wallet=wallet)
+    return Project.objects.create(name="stats-test")
 
 
 @pytest.mark.django_db

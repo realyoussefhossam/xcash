@@ -16,7 +16,6 @@ from internal_api.viewsets.differ_recipient_addresses import (
     DifferRecipientAddressViewSet,
 )
 
-from chains.models import Wallet
 from common.pagination import PageNumberSizePagination
 from projects.models import Project
 from webhooks.models import WebhookEvent
@@ -26,9 +25,7 @@ AUTH_HEADER = "Bearer test-internal-token"
 
 @pytest.fixture
 def project(db):
-    # 本地创建 Wallet 记录即可，不走 Wallet.generate()（避免无谓地生成助记词）。
-    wallet = Wallet.objects.create()
-    return Project.objects.create(name="pagination-test-project", wallet=wallet)
+    return Project.objects.create(name="pagination-test-project")
 
 
 @pytest.fixture

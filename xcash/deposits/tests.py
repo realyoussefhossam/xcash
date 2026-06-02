@@ -235,7 +235,6 @@ class DepositNotificationTests(TestCase):
     ):
         project = Project.objects.create(
             name="DemoConfirm",
-            wallet=Wallet.objects.create(),
             pre_notify=True,
         )
         customer = Customer.objects.create(project=project, uid="customer-confirm")
@@ -289,7 +288,7 @@ class DepositNotificationTests(TestCase):
 
 def create_deposit_context(*, native: bool = False, confirmed: bool = True):
     wallet = Wallet.objects.create()
-    project = Project.objects.create(name="DepositTestProject", wallet=wallet)
+    project = Project.objects.create(name="DepositTestProject")
     customer = Customer.objects.create(project=project, uid="deposit-test-customer")
     vault = Address.objects.create(
         wallet=wallet,

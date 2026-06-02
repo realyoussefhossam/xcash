@@ -375,30 +375,26 @@ def _seed_stress_saas_permission_cache(project: Project) -> None:
 
 
 def _setup_wallet_for_vault(project: Project) -> None:
-    """为 Stress Project 创建 Wallet、预派生 EVM 热钱包地址，并将其设为合约账单 vault。
+    """为 Stress Project 把合约账单 vault 设为系统热钱包的 EVM 地址。
 
-    压测的充币、合约账单都依赖项目热钱包的 EVM 地址：
-    - 合约账单（CONTRACT）：project.vault 既是 CREATE2 派生 VaultSlot 的不可变归集地址，
-      也是 VaultSlot 归集（sweep）的最终终点。
-
-    这里把 vault 直接设为项目热钱包的 EVM 地址，使其与 _fund_evm_vault 注资的地址完全一致，
-    形成「派生 VaultSlot 收款 → 归集回热钱包」的闭环，且热钱包天然有 gas 支撑归集交易。
+    合约账单（CONTRACT）依赖 project.vault：它既是 CREATE2 派生 VaultSlot 的不可变归集地址，
+    也是 VaultSlot 归集（sweep）的最终终点。归集交易统一由系统热钱包发起并支付 gas，
+    故把 vault 设为系统热钱包的 EVM 地址，使「派生 VaultSlot 收款 → 归集回系统热钱包」形成闭环，
+    且与 _fund_evm_vault 注资的系统热钱包地址同址，热钱包天然有 gas 支撑归集交易。
     Project.vault 一旦写入不可修改（见 Project.save 校验），故只在本次首次准备时赋值。
     """
     from chains.models import AddressUsage
     from chains.models import ChainType
-    from chains.models import Wallet
+    from core.models import SystemWallet
 
-    wallet = Wallet.generate()
-    project.wallet = wallet
-
+    system_wallet = SystemWallet.get_current()
     # 预派生 EVM 热钱包地址：派生参数与 _fund_evm_vault 完全一致，确保 vault 与注资地址同址。
-    evm_hot_address = wallet.get_address(
+    evm_hot_address = system_wallet.wallet.get_address(
         chain_type=ChainType.EVM,
         usage=AddressUsage.HotWallet,
     ).address
     project.vault = evm_hot_address
-    project.save(update_fields=["wallet", "vault"])
+    project.save(update_fields=["vault"])
 
 
 def _pick_billing_mode(sequence: int) -> str:

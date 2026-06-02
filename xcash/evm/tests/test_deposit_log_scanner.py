@@ -24,7 +24,6 @@ from evm.scanner.watchers import EvmWatchSet
 from evm.tests._fixtures import make_crypto
 from evm.tests._fixtures import make_evm_chain
 from evm.tests._fixtures import make_evm_system_address
-from evm.tests._fixtures import make_wallet
 from projects.models import Customer
 from projects.models import Project
 
@@ -49,7 +48,6 @@ class EvmLogScannerTests(TestCase):
         self.vault = make_evm_system_address(suffix="bb")
         self.project = Project.objects.create(
             name="Deposit Log Project",
-            wallet=make_wallet(),
             webhook="https://example.com/webhook",
         )
         self.customer = Customer.objects.create(

@@ -24,7 +24,6 @@ from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Chain
 from chains.models import Transfer
-from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -290,7 +289,6 @@ class TronFilterAddressesCacheTests(TestCase):
         clear_tron_filter_addresses_cache()
         self.project = Project.objects.create(
             name="Tron Cache Project",
-            wallet=Wallet.objects.create(),
         )
 
     def tearDown(self):
@@ -522,7 +520,6 @@ class TronUsdtPaymentScannerTests(TestCase):
         )
         self.project = Project.objects.create(
             name="Tron Scan Project",
-            wallet=Wallet.objects.create(),
         )
         Fiat.objects.get_or_create(code="USD")
         self.watch_address = "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"

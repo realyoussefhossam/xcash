@@ -1,6 +1,5 @@
 import pytest
 
-from chains.models import Wallet
 from projects.models import Project
 
 AUTH_HEADER = "Bearer test-internal-token"
@@ -13,7 +12,6 @@ class TestInternalDepositEndpoint:
         settings.INTERNAL_API_TOKEN = "test-internal-token"
         project = Project.objects.create(
             name="internal-deposit-project-2",
-            wallet=Wallet.objects.create(),
         )
 
         response = client.get(

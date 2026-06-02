@@ -1,10 +1,10 @@
 import ipaddress
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from chains.models import AddressUsage
-from chains.models import ChainType
 from projects.models import Project
+from projects.vault import validate_vault_is_multisig
 
 # 业务校验上下界，集中声明便于审计与调整。
 HMAC_KEY_MIN_LENGTH = 16
@@ -78,6 +78,23 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+class ProjectVaultSetSerializer(serializers.Serializer):
+    """商户首次设置收款归集地址（Vault）。
+
+    vault 是一次性写入、不可修改的多签归集地址：必须通过链上多签校验。
+    immutability（已设置则拒绝）在视图层先行拦截，此处只负责校验待写入的地址合法。
+    """
+
+    vault = serializers.CharField()
+
+    def validate_vault(self, value: str) -> str:
+        try:
+            # 统一多签校验器抛 Django 的 ValidationError，转成 DRF 的字段级错误。
+            return validate_vault_is_multisig(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+
 class ProjectDetailSerializer(serializers.ModelSerializer):
     vault_address = serializers.SerializerMethodField()
     is_ready = serializers.SerializerMethodField()
@@ -103,15 +120,9 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_vault_address(self, obj):
-        try:
-            addr = obj.wallet.get_address(
-                chain_type=ChainType.EVM,
-                usage=AddressUsage.HotWallet,
-            )
-        except Exception:
-            return None
-        else:
-            return addr.address
+        # 商户的资金最终汇入其收款归集地址（VaultSlot 合约写死的转发目标），
+        # 故对外暴露 Project.vault 才是语义正确的“金库地址”；未配置时返回 None。
+        return obj.vault or None
 
     def get_is_ready(self, obj):
         ready, _ = obj.is_ready

@@ -1,17 +1,7 @@
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
-from chains.models import Wallet
 from projects.models import Project
-
-
-@receiver(pre_save, sender=Project)
-def project_pre_created(sender, instance: Project, **kwargs):
-    if (
-        not Project.objects.filter(pk=instance.pk).exists()
-        and instance.wallet_id is None
-    ):
-        instance.wallet = Wallet.generate()
 
 
 @receiver(pre_save, sender=Project)

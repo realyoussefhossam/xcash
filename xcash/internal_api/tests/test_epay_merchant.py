@@ -10,7 +10,6 @@
 
 import pytest
 
-from chains.models import Wallet
 from invoices.models import EpayMerchant
 from projects.models import Project
 
@@ -19,10 +18,8 @@ AUTH_HEADER = "Bearer test-internal-token"
 
 @pytest.fixture
 def project(db):
-    wallet = Wallet.objects.create()
     return Project.objects.create(
         name="epay-test-project",
-        wallet=wallet,
         ip_white_list="*",
         webhook="",
         hmac_key="ORIG-HMAC-KEY-ORIGINAL-32CHARS00",
@@ -32,7 +29,6 @@ def project(db):
 def _other_project(name: str = "other-project") -> Project:
     return Project.objects.create(
         name=name,
-        wallet=Wallet.objects.create(),
         ip_white_list="*",
         hmac_key="OTHER-HMAC-KEY-32CHARS-ABCDEFGHI",
     )

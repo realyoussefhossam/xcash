@@ -14,7 +14,6 @@ from web3 import Web3
 from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Chain
-from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -98,7 +97,6 @@ class EpayModelTests(TestCase):
     def setUp(self):
         self.project = Project.objects.create(
             name="EPay Project",
-            wallet=Wallet.objects.create(),
         )
 
     def test_invoice_defaults_to_native_protocol(self):
@@ -176,7 +174,6 @@ class EpayModelTests(TestCase):
     def test_epay_order_rejects_invoice_from_different_project(self):
         other_project = Project.objects.create(
             name="Other EPay Project",
-            wallet=Wallet.objects.create(),
         )
         merchant = EpayMerchant.objects.create(
             project=self.project,
@@ -350,7 +347,6 @@ class EpaySubmitServiceTests(TestCase):
     def setUp(self):
         self.project = Project.objects.create(
             name="EPay Submit Project",
-            wallet=Wallet.objects.create(),
         )
         self.merchant = EpayMerchant.objects.create(
             project=self.project,

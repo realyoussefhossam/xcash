@@ -121,7 +121,6 @@ class ProjectAdminTests(TestCase):
         form = ProjectForm(
             data={
                 "name": self.project.name,
-                "wallet": self.project.wallet_id,
                 "ip_white_list": self.project.ip_white_list,
                 "webhook": self.project.webhook,
                 "webhook_open": self.project.webhook_open,
@@ -153,7 +152,6 @@ class ProjectAdminTests(TestCase):
         form = ProjectForm(
             data={
                 "name": self.project.name,
-                "wallet": self.project.wallet_id,
                 "ip_white_list": self.project.ip_white_list,
                 "webhook": self.project.webhook,
                 "webhook_open": self.project.webhook_open,
@@ -181,7 +179,6 @@ class ProjectAdminTests(TestCase):
         form = ProjectForm(
             data={
                 "name": self.project.name,
-                "wallet": self.project.wallet_id,
                 "ip_white_list": self.project.ip_white_list,
                 "webhook": self.project.webhook,
                 "webhook_open": self.project.webhook_open,
@@ -207,7 +204,6 @@ class ProjectAdminTests(TestCase):
         form = ProjectForm(
             data={
                 "name": self.project.name,
-                "wallet": self.project.wallet_id,
                 "ip_white_list": self.project.ip_white_list,
                 "webhook": self.project.webhook,
                 "webhook_open": self.project.webhook_open,
@@ -233,7 +229,6 @@ class ProjectAdminTests(TestCase):
         form = ProjectForm(
             data={
                 "name": self.project.name,
-                "wallet": self.project.wallet_id,
                 "ip_white_list": self.project.ip_white_list,
                 "webhook": self.project.webhook,
                 "webhook_open": self.project.webhook_open,

@@ -6,7 +6,6 @@ from django.test import TestCase
 from django.test import override_settings
 from django.utils import timezone
 
-from chains.models import Wallet
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from core.models import SystemSettings
 from projects.models import Project
@@ -21,7 +20,6 @@ from webhooks.tasks import schedule_events
 def _make_project(**kwargs):
     defaults = {
         "name": f"Demo-{Project.objects.count()}",
-        "wallet": Wallet.objects.create(),
         "webhook": "https://93.184.216.34/hook",
         "webhook_open": True,
     }

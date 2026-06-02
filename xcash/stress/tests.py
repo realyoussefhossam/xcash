@@ -43,7 +43,6 @@ from chains.constants import ChainCode
 from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ChainType
-from chains.models import Wallet
 from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -993,7 +992,6 @@ class StressRecipientSetupTests(TestCase):
         Project.objects.filter(name="Stress Target Project").delete()
         self.project = Project.objects.create(
             name="Stress Target Project",
-            wallet=Wallet.objects.create(),
             webhook="http://localhost/stress/webhook",
             ip_white_list="*",
             active=True,
@@ -1163,7 +1161,6 @@ class VerifyDepositCollectionTests(TestCase):
 
         self.project = Project.objects.create(
             name="Stress Deposit Verify Project",
-            wallet=Wallet.objects.create(),
             webhook="http://localhost/stress/webhook",
             ip_white_list="*",
             active=True,
@@ -1270,7 +1267,6 @@ class StressWebhookTests(TestCase):
         self.factory = RequestFactory()
         self.project = Project.objects.create(
             name="Stress Webhook Project",
-            wallet=Wallet.objects.create(),
             webhook="http://localhost:8000/stress/webhook",
             ip_white_list="*",
             active=True,
@@ -1340,7 +1336,6 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
 
         project = Project.objects.create(
             name="stress-wh-test",
-            wallet=Wallet.objects.create(),
             webhook="http://localhost/wh",
             ip_white_list="*",
             active=True,
@@ -1522,7 +1517,6 @@ class StressContractProvisioningTests(TestCase):
     def make_project(self, *, name, vault=None):
         return Project.objects.create(
             name=name,
-            wallet=Wallet.objects.create(),
             vault=vault,
         )
 
@@ -1538,19 +1532,25 @@ class StressContractProvisioningTests(TestCase):
             billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
-    def test_setup_wallet_for_vault_assigns_evm_hot_address_as_vault(self):
-        # vault 必须写成项目 EVM 热钱包地址，且与 _fund_evm_vault 注资的派生地址同址
-        # （二者用完全相同的 get_address(EVM, HotWallet) 参数）。
+    def test_setup_wallet_for_vault_assigns_system_evm_hot_address_as_vault(self):
+        # 归集统一由系统级热钱包发起并付 gas，故 vault 必须写成系统热钱包的 EVM 地址，
+        # 且与 _fund_evm_vault 注资的派生地址同址（二者用完全相同的 get_address 参数）。
+        from core.models import SystemWallet
+
         project = self.make_project(name="stress-vault-wiring")
         self.assertIsNone(project.vault)
 
         _setup_wallet_for_vault(project)
-        funded_address = project.wallet.get_address(
-            chain_type=ChainType.EVM, usage=AddressUsage.HotWallet
-        ).address
+        system_hot_address = (
+            SystemWallet.get_current()
+            .wallet.get_address(
+                chain_type=ChainType.EVM, usage=AddressUsage.HotWallet
+            )
+            .address
+        )
 
         project.refresh_from_db()
-        self.assertEqual(project.vault, funded_address)
+        self.assertEqual(project.vault, system_hot_address)
 
     def test_require_stress_methods_ready_passes_with_vault(self):
         project = self.make_project(

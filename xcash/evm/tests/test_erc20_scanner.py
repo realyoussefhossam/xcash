@@ -145,7 +145,6 @@ class EvmErc20ScannerTests(TestCase):
         )
         self.project = Project.objects.create(
             name="Scanner Project",
-            wallet=self.wallet,
             webhook="https://example.com/webhook",
         )
         self.customer = Customer.objects.create(

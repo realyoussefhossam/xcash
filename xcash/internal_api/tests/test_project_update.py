@@ -12,7 +12,6 @@ from decimal import Decimal
 
 import pytest
 
-from chains.models import Wallet
 from projects.models import Project
 
 AUTH_HEADER = "Bearer test-internal-token"
@@ -20,11 +19,8 @@ AUTH_HEADER = "Bearer test-internal-token"
 
 @pytest.fixture
 def project(db):
-    # 直接本地创建 Wallet 记录，避免 Wallet.generate() 无谓地生成助记词。
-    wallet = Wallet.objects.create()
     return Project.objects.create(
         name="patch-test-project",
-        wallet=wallet,
         ip_white_list="*",
         webhook="",
         hmac_key="ORIG-HMAC-KEY-ORIGINAL-32CHARS00",

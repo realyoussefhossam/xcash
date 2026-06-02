@@ -117,7 +117,6 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.wallet = Wallet.objects.create()
         self.project = Project.objects.create(
             name="Deposit Slot Project",
-            wallet=self.wallet,
         )
         self.project.vault = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000f01"
@@ -174,8 +173,9 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.addCleanup(deployed_patch.stop)
 
     def patch_address_derivation(self):
-        # 地址派生已在 chains 内部闭环；这里直接桩掉 Wallet.get_address，
-        # 让系统钱包与项目钱包各自返回测试预建的 Address，避免依赖真实派生结果。
+        # 地址派生已在 chains 内部闭环；这里直接桩掉 Wallet.get_address。
+        # 部署与归集都走系统级热钱包，故系统钱包返回预建的 system_sender；
+        # 其余钱包返回兜底 Address，避免依赖真实派生结果。
         def fake_get_address(wallet_self, *args, **kwargs):
             if wallet_self.pk == self.system_wallet.pk:
                 return self.system_sender
@@ -647,7 +647,8 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertEqual(created_count, 1)
         schedule.refresh_from_db()
         self.assertIsNotNone(schedule.tx_task)
-        self.assertEqual(schedule.tx_task.sender, self.vault)
+        # 归集与部署一样统一用系统级热钱包作为 sender（仅付 gas，资金去向由合约写死的 vault 决定）。
+        self.assertEqual(schedule.tx_task.sender, self.system_sender)
         self.assertEqual(schedule.tx_task.chain, self.chain)
         self.assertEqual(schedule.tx_task.to, slot.address)
         self.assertEqual(schedule.tx_task.base_task.tx_type, TxTaskType.VaultSlotCollect)

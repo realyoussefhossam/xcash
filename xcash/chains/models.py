@@ -314,9 +314,6 @@ class Wallet(UndeletableModel):
         verbose_name_plural = _("钱包")
 
     def __str__(self):
-        # 钱包展示名必须是稳定标识，不能把所有"非项目钱包"都误判成 Core。
-        if hasattr(self, "project"):
-            return f"Wallet-{self.project.appid}"
         wallet_identifier = self.pk if self.pk is not None else "unsaved"
         return f"Wallet-{wallet_identifier}"
 

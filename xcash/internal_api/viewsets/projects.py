@@ -1,14 +1,15 @@
+from django.db import transaction as db_transaction
 from internal_api.authentication import InternalTokenAuthentication
 from internal_api.serializers.projects import ProjectCreateSerializer
 from internal_api.serializers.projects import ProjectDetailSerializer
 from internal_api.serializers.projects import ProjectUpdateSerializer
+from internal_api.serializers.projects import ProjectVaultSetSerializer
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from chains.models import Wallet
 from invoices.models import EpayMerchant
 from projects.models import Project
 
@@ -37,8 +38,7 @@ class ProjectViewSet(ModelViewSet):
         return ProjectDetailSerializer
 
     def perform_create(self, serializer):
-        wallet = Wallet.generate()
-        serializer.save(wallet=wallet)
+        serializer.save()
         # 系统级 lazy create：项目落库后立即分配 EpayMerchant，
         # 保证每个项目从注册一刻起就具备 EPay 收款能力，无需用户在 UI 手动启用。
         EpayMerchant.ensure_for_project(serializer.instance)
@@ -49,6 +49,37 @@ class ProjectViewSet(ModelViewSet):
         self.perform_create(serializer)
         detail = ProjectDetailSerializer(serializer.instance)
         return Response(detail.data, status=drf_status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def vault(self, request, appid=None):
+        """商户首次设置收款归集地址（Vault），一经设置不可修改。
+
+        POST /projects/{appid}/vault  body: {"vault": "0x..."}
+        - 已设置 → 409，明确告知不可修改；
+        - 未设置 → 通过链上多签校验后写入，返回项目详情。
+        """
+        project = self.get_object()
+        # 先做无锁短路：已设置直接拒绝，避免对常见的"重复点击"白跑链上多签校验（含 RPC）。
+        if project.vault:
+            return Response(
+                {"vault": "收款归集地址一旦设置不可修改。"},
+                status=drf_status.HTTP_409_CONFLICT,
+            )
+        serializer = ProjectVaultSetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_vault = serializer.validated_data["vault"]
+
+        # 加行锁后复查再写：vault 不可变且关乎资金去向，必须杜绝并发下两个请求都通过空值检查。
+        with db_transaction.atomic():
+            locked = Project.objects.select_for_update().get(pk=project.pk)
+            if locked.vault:
+                return Response(
+                    {"vault": "收款归集地址一旦设置不可修改。"},
+                    status=drf_status.HTTP_409_CONFLICT,
+                )
+            locked.vault = new_vault
+            locked.save(update_fields=["vault"])
+        return Response(ProjectDetailSerializer(locked).data)
 
     @action(detail=True, methods=["post"])
     def activate(self, request, appid=None):

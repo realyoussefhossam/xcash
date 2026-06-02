@@ -25,7 +25,6 @@ from chains.constants import ChainType
 from chains.models import Chain
 from chains.models import Transfer
 from chains.models import TransferType
-from chains.models import Wallet
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from currencies.models import ChainToken
@@ -64,7 +63,6 @@ class InvoiceTestMixin:
         self.user = User.objects.create(username=username)
         self.project = Project.objects.create(
             name=project_name,
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name=f"{crypto_symbol} Token",
@@ -108,7 +106,6 @@ class InvoiceInitializationTests(TestCase):
         self.user = User.objects.create(username="merchant")
         self.project = Project.objects.create(
             name="Demo",
-            wallet=Wallet.objects.create(),
         )
         self.eth = Crypto.objects.create(
             name="Ethereum",
@@ -125,14 +122,9 @@ class InvoiceInitializationTests(TestCase):
         self,
     ):
         # 支付链路使用商户指定收款地址，不依赖项目钱包派生地址，应能正常创建账单并分配收款地址。
-        project_wallet = Wallet.objects.create()
         self.eth.prices = {"USD": "1"}
         self.eth.save(update_fields=["prices"])
-        with patch("projects.signals.Wallet.generate", return_value=project_wallet):
-            project = Project.objects.create(
-                name="DifferRecipientInvoice",
-                wallet=project_wallet,
-            )
+        project = Project.objects.create(name="DifferRecipientInvoice")
         DifferRecipientAddress.objects.create(
             name="商户指定收款地址",
             project=project,
@@ -202,7 +194,6 @@ class InvoicePaymentSelectionTests(TestCase):
         self.user = User.objects.create(username="merchant-payments")
         self.project = Project.objects.create(
             name="SlotProject",
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name="Tether USD",
@@ -496,7 +487,6 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
         self.user = User.objects.create(username="merchant-concurrency")
         self.project = Project.objects.create(
             name="ConcurrencyProject",
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name="Tether USD Concurrency",
@@ -586,7 +576,6 @@ class InvoiceDuplicateOutNoTests(TestCase):
         # 并发重复 out_no 命中数据库唯一约束时，接口必须返回业务错误而不是 500。
         project = Project.objects.create(
             name="DuplicateInvoiceProject",
-            wallet=Wallet.objects.create(),
         )
         request = APIRequestFactory().post(
             "/v1/invoice",
@@ -627,7 +616,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_available_methods_only_exposes_usdt_for_tron_invoice(self):
         project = Project.objects.create(
             name="Invoice Capability Project",
-            wallet=Wallet.objects.create(),
         )
         tron_usdt = Crypto.objects.create(
             name="Tether USD",
@@ -673,7 +661,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         # VaultSlot，不依赖 DifferRecipientAddress，故 EVM 链币组合在合约模式下可用。
         project = Project.objects.create(
             name="Invoice Contract Only Project",
-            wallet=Wallet.objects.create(),
             vault="0x0000000000000000000000000000000000008801",
         )
         usdt = Crypto.objects.create(
@@ -705,7 +692,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_differ_available_methods_excludes_native_coin(self):
         project = Project.objects.create(
             name="Invoice Differ Non Native Project",
-            wallet=Wallet.objects.create(),
         )
         eth_chain = Chain.objects.create(
             code=ChainCode.Ethereum,
@@ -739,7 +725,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_available_methods_filters_by_cached_saas_chain_crypto_whitelist(self):
         project = Project.objects.create(
             name="Invoice SaaS Allowed Methods Project",
-            wallet=Wallet.objects.create(),
         )
         eth_chain = Chain.objects.create(
             code=ChainCode.Ethereum,
@@ -805,7 +790,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_available_methods_empty_saas_whitelists_keep_all_methods(self):
         project = Project.objects.create(
             name="Invoice SaaS Empty Whitelist Project",
-            wallet=Wallet.objects.create(),
         )
         eth_chain = Chain.objects.create(
             code=ChainCode.Ethereum,
@@ -860,7 +844,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         # SaaS 侧返回的链 code 大小写不保证与系统一致；归一后比对，避免组合被静默过滤。
         project = Project.objects.create(
             name="Invoice SaaS Case Insensitive Project",
-            wallet=Wallet.objects.create(),
         )
         eth_chain = Chain.objects.create(
             code=ChainCode.Ethereum,
@@ -946,7 +929,6 @@ class InvoiceDifferBillingValidationTests(TestCase):
         # 配了 EVM 差额收款地址 → EVM 合约代币可走差额模式，校验通过。
         project = Project.objects.create(
             name="EVM Differ With Recipient",
-            wallet=Wallet.objects.create(),
         )
         DifferRecipientAddress.objects.create(
             name="evm-pay",
@@ -964,7 +946,6 @@ class InvoiceDifferBillingValidationTests(TestCase):
         # EVM，但差额模式缺少收款地址无法分配，必须在校验阶段拒绝。
         project = Project.objects.create(
             name="EVM Vault Only",
-            wallet=Wallet.objects.create(),
             vault="0x0000000000000000000000000000000000007703",
         )
 
@@ -977,7 +958,6 @@ class InvoiceDifferBillingValidationTests(TestCase):
     def test_evm_differ_rejects_native_coin_method(self):
         project = Project.objects.create(
             name="EVM Differ Native Rejected",
-            wallet=Wallet.objects.create(),
         )
         DifferRecipientAddress.objects.create(
             name="evm-pay",
@@ -1019,7 +999,6 @@ class InvoiceContractBillingValidationTests(TestCase):
         # 同时配了 Tron 差额地址和 vault 的多链商户。
         self.project = Project.objects.create(
             name="Invoice Mixed Billing Project",
-            wallet=Wallet.objects.create(),
             vault="0x0000000000000000000000000000000000007801",
         )
         DifferRecipientAddress.objects.create(
@@ -1115,7 +1094,6 @@ class InvoiceConfirmDropStatusTests(TestCase):
         self.user = User.objects.create(username="merchant-status")
         self.project = Project.objects.create(
             name="StatusProject",
-            wallet=Wallet.objects.create(),
         )
 
     def _make_invoice(self, status):
@@ -1194,7 +1172,6 @@ class InvoiceWebhookPayloadTests(TestCase):
         self.user = User.objects.create(username="merchant-content")
         self.project = Project.objects.create(
             name="ContentProject",
-            wallet=Wallet.objects.create(),
         )
 
     def test_payload_with_crypto_none(self):
@@ -1226,7 +1203,6 @@ class InvoiceExpiredMatchTests(TestCase):
         self.user = User.objects.create(username="merchant-expired-match")
         self.project = Project.objects.create(
             name="ExpiredMatchProject",
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name="Tether Expired",
@@ -1308,7 +1284,6 @@ class FallbackInvoiceExpiredTests(TestCase):
         self.user = User.objects.create(username="merchant-fallback")
         self.project = Project.objects.create(
             name="FallbackProject",
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name="Tether Fallback",
@@ -1377,7 +1352,6 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
         self.user = User.objects.create(username="merchant-atomic")
         self.project = Project.objects.create(
             name="AtomicProject",
-            wallet=Wallet.objects.create(),
         )
         self.crypto = Crypto.objects.create(
             name="Tether Atomic",
@@ -1469,7 +1443,6 @@ class InvoiceCreatePermissionCheckTests(TestCase):
     def setUp(self):
         self.project = Project.objects.create(
             name="InvoicePermCheckProject",
-            wallet=Wallet.objects.create(),
         )
 
     def _make_request(self):

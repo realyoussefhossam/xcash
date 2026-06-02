@@ -28,12 +28,6 @@ class Project(models.Model):
         help_text=_("对外作为商户名展示"),
         unique=True,
     )
-    wallet = models.OneToOneField(
-        "chains.Wallet",
-        on_delete=models.CASCADE,
-        verbose_name=_("项目热钱包"),
-        help_text=_("用于项目归集等项目资产流转交易。"),
-    )
     ip_white_list = models.TextField(
         _("IP白名单"),
         default="*",

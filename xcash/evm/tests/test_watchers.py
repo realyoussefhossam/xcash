@@ -208,9 +208,8 @@ class EvmWatchSetCacheTests(TestCase):
         self.assertNotIn(self.token_deployment.address, watch_set.tokens_by_address)
 
     def _create_project(self) -> Project:
-        suffix = Wallet.objects.count()
+        suffix = Project.objects.count()
         return Project.objects.create(
             name=f"watcher-project-{suffix}",
-            wallet=Wallet.objects.create(),
             webhook="https://example.com/webhook",
         )

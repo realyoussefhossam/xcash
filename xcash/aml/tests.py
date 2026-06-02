@@ -25,7 +25,6 @@ from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferType
-from chains.models import Wallet
 from core.models import SystemSettings
 from currencies.models import Crypto
 from currencies.models import Fiat
@@ -52,8 +51,7 @@ class AmlTestMixin:
             rpc="",
             active=True,
         )
-        self.wallet = Wallet.objects.create()
-        self.project = Project.objects.create(name="AML Project", wallet=self.wallet)
+        self.project = Project.objects.create(name="AML Project")
         self.customer = Customer.objects.create(project=self.project, uid="u-1")
         self.transfer = Transfer.objects.create(
             chain=self.chain,

@@ -12,8 +12,6 @@ from chains.adapters import AdapterFactory
 from chains.capabilities import ChainProductCapabilityService
 from chains.constants import ChainType
 from chains.models import Address
-from chains.models import AddressUsage
-from chains.models import Chain
 from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
 from common.admin import StackedInline
@@ -22,25 +20,9 @@ from invoices.models import EpayMerchant
 from projects.models import Customer
 from projects.models import DifferRecipientAddress
 from projects.models import Project
+from projects.vault import validate_vault_is_multisig
 
 # Register your models here.
-
-MULTISIG_WALLET_ABI = [
-    {
-        "inputs": [],
-        "name": "getThreshold",
-        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-    {
-        "inputs": [],
-        "name": "getOwners",
-        "outputs": [{"internalType": "address[]", "name": "", "type": "address[]"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-]
 
 
 class ProjectForm(forms.ModelForm):
@@ -55,7 +37,6 @@ class ProjectForm(forms.ModelForm):
         model = Project
         fields = (
             "name",
-            "wallet",
             "ip_white_list",
             "webhook",
             "webhook_open",
@@ -112,42 +93,8 @@ class ProjectForm(forms.ModelForm):
                 )
             return Web3.to_checksum_address(old_address)
 
-        evm_chains = Chain.objects.filter(type=ChainType.EVM, active=True).exclude(
-            rpc=""
-        )
-        if not evm_chains.exists():
-            raise forms.ValidationError(_("没有可用于校验合约地址的已启用 EVM 链。"))
-
-        checked_chain_names = []
-        for chain in evm_chains:
-            checked_chain_names.append(chain.name)
-            try:
-                code = chain.w3.eth.get_code(address)
-            except Exception:
-                code = None
-            if not code:
-                continue
-
-            try:
-                contract = chain.w3.eth.contract(
-                    address=address,
-                    abi=MULTISIG_WALLET_ABI,
-                )
-                threshold = contract.functions.getThreshold().call()
-                owners = contract.functions.getOwners().call()
-            except Exception:
-                threshold = 0
-                owners = []
-
-            if threshold >= 2 and len(owners) >= threshold:
-                return address
-
-        raise forms.ValidationError(
-            _(
-                "VaultSlot 多签归集地址未在任何可校验 EVM 链上检测到有效多签合约：%(chains)s"
-            ),
-            params={"chains": ", ".join(checked_chain_names)},
-        )
+        # 首次设置：复用统一的多签校验器（与内部 API 同源），不合法时抛 ValidationError。
+        return validate_vault_is_multisig(address)
 
 
 class ProjectHmacKeyWidget(UnfoldAdminTextInputWidget):
@@ -333,20 +280,15 @@ class ProjectAdmin(ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         if obj:  # 修改项目
             readonly_fields = (
-                "wallet",
                 "appid",
                 "failed_count",
-                "display_hot_wallet_addresses",
                 "display_ready_detail",
             )
             if obj.vault:
                 readonly_fields += ("vault",)
             return readonly_fields
         # 新建项目
-        return (
-            "wallet",
-            "appid",
-        )
+        return ("appid",)
 
     def get_fieldsets(self, request, obj=None):
         if obj is None:
@@ -379,7 +321,6 @@ class ProjectAdmin(ModelAdmin):
                 "fields": (
                     "name",
                     "appid",
-                    "wallet",
                     "fast_confirm_threshold",
                 ),
             },
@@ -387,10 +328,7 @@ class ProjectAdmin(ModelAdmin):
         (
             _("项目资金"),
             {
-                "fields": (
-                    "display_hot_wallet_addresses",
-                    "vault",
-                ),
+                "fields": ("vault",),
             },
         ),
         (
@@ -427,66 +365,6 @@ class ProjectAdmin(ModelAdmin):
     def display_ready_status(self, instance: Project):
         ready, _ = instance.is_ready
         return "已就绪" if ready else "未就绪"
-
-    @display(description=_("项目热钱包地址"))
-    def display_hot_wallet_addresses(self, instance: Project):
-        rows = []
-        for chain_type, chain_label in ChainType.choices:
-            if chain_type != ChainType.EVM:
-                continue
-            chain_names = [
-                chain.name for chain in Chain.objects.filter(type=chain_type)
-            ]
-            try:
-                hot_wallet_address = instance.wallet.get_address(
-                    chain_type=chain_type,
-                    usage=AddressUsage.HotWallet,
-                )
-                rows.append(
-                    (
-                        chain_label,
-                        " / ".join(chain_names) or "-",
-                        hot_wallet_address.address,
-                    )
-                )
-            except RuntimeError:
-                rows.append(
-                    (
-                        chain_label,
-                        " / ".join(chain_names) or "-",
-                        "-",
-                    )
-                )
-
-        body = format_html_join(
-            "",
-            (
-                "<tr>"
-                '<td class="px-3 py-2 font-medium">{}</td>'
-                '<td class="px-3 py-2">{}</td>'
-                '<td class="px-3 py-2 font-mono break-all">{}</td>'
-                "</tr>"
-            ),
-            rows,
-        )
-        return format_html(
-            '<div class="overflow-auto">'
-            '<table class="min-w-full divide-y divide-base-200 text-sm">'
-            "<thead>"
-            "<tr>"
-            '<th class="px-3 py-2 text-left">{}</th>'
-            '<th class="px-3 py-2 text-left">{}</th>'
-            '<th class="px-3 py-2 text-left">{}</th>'
-            "</tr>"
-            "</thead>"
-            "<tbody>{}</tbody>"
-            "</table>"
-            "</div>",
-            _("地址格式"),
-            _("适用链"),
-            _("项目热钱包地址"),
-            body,
-        )
 
     @display(description=_("项目状态"))
     def display_ready_detail(self, instance: Project):
