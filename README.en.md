@@ -1,7 +1,7 @@
 # Xcash
 
 <p align="center">
-  <strong>Open-Source Self-Hosted Cryptocurrency Payment Gateway</strong>
+  <strong>Open-source self-hosted cryptocurrency collection gateway</strong>
   <br />
   Accept USDT, ETH, and assets across major EVM chains and Tron with zero platform fees and full self-custody.
 </p>
@@ -20,76 +20,100 @@
 
 ## What is Xcash?
 
-**Xcash** is an open-source, self-hosted **cryptocurrency payment gateway** for businesses, SaaS products, exchanges, and wallet platforms. It helps you accept crypto payments, USDT payments, and on-chain deposits directly through your own infrastructure.
+**Xcash** is an advanced open-source, self-hosted **cryptocurrency collection gateway** for merchants, SaaS products, exchanges, and wallet platforms. It provides cryptocurrency collection, USDT collection, and on-chain deposit capabilities.
 
-Unlike hosted payment processors such as CoinGate or OpenNode, Xcash is **fully self-custodial**: payments flow through smart contracts straight to your own wallet addresses, Xcash never takes custody of funds, and it charges no platform fee. It is designed for teams that need multi-chain payment collection, deposits, and webhook notifications.
+Unlike hosted payment processors such as CoinGate or OpenNode, Xcash emphasizes **full self-custody**: funds flow through smart contracts directly to your multisig wallet address. Xcash never takes custody of funds and charges no platform fee. It is designed for business systems that need multi-chain asset collection, deposits, and webhook notifications.
 
-**Use cases:** e-commerce crypto payments, USDT deposit systems, cross-border stablecoin settlement, SaaS subscription billing in crypto, on-chain collection infrastructure, and internal treasury reconciliation.
+**Use cases:** e-commerce cryptocurrency payments, USDT deposit systems, cross-border stablecoin settlement, SaaS cryptocurrency subscription billing, on-chain collection infrastructure, and internal enterprise digital asset crediting.
+
+## How safe is Xcash?
+
+For example, if you use Xcash as your project's cryptocurrency collection gateway, even if the server running Xcash is compromised, the database is leaked, or system keys are exposed, your assets remain safe as long as your multisig wallet address is not tampered with. After service is restored, user payments still flow into your multisig wallet, and the attacker cannot redirect them.
+
+## Why is Xcash so safe?
+
+Security is a built-in property of Xcash and one of its core principles.
+
+- Xcash never takes custody of your collections.
+- All collections go through smart contracts, and the smart contracts hard-code the fund destination as your multisig wallet.
+- Collection contracts are intentionally minimal, with almost no attack surface.
+
+```mermaid
+flowchart LR
+    Buyer(["Buyer"])
+    Contract["Collection smart contract<br/>fund destination hard-coded"]
+    Wallet["Your multisig wallet<br/>private keys stay with you"]
+
+    Buyer -->|Pay| Contract -->|Can only flow to| Wallet
+
+    subgraph XcashBox["Xcash system · control plane"]
+        Core["API / Worker / Database"]
+    end
+    Core -.->|Invoice matching · Status · Notifications<br/>never in the fund path| Contract
+
+    Attacker["Attacker<br/>server compromise / database leak / key exposure"]
+    Attacker -->|Can at most control| XcashBox
+    Attacker -- Cannot rewrite fund destination --x Wallet
+
+    classDef money fill:#e6f4ea,stroke:#34a853,color:#000;
+    classDef danger fill:#fce8e6,stroke:#ea4335,color:#000;
+    class Buyer,Contract,Wallet money;
+    class Attacker danger;
+```
+
+The fund path, shown in green, is fixed by smart contracts and only flows from "buyer -> collection contract -> your multisig wallet". Xcash is only the control plane, responsible for invoice matching, state transitions, and notifications. **It is not in the fund path**. Even if an attacker fully controls the Xcash system, they cannot rewrite the hard-coded fund destination inside the contract.
 
 ## Features
 
 | Feature | Detail |
 |---------|--------|
-| Invoice payments | Fixed-amount, time-limited invoice collection for checkout, subscription billing, and more |
-| Dedicated deposit addresses | Each user gets a dedicated address—transfer in anytime for instant crediting, just like an exchange |
-| Self-custody | Payments flow through smart contracts straight to your wallet; Xcash never holds funds |
-| Zero platform fees | No percentage cuts, pay only blockchain gas |
-| Multi-chain & multi-asset | Major EVM chains plus Tron, with support for any ERC-20 token |
-| Multi-merchant & multi-project | Isolated management of multiple merchants and projects on a single instance |
-| Contract invoices | EVM chains can derive a dedicated CREATE2 address per invoice |
-| On-chain risk control | MistTrack risk scoring on the source addresses of payments and deposits |
-| Webhooks | Real-time payment and deposit event notifications |
-| EasyPay compatibility | Compatible with the EasyPay V1 protocol for smooth migration |
+| Invoice payments | Fixed-amount, time-limited invoice collection for checkout, subscription billing, and similar scenarios |
+| Dedicated deposit addresses | Assign a dedicated deposit address to each user so they can transfer in anytime and be credited after confirmation, like an exchange |
+| Full self-custody | Collections flow through smart contracts directly to your wallet; Xcash never takes custody of funds |
+| Zero platform fees | No transaction percentage fee; only small on-chain gas costs apply |
+| Multi-chain and multi-asset | Covers major EVM chains and Tron, with support for arbitrary ERC-20 tokens |
+| Multi-merchant and multi-project | Manage multiple merchants and projects in isolation on a single instance |
+| Contract invoices | EVM chains can generate an independent CREATE2 collection address for each invoice |
+| On-chain risk control | Integrates MistTrack risk scoring for source addresses of payments and deposits |
+| Webhook callbacks | Push payment and deposit events in real time |
+| EasyPay compatibility | Supports the standard EasyPay V1 protocol for smooth migration |
 | Docker deployment | One-command production deployment with Docker Compose |
 
 ## Payments vs. Deposits
 
-Xcash offers two ways to receive funds—distinguish them before integrating:
+Xcash provides two ways to receive funds. Distinguish them before integration:
 
-- **Payments**: Invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice that completes once the buyer pays—ideal for one-off collection such as e-commerce checkout or subscription billing. Payments come in two modes based on how addresses are assigned:
-  - **Differential payments**: Buyers share collection addresses, and invoices are told apart by a tiny amount difference. Works on every chain with no extra deployment cost; but the number of concurrent invoices for the same asset and amount is bounded by the available difference slots, so bursts of identical-amount orders can fail to allocate.
-  - **Contract payments**: EVM-only. CREATE2 derives a dedicated collection address per invoice. Addresses never collide, so it handles high concurrency naturally and amounts need no difference offset.
-- **Deposits**: Exchange-style top-ups. Each user is assigned a dedicated deposit address and can transfer in anytime for instant crediting, with no invoice required—ideal for wallets and trading platforms that maintain user balances.
+- **Payments**: invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice, and the invoice completes after the buyer pays. This is suitable for one-off collection scenarios such as e-commerce checkout and subscription billing. Payments have two address allocation modes:
+  - **Differential payments**: buyers share collection addresses, and invoices are distinguished by tiny amount differences. This works on all chains with no extra deployment cost, but the number of concurrent invoices for the same asset and same amount is limited by the available difference slots, so high-concurrency same-price orders may fail to allocate.
+  - **Contract payments**: EVM-only. CREATE2 predicts an independent collection address for each invoice. Addresses never collide, naturally support high concurrency, and amounts do not need differential offsets.
+- **Deposits**: exchange-style top-ups. Each user gets a dedicated deposit address shared across chains, monitored in real time. Users can transfer in anytime and be credited after block confirmation without creating an order. This is suitable for wallets, trading platforms, and other businesses that maintain user balances.
 
-## Supported Chains
+## Chain Support
 
 | Feature | ETH | BNB Chain | Arbitrum | Base | Tron | Polygon | Avalanche | Optimism | Other EVM |
-|:-------:|:---:|:---------:|:--------:|:----:|:----:|:-------:|:---------:|:--------:|:---------:|
-| Payment | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Deposit | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes |
-
-All EVM-compatible chains can be enabled from the admin panel without code changes.
+|:--:|:---:|:---------:|:--------:|:----:|:----:|:-------:|:---------:|:--------:|:------:|
+| Payment | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Almost all |
+| Deposit | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Almost all |
 
 ## Token Support
 
-EVM chains support arbitrary ERC-20 tokens. Add the token contract address in the admin panel to enable assets such as USDT, USDC, or custom business tokens.
+EVM chains support arbitrary ERC-20 tokens. Add the token contract address in the admin panel to enable assets such as USDT, USDC, or other on-chain assets required by your business.
 
-Tron currently supports payment flows only and is focused on TRC20-USDT collection.
+Tron currently supports payment only and is mainly intended for TRC20-USDT collection.
 
-## Risk Control
+## Built-in Risk Control Integration
 
-Xcash includes risk query, caching, persistence, and display capabilities. Address risk detection is provided by external MistTrack services; Xcash does not maintain its own blacklist or custom risk model.
+Xcash includes risk query, caching, persistence, and display capabilities. Current risky-address detection depends on external MistTrack services and is not an internally maintained blacklist or custom on-chain risk model.
 
 Risk checks currently cover two core fund entry points:
 
-- **Payment invoices:** after an invoice is matched with an on-chain payment, Xcash asynchronously checks the payer address and stores the risk level and risk score.
-- **User deposits:** after a deposit record is created, Xcash asynchronously checks the source address and stores the risk level and risk score.
+- **Payment invoices**: after an invoice is matched with an on-chain payment, the system asynchronously checks the payer address and stores the risk level and risk score on the invoice record.
+- **User deposits**: after a deposit record is created, the system asynchronously checks the source address and stores the risk level and risk score on the deposit record.
 
-Risk results are stored in dedicated risk assessment records with status, target type, source address, transaction hash, risk level, risk score, reasons, report URL, and error summary. The Django admin, API responses, and webhooks expose risk information so operators and merchant systems can review or react to suspicious funds.
+Risk results are also written to dedicated **risk assessment** records, including query status, target type, source address, transaction hash, risk level, and risk score. The admin panel can directly display risk information from invoices, deposits, and risk assessments so operators can manually review, release, or further handle suspicious funds. Invoice and deposit API/webhook output also includes `risk_level` and `risk_score`, making it easier for merchant systems to display risk information or connect their own handling process.
 
-Xcash supports MistTrack OpenAPI V3 first and can fall back to the QuickNode MistTrack add-on when no MistTrack OpenAPI key is configured.
-
-## Why Xcash?
-
-| vs. | Xcash | CoinGate | OpenNode |
-|---|---|---|---|
-| Self-hosted | Yes | No | No |
-| Major EVM chains and Tron | Yes | Yes | No |
-| Zero platform fees | Yes | No | No |
-| On-chain deposits | Yes | No | No |
-| Risk control | Yes | No | No |
-| EasyPay compatibility | Yes | No | No |
-| Docker deployment | Yes | N/A | N/A |
+Xcash prefers MistTrack OpenAPI V3. If no MistTrack OpenAPI API key is configured, it falls back to the QuickNode MistTrack add-on.
+If neither is configured, risk control is disabled.
 
 ## Screenshots
 
@@ -104,42 +128,42 @@ graph LR
 
     subgraph Xcash
         API["Xcash API"]
-        Worker["Xcash Worker<br/>Monitoring / Collection / State transitions"]
-        Wallet["Xcash wallet engine<br/>Mnemonic custody / Address derivation / Signing"]
-        Webhook["Xcash Webhook<br/>Event notification"]
+        Worker["Xcash Worker<br/>Transaction monitoring · Collection · State transitions"]
+        Wallet["Xcash wallet engine<br/>Mnemonic custody · Address derivation · Transaction signing"]
+        Webhook["Xcash Webhook<br/>Async notifications"]
     end
 
-    Blockchain["Blockchain networks<br/>EVM / Tron"]
+    Blockchain["Blockchain networks<br/>EVM · Tron"]
 
-    Buyer -->|Pay| API
-    Merchant <-->|Create invoice / query| API
+    Buyer -->|Create payment| API
+    Merchant <-->|Create invoice / Query| API
     API <--> Worker
     Worker <--> Wallet
-    Worker <-->|Monitor / Broadcast| Blockchain
+    Worker <-->|Monitor · Broadcast| Blockchain
     Webhook -->|Push events| Merchant
 ```
 
-## Deployment Requirements
+## Deployment Preparation
 
-Before deploying Xcash, prepare the following:
+Before deployment, prepare the following:
 
 - Linux server, recommended Ubuntu 22.04+ or Debian 12+
 - Docker and Docker Compose
-- A domain name pointing to the server
-- RPC endpoints for the chains you want to enable
-- A TronGrid API key if you want to enable Tron payments
+- A domain name resolved to the server IP
+- RPC endpoints for the public chains you want to enable
+- A TronGrid API key if you need to enable Tron payments
 
 Recommended server profiles:
 
-| Performance mode | Hardware | Payment only | Native coin scanning enabled |
-|:----------------:|:--------:|:------------:|:----------------------------:|
-| low | 1 CPU / 2 GB RAM | 5 - 10 EVM chains | 2 - 3 EVM chains |
-| medium | 4 CPU / 8 GB RAM | 15 - 30 EVM chains | 8 - 15 EVM chains |
-| high | 8 CPU / 16 GB RAM | 30+ EVM chains | 15 - 30 EVM chains |
+| Performance mode | Hardware | Payment event monitoring only | Payment + deposit event monitoring |
+|:-------:|:-------:|:----------------------:|:---------------------:|
+| low | 1 CPU / 2 GB | 5 - 10 EVM chains | 2 - 3 EVM chains |
+| medium | 4 CPU / 8 GB | 15 - 30 EVM chains | 8 - 15 EVM chains |
+| high | 8 CPU / 16 GB | 30+ EVM chains | 15 - 30 EVM chains |
 
-Set `PERFORMANCE` in `.env` to `low`, `medium`, or `high`. If it is not set, Xcash uses `low`.
+`PERFORMANCE` is a performance parameter that can be set in `.env`. Valid values are `low`, `medium`, and `high`. If unset, it defaults to `low`.
 
-Native EVM coin scanning is disabled by default. Deposit collection and chain confirmation depend on native coin scanning and continuous block polling. Enable it in the admin panel under **System -> Platform parameters** only when your RPC provider can handle high-frequency calls.
+EVM payments and deposits are both detected and confirmed through on-chain event scanning. Actual chain capacity depends on RPC throughput, block speed, and event volume. After deposits are enabled, Xcash must monitor more addresses and events, so configure the performance profile conservatively according to the table above.
 
 ## Quick Start
 
@@ -153,16 +177,12 @@ cd xcash
 ### 2. Initialize environment variables
 
 ```bash
-make init-env
+./scripts/init_env.sh
 ```
 
-This generates two env files with auto-filled random secrets:
+This command generates `.env` and automatically fills the random secrets and database password required at runtime.
 
-- `.env` — shared by the main app containers (django/worker/beat), docker compose interpolation, and local dev. Holds the Django secret key, main DB password, and the wallet mnemonic encryption key (`WALLET_MNEMONIC_ENCRYPTION_KEY`), etc.
-
-> ⚠️ Do **not** modify `WALLET_MNEMONIC_ENCRYPTION_KEY` after it is generated. Address derivation and transaction signing run inside the main system, and wallet mnemonics are stored encrypted with AES-256-GCM using this key. Changing it makes every encrypted mnemonic in the database permanently undecryptable and loses the hot-wallet private keys. Back up `.env` offline and never commit it.
-
-### 3. Configure your domain
+### 3. Configure the access domain
 
 Edit `.env` and set `SITE_DOMAIN`:
 
@@ -170,60 +190,78 @@ Edit `.env` and set `SITE_DOMAIN`:
 SITE_DOMAIN=xcash.example.com
 ```
 
-Point the domain to your server and configure a reverse proxy such as Nginx or Caddy to forward traffic to `http://localhost:6688`.
+Make sure the domain DNS resolves to the server IP, and configure a reverse proxy such as Nginx or Caddy to forward traffic to `http://localhost:6688`.
 
 ### 4. Start services
 
 ```bash
-make up
+docker compose up -d
 ```
 
-On first startup, if no admin account exists, Xcash creates the default admin account:
+On first startup, if the database has no admin account, the system automatically creates the default admin account:
 
 ```text
 username: admin
 password: Admin@123456
 ```
 
-Change the default password immediately after first login. OTP setup is required during the first admin login flow.
+Change the default password immediately after first logging in to the admin panel.
 
-### 5. Stop services
+### 5. Configure chain RPC
 
-```bash
-make down
-```
+The system comes with basic information for mainstream chains, but **RPC endpoint addresses must be filled in manually** before the gateway can communicate with blockchains.
 
-This stops and removes the production Docker Compose service containers without deleting database volumes.
+Log in to the admin panel, go to **Blockchain** **Public chains**, and fill in RPC endpoints for the chains you want to use. Recommended providers include [QuickNode](https://www.quicknode.com/), [Alchemy](https://www.alchemy.com/), and [Infura](https://www.infura.io/). Tron payments require a [TronGrid](https://www.trongrid.io/) API key.
 
-### 6. Configure chain RPC endpoints
+### 6. Fund the system wallet with Gas
 
-Open the admin panel and go to **Chain management**. Fill in RPC endpoints for the chains you want to use.
+Log in to the admin panel, go to **System** **System wallets**, copy the system wallet address, and send a small amount of gas token to that address on each enabled EVM chain, such as ETH, BNB, or MATIC.
 
-Recommended RPC providers include [QuickNode](https://www.quicknode.com/), [Alchemy](https://www.alchemy.com/), and [Infura](https://www.infura.io/). Tron payments require a [TronGrid](https://www.trongrid.io/) API key.
+The system wallet is only used for platform infrastructure transactions, such as VaultSlot contract deployment and VaultSlot collection tasks that must be actively initiated by the system. Business collection funds still flow to your collection address according to contract rules. Do not deposit business funds here; keep only a small gas balance that covers recent operations, so contract deployments or collection tasks are not blocked by insufficient gas.
 
-### 7. Upgrade to the latest version
+### 7. Configure a project
 
-```bash
-make upgrade
-```
+Log in to the admin panel, go to **Projects** **Project list**, and create or edit a project. A project is the basic isolation unit for API integration. Each project has its own `Appid` and `HMAC secret` for API authentication and signing.
 
-This pulls the latest `main` branch and runs the full production upgrade flow.
+Confirm at least the following configuration:
+
+- **IP whitelist**: restricts merchant server IPs allowed to call gateway APIs. Use `*` during testing if needed, but production should be narrowed to fixed egress IPs or CIDR ranges.
+- **Notification URL**: receives payment, deposit, and other webhook events. If not configured, the project is shown as not ready.
+- **Collection address**: the final destination of business funds. Before enabling contract payments or deposits, configure an EVM multisig address. This address is written into VaultSlot contract rules and cannot be modified after it is set.
 
 ## API Integration
 
 After deployment, see [API.md](API.md) to integrate payments, deposits, and webhook callbacks.
 
-Invoice creation can include an invoice-level `notify_url` to override the project default webhook. The EasyPay V1-compatible `submit.php` endpoint also maps `notify_url` to the invoice-level notification URL.
+Invoice creation can include an invoice-level `notify_url` to override the project default webhook. The EasyPay V1-compatible `submit.php` entry also maps `notify_url` to the invoice-level notification URL.
+
+## Operations Commands
+
+### Stop services
+
+```bash
+docker compose down
+```
+
+This stops and removes production Docker Compose service containers without deleting database volumes.
+
+### Upgrade to the latest version
+
+```bash
+./scripts/upgrade.sh
+```
+
+This command pulls the latest `main` branch and runs the full production upgrade flow.
 
 ## Tech Stack
 
-- **Backend:** Django 5.2 + Django REST Framework
-- **Queue:** Celery + Redis
-- **Database:** PostgreSQL
-- **Blockchain:** web3.py for EVM
-- **Wallet derivation:** BIP44 HD wallets with bip-utils
-- **Payment frontend:** React 19 + Vite + Tailwind CSS
-- **Deployment:** Docker Compose
+- **Backend**: Django 5.2 + Django REST Framework
+- **Task queue**: Celery + Redis
+- **Database**: PostgreSQL
+- **Blockchain interaction**: web3.py for EVM
+- **Wallet derivation**: BIP44 HD wallets with bip-utils
+- **Payment frontend**: React 19 + Vite + Tailwind CSS
+- **Deployment**: Docker Compose
 
 ## Roadmap
 
@@ -233,13 +271,13 @@ Invoice creation can include an invoice-level `notify_url` to override the proje
 
 ## Cloud Service
 
-If you do not want to deploy and maintain Xcash yourself, you can use the hosted version:
+If you do not want to deploy and maintain Xcash yourself, use the official hosted version:
 
-**[xca.sh](https://xca.sh)** - ready to use, no self-hosting required, continuously updated.
+**[xca.sh](https://xca.sh)** - ready to use, no deployment required, continuously updated.
 
 ## Commercial Support
 
-For deployment, integration, or operational support, contact:
+For professional help with deployment or usage, contact us for technical support:
 
 tech@xca.sh
 
