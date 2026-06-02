@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.contrib import admin
 from django.test import SimpleTestCase
 from django.test import TestCase
+from django.test import override_settings
 from django.test.client import RequestFactory
 
 from chains.constants import ChainCode
@@ -178,6 +179,31 @@ class ProjectAdminTests(TestCase):
         with patch.object(Chain, "_build_w3", return_value=w3):
             self.assertTrue(form.is_valid(), form.errors)
 
+        self.assertEqual(form.cleaned_data["vault"], contract_address)
+
+    @override_settings(DEBUG=True)
+    def test_project_form_skips_vault_multisig_validation_in_debug(self):
+        contract_address = "0x52908400098527886E0F7030069857D2E4169EE7"
+        form = ProjectForm(
+            data={
+                "name": self.project.name,
+                "ip_white_list": self.project.ip_white_list,
+                "webhook": self.project.webhook,
+                "webhook_open": self.project.webhook_open,
+                "failed_count": self.project.failed_count,
+                "pre_notify": self.project.pre_notify,
+                "fast_confirm_threshold": self.project.fast_confirm_threshold,
+                "hmac_key": self.project.hmac_key,
+                "active": self.project.active,
+                "vault": contract_address,
+            },
+            instance=self.project,
+        )
+
+        with patch.object(Chain.objects, "filter") as filter_mock:
+            self.assertTrue(form.is_valid(), form.errors)
+
+        filter_mock.assert_not_called()
         self.assertEqual(form.cleaned_data["vault"], contract_address)
 
     def test_project_form_accepts_multisig_when_address_has_code_on_one_evm_chain(
