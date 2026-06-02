@@ -14,7 +14,7 @@ from rest_framework.viewsets import GenericViewSet
 
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 from projects.models import Project
 
 

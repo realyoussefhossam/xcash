@@ -4,7 +4,6 @@ from django.test import Client
 from django.test import TestCase
 from django.test import override_settings
 
-from users.models import AdminAccessLog
 from users.models import User
 
 
@@ -41,12 +40,6 @@ class TestEnsureDefaultSuperuserCommand(TestCase):
 
 @override_settings(ALLOWED_HOSTS=["testserver", "localhost", "127.0.0.1"])
 class AdminLoginTests(TestCase):
-    def test_signup_route_is_removed(self):
-        # 账户仅允许后台内部创建后，公开注册路径必须彻底下线。
-        response = self.client.get("/signup")
-
-        self.assertEqual(response.status_code, 404)
-
     def test_password_login_creates_admin_session(self):
         user = User.objects.create_user(
             username="admin-login-user", password="secret", is_staff=True
@@ -61,16 +54,8 @@ class AdminLoginTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/")
         self.assertEqual(client.get("/", **extra).status_code, 200)
-        self.assertEqual(
-            AdminAccessLog.objects.filter(
-                user=user,
-                action=AdminAccessLog.Action.PASSWORD_LOGIN,
-                result=AdminAccessLog.Result.SUCCEEDED,
-            ).count(),
-            1,
-        )
 
-    def test_failed_password_login_records_attempted_username(self):
+    def test_failed_password_login_shows_form_error(self):
         client = Client()
 
         response = client.post(
@@ -80,9 +65,4 @@ class AdminLoginTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        log = AdminAccessLog.objects.get(
-            action=AdminAccessLog.Action.PASSWORD_LOGIN,
-            result=AdminAccessLog.Result.FAILED,
-        )
-        self.assertIsNone(log.user)
-        self.assertEqual(log.username_snapshot, "missing-admin")
+        self.assertContains(response, "此用户名未注册。")

@@ -6,9 +6,7 @@ from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 from shortuuid.django_fields import ShortUUIDField
 
-from chains.capabilities import ChainProductCapabilityService
 from chains.models import Chain
-from chains.models import ChainType
 from common.consts import UPPER_ALPHABET
 from common.fields import AddressField
 
@@ -117,6 +115,8 @@ class Project(models.Model):
         return (not errors), errors
 
     def recipients(self, chain: Chain):
+        from invoices.models import DifferRecipientAddress
+
         return set(
             DifferRecipientAddress.objects.filter(
                 project=self,
@@ -126,54 +126,6 @@ class Project(models.Model):
                 flat=True,
             ),
         )
-
-
-class DifferRecipientAddress(models.Model):
-    """差额账单的商户收款地址。
-
-    新架构下合约账单不再使用该模型分配收款地址；它只服务于差额账单，
-    用于在没有 VaultSlot 合约收款方案的链上扫描买家入账。
-    """
-
-    name = models.CharField(verbose_name=_("备注名称"), blank=True)
-    project = models.ForeignKey(
-        "projects.Project",
-        on_delete=models.CASCADE,
-        verbose_name=_("项目"),
-    )
-    chain_type = models.CharField(
-        _("地址格式"),
-        choices=ChainType,
-        help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Tron: Tron",
-    )
-    address = AddressField(verbose_name=_("差额账单收款地址"), unique=True)
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("创建时间"))
-
-    class Meta:
-        verbose_name = _("差额账单收款地址")
-        verbose_name_plural = _("差额账单收款地址")
-
-    def __str__(self):
-        return self.address
-
-    def save(self, *args, **kwargs):
-        # 差额账单收款地址的链上发现完全由内部扫描器负责；模型层只保留数据校验，不再派发外部订阅同步。
-        self.full_clean()
-        return super().save(*args, **kwargs)
-
-    def clean(self) -> None:
-        """校验差额账单收款地址允许进入的链类型。"""
-        super().clean()
-        if not self.chain_type:
-            return
-
-        if (
-            self.chain_type
-            not in ChainProductCapabilityService.INVOICE_RECIPIENT_CHAIN_TYPES
-        ):
-            raise ValidationError(
-                {"chain_type": _("当前版本差额账单收款地址仅支持 EVM / Tron。")}
-            )
 
 
 class Customer(models.Model):

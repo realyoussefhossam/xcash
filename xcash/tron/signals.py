@@ -9,7 +9,7 @@ from tron.watchers import clear_tron_filter_addresses_cache
 from tron.watchers import refresh_tron_filter_addresses
 
 from chains.models import ChainType
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 
 
 def _refresh_tron_filter_addresses_on_commit() -> None:

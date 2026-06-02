@@ -16,6 +16,8 @@ logger = structlog.get_logger()
 
 from aml.models import RiskLevel
 
+from chains.capabilities import ChainProductCapabilityService
+from chains.models import ChainType
 from common.fields import AddressField
 from common.fields import SysNoField
 from common.permission_check import filter_saas_allowed_methods
@@ -24,7 +26,6 @@ from currencies.service import FiatService
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
 from projects.models import Project
-from projects.service import ProjectService
 
 from .exceptions import InvoiceAllocationError
 
@@ -48,6 +49,54 @@ class InvoiceProtocol(models.TextChoices):
 class InvoiceBillingMode(models.TextChoices):
     DIFFER = "differ", _("差额")
     CONTRACT = "contract", _("合约")
+
+
+class DifferRecipientAddress(models.Model):
+    """差额账单的商户收款地址。
+
+    新架构下合约账单不再使用该模型分配收款地址；它只服务于差额账单，
+    用于在没有 VaultSlot 合约收款方案的链上扫描买家入账。
+    """
+
+    name = models.CharField(verbose_name=_("备注名称"), blank=True)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        verbose_name=_("项目"),
+    )
+    chain_type = models.CharField(
+        _("地址格式"),
+        choices=ChainType,
+        help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Tron: Tron",
+    )
+    address = AddressField(verbose_name=_("差额账单收款地址"), unique=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("创建时间"))
+
+    class Meta:
+        verbose_name = _("差额账单收款地址")
+        verbose_name_plural = _("差额账单收款地址")
+
+    def __str__(self):
+        return self.address
+
+    def save(self, *args, **kwargs):
+        # 差额账单收款地址的链上发现完全由内部扫描器负责；模型层只保留数据校验，不再派发外部订阅同步。
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        """校验差额账单收款地址允许进入的链类型。"""
+        super().clean()
+        if not self.chain_type:
+            return
+
+        if (
+            self.chain_type
+            not in ChainProductCapabilityService.INVOICE_RECIPIENT_CHAIN_TYPES
+        ):
+            raise ValidationError(
+                {"chain_type": _("当前版本差额账单收款地址仅支持 EVM / Tron。")}
+            )
 
 
 class Invoice(models.Model):
@@ -206,6 +255,8 @@ class Invoice(models.Model):
         - DIFFER：项目已配 DifferRecipientAddress 的 chain_type 对应的链（EVM/Tron 通用），
           且不暴露链原生币；当前差额模式依赖可被 scanner 稳定观测的代币入账。
         """
+        from projects.service import ProjectService
+
         if billing_mode == InvoiceBillingMode.CONTRACT:
             receivable_codes = ProjectService.contract_receivable_chain_codes(project)
         else:
@@ -450,6 +501,8 @@ class Invoice(models.Model):
            形成环形等待，导致死锁。
         4. 若 101 × N 个组合全部被占用，返回 (None, None) 表示分配失败。
         """
+        from projects.service import ProjectService
+
         amounts = [crypto_amount + step * crypto.differ_step for step in range(101)]
         addresses = list(
             ProjectService.invoice_recipient_addresses(

@@ -3,12 +3,10 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from unfold.forms import AdminPasswordChangeForm
 
 from common.admin import ModelAdmin
-from common.admin import ReadOnlyModelAdmin
 from projects.models import Project
 
 from .forms import UserAdminChangeForm
 from .forms import UserAdminCreationForm
-from .models import AdminAccessLog
 from .models import User
 
 
@@ -72,10 +70,3 @@ class ProjectListFilter(admin.SimpleListFilter):
         if self.value():
             return queryset.filter(project_id=self.value())
         return queryset
-
-
-@admin.register(AdminAccessLog)
-class AdminAccessLogAdmin(ReadOnlyModelAdmin):
-    list_display = ("created_at", "username_snapshot", "action", "result", "ip")
-    list_filter = ("action", "result", "created_at")
-    search_fields = ("username_snapshot", "ip", "reason")

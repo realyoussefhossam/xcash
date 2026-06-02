@@ -1,7 +1,7 @@
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 
 
 class DifferRecipientAddressCreateSerializer(serializers.ModelSerializer):

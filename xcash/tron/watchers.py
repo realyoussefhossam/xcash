@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.core.cache import cache
 
 from chains.models import ChainType
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 
 # Tron 当前仅观测项目差额账单收款地址入账；
 # filter_addresses 全局共享同一 Redis key，按链型而非链 pk 维度缓存，省去多 Tron 链的重复缓存项。

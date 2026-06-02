@@ -8,7 +8,7 @@ from chains.models import Chain
 from chains.models import ChainType
 from currencies.models import ChainToken
 from evm.models import VaultSlot
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 
 
 @dataclass(frozen=True)

@@ -24,12 +24,12 @@ from invoices.epay.sign import build_epay_v1_sign
 from invoices.epay.sign import epay_v1_signing_string
 from invoices.epay.sign import format_epay_money
 from invoices.epay.sign import verify_epay_v1_sign
+from invoices.models import DifferRecipientAddress
 from invoices.models import EpayMerchant
 from invoices.models import EpayOrder
 from invoices.models import Invoice
 from invoices.models import InvoiceProtocol
 from invoices.models import InvoiceStatus
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 
 

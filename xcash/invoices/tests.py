@@ -34,6 +34,7 @@ from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
 from invoices.exceptions import InvoiceAllocationError
 from invoices.exceptions import InvoiceStatusError
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
 from invoices.models import InvoiceBillingMode
 from invoices.models import InvoiceProtocol
@@ -43,7 +44,6 @@ from invoices.service import InvoiceService
 from invoices.tasks import check_expired
 from invoices.tasks import fallback_invoice_expired
 from invoices.viewsets import InvoiceViewSet
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 from users.models import User
 

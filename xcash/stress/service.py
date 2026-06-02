@@ -19,9 +19,9 @@ from common.consts import APPID_HEADER
 from common.consts import NONCE_HEADER
 from common.consts import SIGNATURE_HEADER
 from common.consts import TIMESTAMP_HEADER
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
 from invoices.models import InvoiceBillingMode
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 
 from .models import DepositStressCase

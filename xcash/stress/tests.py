@@ -48,9 +48,9 @@ from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
 from invoices.models import InvoiceBillingMode
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 
 

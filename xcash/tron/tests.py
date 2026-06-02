@@ -28,9 +28,9 @@ from currencies.models import ChainToken
 from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
 from invoices.models import InvoiceStatus
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 
 

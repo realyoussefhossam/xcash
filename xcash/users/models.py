@@ -1,5 +1,4 @@
 from django.contrib.auth.models import AbstractUser
-from django.core.validators import MinLengthValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -32,45 +31,3 @@ class User(AbstractUser):
     def get_short_name(self):
         # 修复：与 get_full_name 保持同一回退策略，避免头像首字母和用户名称展示继续读到无效字段。
         return self.username or ""
-
-
-class AdminAccessLog(models.Model):
-    class Action(models.TextChoices):
-        PASSWORD_LOGIN = "password_login", _("密码登录")
-        LOGOUT = "logout", _("退出登录")
-
-    class Result(models.TextChoices):
-        SUCCEEDED = "succeeded", _("成功")
-        FAILED = "failed", _("失败")
-
-    user = models.ForeignKey(
-        "users.User",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="admin_access_logs",
-        verbose_name=_("用户"),
-    )
-    username_snapshot = models.CharField(
-        _("用户名快照"), max_length=150, validators=[MinLengthValidator(1)]
-    )
-    ip = models.GenericIPAddressField(_("IP"), null=True, blank=True)
-    user_agent = models.TextField(_("User-Agent"), blank=True, default="")
-    action = models.CharField(_("动作"), choices=Action, max_length=32)
-    result = models.CharField(_("结果"), choices=Result, max_length=16)
-    reason = models.TextField(_("原因"), blank=True, default="")
-    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
-
-    class Meta:
-        ordering = ("-created_at",)
-        constraints = [
-            models.CheckConstraint(
-                condition=~models.Q(username_snapshot=""),
-                name="ck_admin_access_log_username_snapshot_not_blank",
-            ),
-        ]
-        verbose_name = _("后台访问日志")
-        verbose_name_plural = verbose_name
-
-    def __str__(self):
-        return f"{self.username_snapshot}:{self.action}:{self.result}"

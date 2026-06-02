@@ -16,9 +16,9 @@ from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
 from common.admin import StackedInline
 from common.admin import TabularInline
+from invoices.models import DifferRecipientAddress
 from invoices.models import EpayMerchant
 from projects.models import Customer
-from projects.models import DifferRecipientAddress
 from projects.models import Project
 from projects.vault import validate_vault_is_multisig
 

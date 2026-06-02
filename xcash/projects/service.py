@@ -7,7 +7,7 @@ if TYPE_CHECKING:
 
 from chains.models import ChainType
 from chains.service import ChainService
-from projects.models import DifferRecipientAddress
+from invoices.models import DifferRecipientAddress
 from projects.models import Project
 
 
