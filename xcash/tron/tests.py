@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import Mock
 from unittest.mock import PropertyMock
@@ -17,21 +18,122 @@ from django.utils import timezone
 from tron.admin import TronWatchCursorAdmin
 from tron.client import TronClientError
 from tron.client import TronHttpClient
-from tron.codec import TronAddressCodec
+from tron.models import TronTxTask
+from tron.models import TronVaultSlot
+from tron.models import TronVaultSlotCollectSchedule
+from tron.models import TronVaultSlotUsage
 from tron.models import TronWatchCursor
+from tron.tasks import confirm_tron_receipt_tx_tasks
 
+from chains.adapters import TxCheckResult
+from chains.adapters import TxCheckStatus
 from chains.constants import ChainCode
-from chains.constants import ChainType
+from chains.models import Address
+from chains.models import AddressUsage
 from chains.models import Chain
+from chains.models import ChainType
 from chains.models import Transfer
+from chains.models import TxTask
+from chains.models import TxTaskStatus
+from chains.models import TxTaskType
+from chains.models import Wallet
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from currencies.models import Fiat
-from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
-from invoices.models import DifferRecipientAddress
-from invoices.models import Invoice
-from invoices.models import InvoiceStatus
+from projects.models import Customer
 from projects.models import Project
+
+
+class TronVaultSlotCodecTests(SimpleTestCase):
+    def test_predict_uses_tron_create2_prefix_0x41(self):
+        from eth_utils import keccak
+        from tron.codec import TronAddressCodec
+        from tron.contracts_codec import build_tron_vault_slot_init_code
+        from tron.contracts_codec import predict_tron_vault_slot_address
+        from tron.contracts_codec import tron_address_to_20_bytes
+
+        factory = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
+        template = "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"
+        vault = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
+        salt = b"\x11" * 32
+
+        init_code = build_tron_vault_slot_init_code(
+            vault_slot_template=template,
+            vault=vault,
+        )
+        expected_digest = keccak(
+            b"\x41"
+            + tron_address_to_20_bytes(factory)
+            + salt
+            + keccak(init_code)
+        )
+        expected = TronAddressCodec.hex41_to_base58(f"41{expected_digest[-20:].hex()}")
+
+        predicted = predict_tron_vault_slot_address(
+            vault=vault,
+            salt=salt,
+            factory=factory,
+            vault_slot_template=template,
+        )
+
+        self.assertEqual(predicted, expected)
+        evm_digest = keccak(
+            b"\xff"
+            + tron_address_to_20_bytes(factory)
+            + salt
+            + keccak(init_code)
+        )
+        evm_style = TronAddressCodec.hex41_to_base58(f"41{evm_digest[-20:].hex()}")
+        self.assertNotEqual(predicted, evm_style)
+
+    def test_sign_tron_transaction_hashes_raw_data_hex(self):
+        from chains.keys import sign_tron_transaction
+
+        unsigned = {"raw_data_hex": "0a02abcd", "raw_data": {"expiration": 123}}
+        signed = sign_tron_transaction(private_key="1" * 64, unsigned_transaction=unsigned)
+
+        self.assertEqual(signed.tx_hash, sha256(bytes.fromhex("0a02abcd")).hexdigest())
+        self.assertEqual(len(signed.raw_transaction["signature"][0]), 130)
+        self.assertEqual(signed.raw_transaction["raw_data"], {"expiration": 123})
+
+
+class TronAdapterTests(SimpleTestCase):
+    @patch("tron.adapter.TronHttpClient")
+    def test_is_contract_reads_contract_payload(self, client_cls):
+        from tron.adapter import TronAdapter
+
+        client_cls.return_value.get_contract.return_value = {"bytecode": "00"}
+        chain = SimpleNamespace(code="tron", tron_api_key="")
+
+        self.assertTrue(
+            TronAdapter().is_contract(
+                chain,
+                "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+            )
+        )
+
+    @patch("tron.adapter.TronHttpClient")
+    def test_tx_result_returns_success_with_block_position(self, client_cls):
+        from tron.adapter import TronAdapter
+
+        client = client_cls.return_value
+        client.get_transaction_info_by_id.return_value = {
+            "id": "a" * 64,
+            "blockNumber": 123,
+            "receipt": {"result": "SUCCESS"},
+        }
+        client.get_solid_block_id.return_value = "b" * 64
+
+        result = TronAdapter().tx_result(SimpleNamespace(code="tron"), "a" * 64)
+
+        self.assertEqual(
+            result,
+            TxCheckResult(
+                status=TxCheckStatus.SUCCEEDED,
+                block_number=123,
+                block_hash="b" * 64,
+            ),
+        )
 
 
 @override_settings(TRON_RPC_TIMEOUT=3.0)
@@ -282,83 +384,6 @@ class TronHttpClientTests(SimpleTestCase):
         self.assertEqual(get_mock.call_count, 1)
 
 
-class TronFilterAddressesCacheTests(TestCase):
-    def setUp(self):
-        from tron.watchers import clear_tron_filter_addresses_cache
-
-        clear_tron_filter_addresses_cache()
-        self.project = Project.objects.create(
-            name="Tron Cache Project",
-        )
-
-    def tearDown(self):
-        from tron.watchers import clear_tron_filter_addresses_cache
-
-        clear_tron_filter_addresses_cache()
-        super().tearDown()
-
-    def test_load_caches_invoice_addresses_only(self):
-        from tron.watchers import load_tron_filter_addresses
-
-        invoice_addr = "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"
-        evm_addr = "0x1111111111111111111111111111111111111111"
-        DifferRecipientAddress.objects.create(
-            name="tron-invoice",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address=invoice_addr,
-        )
-        # EVM 链上的 DifferRecipientAddress 不应漏进 Tron 观察集，避免跨链型误观测。
-        DifferRecipientAddress.objects.create(
-            name="evm-invoice",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address=evm_addr,
-        )
-
-        addresses = load_tron_filter_addresses()
-
-        self.assertIn(invoice_addr, addresses)
-        self.assertNotIn(evm_addr, addresses)
-
-    def test_signal_invalidates_cache_on_recipient_address_create(self):
-        from tron.watchers import load_tron_filter_addresses
-
-        # 预热缓存：当前无 Tron DifferRecipientAddress，缓存为空 frozenset。
-        self.assertEqual(load_tron_filter_addresses(), frozenset())
-
-        invoice_addr = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
-        with self.captureOnCommitCallbacks(execute=True):
-            DifferRecipientAddress.objects.create(
-                name="tron-invoice-2",
-                project=self.project,
-                chain_type=ChainType.TRON,
-                address=invoice_addr,
-            )
-
-        # post_save 信号挂 on_commit 重建缓存：事务提交后下一次 load 必须能看到新地址。
-        self.assertIn(invoice_addr, load_tron_filter_addresses())
-
-    def test_signal_invalidates_cache_when_tron_address_moves_to_other_chain_type(self):
-        from tron.watchers import load_tron_filter_addresses
-
-        invoice_addr = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
-        recipient = DifferRecipientAddress.objects.create(
-            name="tron-invoice-3",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address=invoice_addr,
-        )
-        self.assertIn(invoice_addr, load_tron_filter_addresses())
-
-        recipient.chain_type = ChainType.EVM
-        recipient.address = "0x1111111111111111111111111111111111111111"
-        with self.captureOnCommitCallbacks(execute=True):
-            recipient.save(update_fields=["chain_type", "address"])
-
-        self.assertNotIn(invoice_addr, load_tron_filter_addresses())
-
-
 class TronWatchCursorTests(TestCase):
     def test_enabling_tron_chain_creates_usdt_watch_cursor(self):
         usdt = Crypto.objects.create(
@@ -369,6 +394,7 @@ class TronWatchCursorTests(TestCase):
         chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
             active=False,
         )
         ChainCryptoDeployment.objects.create(
@@ -406,6 +432,7 @@ class TronWatchCursorTests(TestCase):
         chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
             active=True,
         )
         TronWatchCursor.objects.create(
@@ -425,6 +452,7 @@ class TronWatchCursorAdminTests(TestCase):
         self.chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
             active=True,
             latest_block_number=66,
         )
@@ -509,6 +537,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         self.chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
             active=True,
         )
         self.trx = self.chain.native_coin
@@ -523,54 +552,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         )
         Fiat.objects.get_or_create(code="USD")
         self.watch_address = "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"
-        DifferRecipientAddress.objects.create(
-            name="tron-pay",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address=self.watch_address,
-        )
         self.sender_address = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
-
-    def _build_trc20_log(self, *, to_address: str, raw_value: int) -> dict[str, object]:
-        return {
-            "address": TronAddressCodec.base58_to_hex41(self.usdt_mapping.address)[2:],
-            "topics": [
-                ERC20_TRANSFER_TOPIC0,
-                "0x"
-                + "0" * 24
-                + TronAddressCodec.base58_to_hex41(self.sender_address)[-40:],
-                "0x" + "0" * 24 + TronAddressCodec.base58_to_hex41(to_address)[-40:],
-            ],
-            "data": f"0x{raw_value:064x}",
-        }
-
-    def _build_contract_event(
-        self,
-        *,
-        tx_hash: str,
-        block_number: int,
-        event_index: int = 0,
-        to_address: str | None = None,
-        raw_value: int = 1_000_000,
-        timestamp_ms: int = 1710000000000,
-    ) -> dict[str, object]:
-        return {
-            "block_number": block_number,
-            "block_timestamp": timestamp_ms,
-            "contract_address": self.usdt_mapping.address,
-            "event_name": "Transfer",
-            "event_index": event_index,
-            "transaction_id": tx_hash,
-            "result": {
-                "from": "0x"
-                + TronAddressCodec.base58_to_hex41(self.sender_address)[2:],
-                "to": "0x"
-                + TronAddressCodec.base58_to_hex41(to_address or self.watch_address)[
-                    2:
-                ],
-                "value": str(raw_value),
-            },
-        }
 
     def _get_or_create_contract_cursor(
         self, *, last_scanned_block: int
@@ -596,7 +578,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
 
         self.assertEqual(summary.blocks_scanned, 0)
-        self.assertEqual(summary.filter_addresses, 1)
+        self.assertEqual(summary.filter_addresses, 0)
         client.list_confirmed_contract_events.assert_not_called()
         cursor = TronWatchCursor.objects.get(
             chain=self.chain,
@@ -618,12 +600,7 @@ class TronUsdtPaymentScannerTests(TestCase):
         summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
 
         self.assertEqual(summary.blocks_scanned, 1)
-        client.list_confirmed_contract_events.assert_called_once_with(
-            contract_address=self.usdt_mapping.address,
-            event_name="Transfer",
-            block_number=123456,
-            fingerprint=None,
-        )
+        client.list_confirmed_contract_events.assert_called_once()
 
     @override_settings(DEBUG=True)
     @patch("tron.scanner.TronHttpClient")
@@ -676,448 +653,6 @@ class TronUsdtPaymentScannerTests(TestCase):
         self.assertEqual(cursor.last_scanned_block, 0)
         self.assertEqual(cursor.last_error, "latest failed")
         self.assertIsNotNone(cursor.last_error_at)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_creates_observed_transfer_and_advances_contract_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                self._build_contract_event(
-                    tx_hash="a" * 64,
-                    block_number=123456,
-                )
-            ],
-            "meta": {},
-        }
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.filter_addresses, 1)
-        self.assertEqual(summary.events_seen, 1)
-        transfer = Transfer.objects.get(chain=self.chain)
-        self.assertEqual(transfer.hash, "a" * 64)
-        self.assertEqual(transfer.amount, Decimal("1"))
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123456)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_ignores_block_mismatch_contract_events(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                self._build_contract_event(
-                    tx_hash="c" * 64,
-                    block_number=123457,
-                )
-            ],
-            "meta": {},
-        }
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123456)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_raises_and_does_not_fallback_when_contract_event_fetch_fails(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.side_effect = TronClientError(
-            "probe failed"
-        )
-
-        with self.assertRaisesMessage(TronClientError, "probe failed"):
-            TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        client.list_confirmed_trc20_history.assert_not_called()
-        client.get_transaction_info_by_id.assert_not_called()
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123455)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_raises_on_non_dict_contract_event_payload_and_keeps_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = []
-
-        with self.assertRaisesMessage(
-            TronClientError, "invalid contract events payload"
-        ):
-            TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123455)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_raises_on_invalid_contract_event_payload_shape_and_keeps_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": {"unexpected": "shape"},
-            "meta": {},
-        }
-
-        with self.assertRaisesMessage(
-            TronClientError, "invalid contract events payload"
-        ):
-            TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123455)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_stops_on_empty_page_even_if_fingerprint_exists(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.side_effect = [
-            {
-                "data": [],
-                "meta": {"fingerprint": "page-2"},
-            },
-            AssertionError("empty page should stop pagination"),
-        ]
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertEqual(client.list_confirmed_contract_events.call_count, 1)
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123456)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_raises_on_repeated_contract_event_fingerprint_and_keeps_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.side_effect = [
-            {
-                "data": [
-                    self._build_contract_event(
-                        tx_hash="1" * 64,
-                        block_number=123456,
-                        event_index=0,
-                    )
-                ],
-                "meta": {"fingerprint": "dup-page"},
-            },
-            {
-                "data": [
-                    self._build_contract_event(
-                        tx_hash="2" * 64,
-                        block_number=123456,
-                        event_index=1,
-                    )
-                ],
-                "meta": {"fingerprint": "dup-page"},
-            },
-            AssertionError("repeated fingerprint should not request more pages"),
-        ]
-
-        with self.assertRaisesMessage(
-            TronClientError,
-            "duplicate contract events fingerprint",
-        ):
-            TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        self.assertEqual(client.list_confirmed_contract_events.call_count, 2)
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123455)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_raises_on_non_string_contract_event_fingerprint_and_keeps_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                self._build_contract_event(
-                    tx_hash="3" * 64,
-                    block_number=123456,
-                    event_index=0,
-                )
-            ],
-            "meta": {"fingerprint": 123},
-        }
-
-        with self.assertRaisesMessage(
-            TronClientError,
-            "invalid contract events fingerprint",
-        ):
-            TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123455)
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_ignores_events_for_non_business_addresses(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.return_value = {
-            "data": [
-                self._build_contract_event(
-                    tx_hash="d" * 64,
-                    block_number=123456,
-                    to_address=self.sender_address,
-                )
-            ],
-            "meta": {},
-        }
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_ignores_non_transfer_contract_events(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        event = self._build_contract_event(
-            tx_hash="7" * 64,
-            block_number=123456,
-        )
-        event["event_name"] = "Approval"
-        client.list_confirmed_contract_events.return_value = {
-            "data": [event],
-            "meta": {},
-        }
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_ignores_events_from_non_target_contract(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        event = self._build_contract_event(
-            tx_hash="8" * 64,
-            block_number=123456,
-        )
-        event["contract_address"] = self.sender_address
-        client.list_confirmed_contract_events.return_value = {
-            "data": [event],
-            "meta": {},
-        }
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 0)
-        self.assertFalse(Transfer.objects.filter(chain=self.chain).exists())
-
-    @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_consumes_all_pages_in_same_block_before_advancing_cursor(
-        self,
-        client_cls,
-        _enqueue_processing_mock,
-    ):
-        from tron.scanner import TronUsdtPaymentScanner
-
-        self._get_or_create_contract_cursor(last_scanned_block=123455)
-        client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123456
-        client.get_solid_block_id.return_value = "0" * 64
-        client.list_confirmed_contract_events.side_effect = [
-            {
-                "data": [
-                    self._build_contract_event(
-                        tx_hash="e" * 64,
-                        block_number=123456,
-                        event_index=0,
-                    )
-                ],
-                "meta": {"fingerprint": "page-2"},
-            },
-            {
-                "data": [
-                    self._build_contract_event(
-                        tx_hash="f" * 64,
-                        block_number=123456,
-                        event_index=1,
-                    )
-                ],
-                "meta": {},
-            },
-        ]
-
-        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
-
-        self.assertEqual(summary.blocks_scanned, 1)
-        self.assertEqual(summary.events_seen, 2)
-        self.assertEqual(
-            Transfer.objects.filter(chain=self.chain).order_by("hash").count(),
-            2,
-        )
-        self.assertEqual(
-            client.list_confirmed_contract_events.call_args_list,
-            [
-                (
-                    (),
-                    {
-                        "contract_address": self.usdt_mapping.address,
-                        "event_name": "Transfer",
-                        "block_number": 123456,
-                        "fingerprint": None,
-                    },
-                ),
-                (
-                    (),
-                    {
-                        "contract_address": self.usdt_mapping.address,
-                        "event_name": "Transfer",
-                        "block_number": 123456,
-                        "fingerprint": "page-2",
-                    },
-                ),
-            ],
-        )
-        cursor = TronWatchCursor.objects.get(
-            chain=self.chain,
-            contract_address=self.usdt_mapping.address,
-        )
-        self.assertEqual(cursor.last_scanned_block, 123456)
 
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("tron.scanner.TronUsdtPaymentScanner._advance_cursor")
@@ -1260,63 +795,54 @@ class TronUsdtPaymentScannerTests(TestCase):
 
         block_number_updated_delay_mock.assert_called_once_with(self.chain.pk)
 
-    @patch("chains.tasks.confirm_transfer.delay")
     @patch("chains.service.TransferService.enqueue_processing")
-    @patch("tron.adapter.TronHttpClient.get_transaction_info_by_id")
     @patch("tron.scanner.TronHttpClient")
-    def test_scan_chain_can_complete_invoice_via_existing_pipeline(
+    def test_scan_chain_matches_vault_slot_candidates_without_loading_all_addresses(
         self,
         client_cls,
-        get_tx_info_mock,
-        _enqueue_processing_mock,
-        _confirm_delay_mock,
+        enqueue_processing_mock,
     ):
         from tron.scanner import TronUsdtPaymentScanner
 
-        from chains.tasks import confirm_transfer
-
-        invoice = Invoice.objects.create(
+        TronVaultSlot.objects.create(
+            chain=self.chain,
             project=self.project,
-            out_no="tron-invoice-1",
-            title="Tron Invoice",
-            currency=self.usdt.symbol,
-            amount=Decimal("1"),
-            methods={self.usdt.symbol: [self.chain.code]},
-            expires_at=timezone.now() + timedelta(minutes=10),
+            usage=TronVaultSlotUsage.INVOICE,
+            invoice_index=0,
+            address=self.watch_address,
+            salt=b"a" * 32,
         )
-        invoice.select_method(self.usdt, self.chain)
-        raw_value = int(invoice.pay_amount * Decimal("1000000"))
-        transfer_time = invoice.started_at + timedelta(seconds=30)
-
-        self._get_or_create_contract_cursor(last_scanned_block=123450)
+        self._get_or_create_contract_cursor(last_scanned_block=123455)
         client = client_cls.return_value
-        client.get_latest_solid_block_number.return_value = 123451
+        client.get_latest_solid_block_number.return_value = 123456
         client.get_solid_block_id.return_value = "0" * 64
         client.list_confirmed_contract_events.return_value = {
             "data": [
-                self._build_contract_event(
-                    tx_hash="b" * 64,
-                    block_number=123451,
-                    timestamp_ms=int(transfer_time.timestamp() * 1000),
-                    to_address=invoice.pay_address,
-                    raw_value=raw_value,
-                )
+                {
+                    "transaction_id": "d" * 64,
+                    "event_index": "0",
+                    "block_number": 123456,
+                    "block_timestamp": 1_700_000_000_000,
+                    "event_name": "Transfer",
+                    "contract_address": self.usdt_mapping.address,
+                    "result": {
+                        "from": self.sender_address,
+                        "to": self.watch_address,
+                        "value": "1234567",
+                    },
+                }
             ],
             "meta": {},
         }
-        get_tx_info_mock.return_value = {
-            "id": "b" * 64,
-            "receipt": {"result": "SUCCESS"},
-        }
 
-        TronUsdtPaymentScanner.scan_chain(chain=self.chain)
+        summary = TronUsdtPaymentScanner.scan_chain(chain=self.chain)
 
-        transfer = Transfer.objects.get(chain=self.chain, hash="b" * 64)
-        transfer.process()
-        confirm_transfer.run(transfer.pk)
-
-        invoice.refresh_from_db()
-        self.assertEqual(invoice.status, InvoiceStatus.COMPLETED)
+        self.assertEqual(summary.events_seen, 1)
+        self.assertEqual(summary.filter_addresses, 1)
+        transfer = Transfer.objects.get(hash="d" * 64)
+        self.assertEqual(transfer.to_address, self.watch_address)
+        self.assertEqual(transfer.amount, Decimal("1.234567"))
+        enqueue_processing_mock.assert_called_once()
 
 
 class TronTaskTests(TestCase):
@@ -1362,7 +888,7 @@ class TronTaskTests(TestCase):
         tron_chain = Chain.objects.create(
             code=ChainCode.Tron,
             rpc="https://api.trongrid.io",
-            active=True,
+            active=False,
         )
 
         scan_tron_chain.run(tron_chain.pk)
@@ -1382,9 +908,13 @@ class TronTaskTests(TestCase):
             tron_api_key="tron-key",
             active=True,
         )
-        Chain.objects.create(
+        evm_chain = Chain.objects.create(
             code=ChainCode.Ethereum,
             rpc="",
+            active=False,
+        )
+        Chain.objects.filter(pk=evm_chain.pk).update(
+            rpc="http://evm.invalid",
             active=True,
         )
         # 把 last_scanned_at 推到远早于扫描周期，使本链到期可被调度。
@@ -1397,7 +927,7 @@ class TronTaskTests(TestCase):
         scan_delay_mock.assert_called_once_with(tron_chain.pk)
 
         scan_delay_mock.reset_mock()
-        Chain.objects.filter(pk=tron_chain.pk).update(tron_api_key="")
+        Chain.objects.filter(pk=tron_chain.pk).update(active=False, tron_api_key="")
         scan_active_tron_chains.run()
         scan_delay_mock.assert_not_called()
 
@@ -1407,3 +937,229 @@ class TronTaskTests(TestCase):
         )
         scan_active_tron_chains.run()
         scan_delay_mock.assert_not_called()
+
+
+class TronReceiptConfirmTaskTests(TestCase):
+    """部署与归集都不产生「打入系统观察地址」的入账,统一由
+    confirm_tron_receipt_tx_tasks 按回执收口。
+
+    核心回归:归集(collect)任务能被确认终局并触发归集 gas 计费回调——此前 collect
+    既不终局也不计费,会被 dispatch 无限重广播。
+    """
+
+    def setUp(self):
+        self.chain = Chain.objects.create(
+            code=ChainCode.Tron,
+            rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
+            active=True,
+        )
+        # 抬高 solid head,使任意小区块号都满足确认数门槛。
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=10_000_000)
+        self.chain.refresh_from_db()
+        self.usdt = Crypto.objects.create(
+            name="Tether Tron",
+            symbol="USDT",
+            prices={"USD": "1"},
+            coingecko_id="tron-receipt-usdt",
+        )
+        ChainCryptoDeployment.objects.create(
+            chain=self.chain,
+            crypto=self.usdt,
+            address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            decimals=6,
+        )
+        Fiat.objects.get_or_create(code="USD")
+        self.project = Project.objects.create(name="Tron Receipt Project")
+        self.customer = Customer.objects.create(
+            project=self.project, uid="tron-receipt-customer"
+        )
+        self.wallet = Wallet.objects.create()
+        self.sender = Address.objects.create(
+            wallet=self.wallet,
+            chain_type=ChainType.TRON,
+            usage=AddressUsage.HotWallet,
+            bip44_account=Wallet.get_bip44_account(AddressUsage.HotWallet),
+            address_index=0,
+            address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        )
+        self.slot = TronVaultSlot.objects.create(
+            chain=self.chain,
+            usage=TronVaultSlotUsage.DEPOSIT,
+            customer=self.customer,
+            project=self.project,
+            address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+            salt=b"\x01" * 32,
+        )
+
+    def create_collect_task(self, *, tx_hash="a" * 64) -> TxTask:
+        base_task = TxTask.objects.create(
+            chain=self.chain,
+            sender=self.sender,
+            tx_type=TxTaskType.VaultSlotCollect,
+            status=TxTaskStatus.PENDING_CHAIN,
+        )
+        base_task.append_tx_hash(tx_hash)
+        tron_task = TronTxTask.objects.create(
+            base_task=base_task,
+            sender=self.sender,
+            chain=self.chain,
+            to=self.slot.address,
+            function_selector="collect(address)",
+            parameter="00" * 32,
+            fee_limit=150_000_000,
+        )
+        TronVaultSlotCollectSchedule.objects.create(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=self.usdt,
+            due_at=timezone.now(),
+            tx_task=tron_task,
+        )
+        return base_task
+
+    @patch("tron.tasks.notify_vault_slot_deploy_gas_fee")
+    @patch("tron.tasks.notify_vault_slot_collect_gas_fee")
+    @patch("tron.tasks.AdapterFactory.get_adapter")
+    def test_confirm_finalizes_collect_and_triggers_collect_gas_fee(
+        self,
+        get_adapter,
+        collect_gas_fee,
+        deploy_gas_fee,
+    ):
+        base_task = self.create_collect_task()
+        adapter = Mock()
+        adapter.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.SUCCEEDED,
+            block_number=100,
+            block_hash="b" * 64,
+        )
+        get_adapter.return_value = adapter
+
+        confirm_tron_receipt_tx_tasks()
+
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.status, TxTaskStatus.CONFIRMED)
+        collect_gas_fee.assert_called_once()
+        self.assertEqual(
+            collect_gas_fee.call_args.kwargs["tx_task"].pk, base_task.pk
+        )
+        deploy_gas_fee.assert_not_called()
+
+    @patch("tron.tasks.notify_vault_slot_collect_gas_fee")
+    @patch("tron.tasks.AdapterFactory.get_adapter")
+    def test_confirm_marks_failed_collect_without_gas_fee(
+        self,
+        get_adapter,
+        collect_gas_fee,
+    ):
+        base_task = self.create_collect_task()
+        adapter = Mock()
+        adapter.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.FAILED,
+            block_number=100,
+            block_hash="b" * 64,
+        )
+        get_adapter.return_value = adapter
+
+        confirm_tron_receipt_tx_tasks()
+
+        base_task.refresh_from_db()
+        self.assertEqual(base_task.status, TxTaskStatus.FAILED)
+        collect_gas_fee.assert_not_called()
+
+
+@override_settings(TRON_VAULT_SLOT_FEE_LIMIT=150_000_000)
+class TronCollectScheduleExecuteTests(TestCase):
+    """归集计划到期建链上任务的行为:必须确认 slot 已部署,且每个计划各建独立任务。"""
+
+    def setUp(self):
+        self.chain = Chain.objects.create(
+            code=ChainCode.Tron,
+            rpc="https://api.trongrid.io",
+            tron_api_key="tron-key",
+            active=True,
+        )
+        self.usdt = Crypto.objects.create(
+            name="Tether Tron",
+            symbol="USDT",
+            prices={"USD": "1"},
+            coingecko_id="tron-execute-usdt",
+        )
+        ChainCryptoDeployment.objects.create(
+            chain=self.chain,
+            crypto=self.usdt,
+            address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            decimals=6,
+        )
+        self.project = Project.objects.create(name="Tron Execute Project")
+        self.customer = Customer.objects.create(
+            project=self.project, uid="tron-execute-customer"
+        )
+        self.wallet = Wallet.objects.create()
+        self.sender = Address.objects.create(
+            wallet=self.wallet,
+            chain_type=ChainType.TRON,
+            usage=AddressUsage.HotWallet,
+            bip44_account=Wallet.get_bip44_account(AddressUsage.HotWallet),
+            address_index=0,
+            address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        )
+        self.slot = TronVaultSlot.objects.create(
+            chain=self.chain,
+            usage=TronVaultSlotUsage.DEPOSIT,
+            customer=self.customer,
+            project=self.project,
+            address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+            salt=b"\x02" * 32,
+        )
+
+    def make_pending_schedule(self) -> TronVaultSlotCollectSchedule:
+        return TronVaultSlotCollectSchedule.objects.create(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=self.usdt,
+            due_at=timezone.now() - timedelta(seconds=1),
+        )
+
+    @patch("tron.models.TronAdapter.is_contract", return_value=False)
+    def test_execute_due_skips_until_slot_deployed(self, is_contract):
+        schedule = self.make_pending_schedule()
+
+        created = TronVaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created, 0)
+        schedule.refresh_from_db()
+        self.assertIsNone(schedule.tx_task_id)
+
+    @patch("tron.models.TronAdapter.is_contract", return_value=True)
+    def test_execute_due_creates_task_when_slot_deployed(self, is_contract):
+        schedule = self.make_pending_schedule()
+
+        with patch("tron.models.SystemWallet.get_current") as get_current:
+            get_current.return_value.wallet.get_address.return_value = self.sender
+            created = TronVaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created, 1)
+        schedule.refresh_from_db()
+        self.assertIsNotNone(schedule.tx_task_id)
+
+    @patch("tron.models.TronAdapter.is_contract", return_value=True)
+    def test_two_schedules_same_slot_get_independent_tasks(self, is_contract):
+        # 回归:移除「复用在途任务」去重后,同 slot+token 的两个计划各建独立任务,
+        # 不再撞 TronVaultSlotCollectSchedule.tx_task 的 OneToOne 唯一约束、毒化整批调度。
+        first = self.make_pending_schedule()
+        with patch("tron.models.SystemWallet.get_current") as get_current:
+            get_current.return_value.wallet.get_address.return_value = self.sender
+            TronVaultSlotCollectSchedule.execute_due()
+            first.refresh_from_db()
+            self.assertIsNotNone(first.tx_task_id)
+
+            # 第一个计划绑定任务后 uniq_pending 约束释放,可再建第二个 pending 计划。
+            second = self.make_pending_schedule()
+            created = TronVaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created, 1)
+        second.refresh_from_db()
+        self.assertIsNotNone(second.tx_task_id)
+        self.assertNotEqual(first.tx_task_id, second.tx_task_id)

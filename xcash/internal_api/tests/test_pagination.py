@@ -12,9 +12,6 @@ common.pagination.PageNumberSizePagination 真的作用于内网 API 列表端�
 
 import pytest
 from internal_api.viewsets.deposits import InternalDepositViewSet
-from internal_api.viewsets.differ_recipient_addresses import (
-    DifferRecipientAddressViewSet,
-)
 
 from common.pagination import PageNumberSizePagination
 from projects.models import Project
@@ -143,7 +140,6 @@ class TestListViewSetsHaveStableOrdering:
         "viewset_cls",
         [
             InternalDepositViewSet,
-            DifferRecipientAddressViewSet,
         ],
     )
     def test_queryset_is_ordered(self, viewset_cls):

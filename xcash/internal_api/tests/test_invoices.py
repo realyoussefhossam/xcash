@@ -6,7 +6,6 @@ from internal_api.serializers.invoices import InternalInvoiceDetailSerializer
 from internal_api.viewsets.invoices import InternalInvoiceViewSet
 
 from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
 from invoices.models import InvoiceProtocol
 
 
@@ -20,7 +19,7 @@ class InternalInvoiceCreateDeprecatedTests(SimpleTestCase):
 class InternalInvoiceDetailSerializerTests(SimpleTestCase):
     """内部 API 账单详情字段测试。"""
 
-    def test_detail_includes_billing_mode_and_protocol(self):
+    def test_detail_includes_protocol(self):
         invoice = Invoice(
             sys_no="INV-test",
             out_no="internal-detail-order",
@@ -29,11 +28,9 @@ class InternalInvoiceDetailSerializerTests(SimpleTestCase):
             amount=Decimal("10"),
             methods={},
             expires_at=timezone.now(),
-            billing_mode=InvoiceBillingMode.CONTRACT,
             protocol=InvoiceProtocol.EPAY_V1,
         )
 
         data = InternalInvoiceDetailSerializer(invoice).data
 
-        self.assertEqual(data["billing_mode"], InvoiceBillingMode.CONTRACT)
         self.assertEqual(data["protocol"], InvoiceProtocol.EPAY_V1)

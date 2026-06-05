@@ -19,9 +19,7 @@ from common.consts import APPID_HEADER
 from common.consts import NONCE_HEADER
 from common.consts import SIGNATURE_HEADER
 from common.consts import TIMESTAMP_HEADER
-from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
 from projects.models import Project
 
 from .models import DepositStressCase
@@ -32,8 +30,8 @@ from .models import StressRunStatus
 logger = structlog.get_logger()
 
 # 账单压测只使用本地 ERC20。当前 EVM 外部入账 scanner 基于日志：
-# ERC20 Transfer 可稳定观测；普通 ETH 转账到差额 EOA 不产生日志，发往未部署
-# VaultSlot 的 ETH 也没有 native receive 事件，不能作为账单压测支付方式。
+# ERC20 Transfer 可稳定观测；发往未部署 VaultSlot 的 ETH 没有 native receive 事件，
+# 不能作为账单压测支付方式。
 STRESS_FIXED_METHODS = {
     "USDT": ["anvil"],
 }
@@ -54,14 +52,10 @@ class StressService:
             _ensure_stress_crypto_prices()
             _cleanup_orphan_stress_project(stress)
             project = _create_stress_project(stress)
-            _setup_differ_recipient_addresses(project)
             cases = _build_stress_cases(stress)
-            has_contract_invoice = any(
-                case.billing_mode == InvoiceBillingMode.CONTRACT for case in cases
-            )
 
-            # 充币和合约账单都需要 Wallet + EVM Vault。
-            if stress.deposit_count > 0 or has_contract_invoice:
+            # 充币和账单都需要 Wallet + EVM Vault。
+            if stress.deposit_count > 0 or stress.count > 0:
                 _setup_wallet_for_vault(project)
 
             stress.project = project
@@ -79,7 +73,7 @@ class StressService:
             stress.save(update_fields=["status"])
 
         # Vault 注资在事务提交后执行，确保数据库记录已落库
-        if stress.deposit_count > 0 or has_contract_invoice:
+        if stress.deposit_count > 0 or stress.count > 0:
             _fund_vault_for_stress(stress.project)
 
         logger.info(
@@ -200,7 +194,7 @@ class StressService:
         """调用 API 创建 Invoice，仅使用 Stress Project 已准备好的本地链 methods。"""
         stress_run = case.stress_run
         project = stress_run.project
-        methods = _require_stress_methods_ready(project, case.billing_mode)
+        methods = _require_stress_methods_ready(project)
 
         amount = str(round(random.uniform(1, 10), 2))  # noqa: S311
         out_no = f"STRESS-{stress_run.pk}-{case.sequence}"
@@ -213,7 +207,6 @@ class StressService:
                 "amount": amount,
                 "duration": 30,
                 "methods": methods,
-                "billing_mode": case.billing_mode,
             }
         )
 
@@ -278,42 +271,6 @@ class StressService:
             detail = _extract_error_detail(resp)
             raise RuntimeError(f"获取充值地址 API {resp.status_code}: {detail}")
         return resp.json()["deposit_address"]
-
-# Anvil 默认助记词派生的账户地址（索引 5，避免与付款账户 0 冲突）
-_ANVIL_RECIPIENT_ADDRESSES = [
-    "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",  # index 5
-]
-
-
-def _setup_differ_recipient_addresses(project: Project) -> None:
-    """为 Stress Project 配置差额账单收款地址。
-
-    压测链路固定跑本地测试链，不再依赖"系统里已有其他项目模板地址"。
-    - EVM: 直接使用 Anvil 预置账户地址
-    """
-    from chains.models import ChainType
-
-    def upsert_recipient(
-        *,
-        name: str,
-        chain_type: str,
-        address: str,
-    ) -> None:
-        DifferRecipientAddress.objects.update_or_create(
-            chain_type=chain_type,
-            address=address,
-            defaults={
-                "name": name,
-                "project": project,
-            },
-        )
-
-    upsert_recipient(
-        name=f"Stress-{project.pk}-evm",
-        chain_type=ChainType.EVM,
-        address=_ANVIL_RECIPIENT_ADDRESSES[0],
-    )
-
 
 # 压测用的法币价格兜底值，仅在 prices 为空时回填，避免依赖外部行情源。
 _STRESS_FALLBACK_PRICES = {
@@ -400,13 +357,6 @@ def _setup_wallet_for_vault(project: Project) -> None:
     project.save(update_fields=["vault"])
 
 
-def _pick_billing_mode(sequence: int) -> str:
-    """稳定生成差额/合约账单各半，避免压测样本退化为单一计费模式。"""
-    if sequence % 2 == 1:
-        return InvoiceBillingMode.DIFFER
-    return InvoiceBillingMode.CONTRACT
-
-
 def _build_stress_cases(stress: StressRun) -> list[InvoiceStressCase]:
     """构建本轮待执行的 InvoiceStressCase 列表。"""
     total_seconds = stress.count / 10.0
@@ -421,7 +371,6 @@ def _build_stress_cases(stress: StressRun) -> list[InvoiceStressCase]:
                 stress_run=stress,
                 sequence=i,
                 scheduled_offset=offset,
-                billing_mode=_pick_billing_mode(i),
             )
         )
 
@@ -502,17 +451,13 @@ def _build_deposit_cases(stress: StressRun) -> list[DepositStressCase]:
     return cases
 
 
-def _require_stress_methods_ready(
-    project: Project, billing_mode: str
-) -> dict[str, list[str]]:
-    """按当前账单计费模式校验本地链 methods 已完整可用。
+def _require_stress_methods_ready(project: Project) -> dict[str, list[str]]:
+    """校验本地链合约账单 methods 已完整可用。
 
-    DIFFER 依赖 DifferRecipientAddress，CONTRACT 依赖 project.vault。就绪检查必须与
-    本 case 真正创建账单时的 billing_mode 同构，否则会把某一类前置资源的错误隐藏到
-    后续 HTTP 建单或选支付方式阶段。项目可以支持更多 methods；账单压测只返回
-    STRESS_FIXED_METHODS，避免生成当前 scanner 无法观测的 ETH 账单。
+    项目可以支持更多 methods；账单压测只返回 STRESS_FIXED_METHODS，避免生成当前
+    scanner 无法观测的 ETH 账单。
     """
-    methods = Invoice.available_methods(project, billing_mode)
+    methods = Invoice.available_methods(project)
     for crypto_symbol, required_chains in STRESS_FIXED_METHODS.items():
         available_chains = set(methods.get(crypto_symbol, []))
         if not set(required_chains).issubset(available_chains):

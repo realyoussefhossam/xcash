@@ -1,8 +1,6 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from invoices.models import InvoiceBillingMode
-
 
 class StressRunStatus(models.TextChoices):
     DRAFT = "draft", _("草稿")
@@ -116,12 +114,6 @@ class InvoiceStressCase(models.Model):
         _("已收到的 Nonce 列表"), default=list, blank=True
     )
 
-    billing_mode = models.CharField(
-        _("计费模式"),
-        max_length=16,
-        choices=InvoiceBillingMode,
-        default=InvoiceBillingMode.DIFFER,
-    )
     status = models.CharField(
         _("状态"),
         max_length=16,
@@ -130,7 +122,7 @@ class InvoiceStressCase(models.Model):
     )
     error = models.TextField(_("错误信息"), blank=True)
 
-    # 合约账单归集字段；差额账单恒为默认值。
+    # 合约账单归集字段。
     collection_verified = models.BooleanField(_("归集已验证"), default=False)
     collection_hash = models.CharField(_("归集交易哈希"), max_length=128, blank=True)
     collection_done_at = models.DateTimeField(_("归集完成时间"), null=True, blank=True)

@@ -5,10 +5,8 @@ from dataclasses import dataclass
 from django.core.cache import cache
 
 from chains.models import Chain
-from chains.models import ChainType
 from currencies.models import ChainCryptoDeployment
 from evm.models import VaultSlot
-from invoices.models import DifferRecipientAddress
 
 
 @dataclass(frozen=True)
@@ -93,11 +91,7 @@ def load_matched_addresses_for_candidates(
         chain=chain,
         address__in=addresses,
     ).values_list("address", flat=True)
-    differ_recipient_addresses = DifferRecipientAddress.objects.filter(
-        chain_type=ChainType.EVM,
-        address__in=addresses,
-    ).values_list("address", flat=True)
-    return frozenset([*vault_slot_addresses, *differ_recipient_addresses])
+    return frozenset(vault_slot_addresses)
 
 
 def _chain_crypto_deployments_cache_key(*, chain: Chain) -> str:

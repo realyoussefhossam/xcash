@@ -5,12 +5,12 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.utils import timezone
+from tron.models import TronVaultSlot
+from tron.models import TronVaultSlotUsage
 from web3 import Web3
 
 from chains.constants import ChainCode
 from chains.constants import ChainType
-from common.internal_callback import CallbackEvent
-from common.internal_callback import InternalCallback
 from chains.models import Address
 from chains.models import AddressUsage
 from chains.models import Chain
@@ -18,6 +18,8 @@ from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
 from chains.models import Wallet
+from common.internal_callback import CallbackEvent
+from common.internal_callback import InternalCallback
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from deposits.exceptions import DepositStatusError
@@ -103,6 +105,17 @@ class DepositCreationTests(TestCase):
         DepositService.initialize_deposit(deposit)
 
         schedule_collect.assert_not_called()
+
+    def test_try_create_deposit_matches_tron_vault_slot(self):
+        context = create_tron_deposit_context()
+
+        created = DepositService.try_create_deposit(context.transfer)
+
+        self.assertTrue(created)
+        deposit = Deposit.objects.get(transfer=context.transfer)
+        self.assertEqual(deposit.customer, context.customer)
+        context.transfer.refresh_from_db()
+        self.assertEqual(context.transfer.type, TransferType.Deposit)
 
 
 class DepositAddressDebugWaitTests(SimpleTestCase):
@@ -214,6 +227,28 @@ class DepositNotificationTests(TestCase):
         self.assertFalse(scheduled)
         schedule_collect.assert_not_called()
 
+    @patch("deposits.service.send_internal_callback")
+    @patch("deposits.service.WebhookService.create_event")
+    @patch.object(TronVaultSlot, "schedule_collect_for_deposit")
+    def test_confirm_deposit_dispatches_tron_collect_scheduler(
+        self,
+        schedule_collect,
+        create_event_mock,
+        send_internal_callback_mock,
+    ):
+        context = create_tron_deposit_context()
+        deposit = Deposit.objects.create(
+            customer=context.customer,
+            transfer=context.transfer,
+            worth=Decimal("1"),
+        )
+
+        DepositService.confirm_deposit(deposit)
+
+        schedule_collect.assert_called_once_with(deposit.pk)
+        create_event_mock.assert_called_once()
+        send_internal_callback_mock.assert_called_once()
+
     @patch.object(VaultSlot, "schedule_collect_for_deposit")
     def test_schedule_collect_for_completed_deposit_rejects_unconfirmed(
         self, schedule_collect
@@ -243,8 +278,13 @@ class DepositNotificationTests(TestCase):
         chain = Chain.objects.create(
             code=ChainCode.Ethereum,
             rpc="",
+            active=False,
+        )
+        Chain.objects.filter(pk=chain.pk).update(
+            rpc="http://evm.invalid",
             active=True,
         )
+        chain.refresh_from_db()
         crypto = Crypto.objects.create(
             name="Tether Confirm",
             symbol="USDTC",
@@ -305,8 +345,13 @@ def create_deposit_context(*, native: bool = False, confirmed: bool = True):
     chain = Chain.objects.create(
         code=ChainCode.Ethereum,
         rpc="",
+        active=False,
+    )
+    Chain.objects.filter(pk=chain.pk).update(
+        rpc="http://evm.invalid",
         active=True,
     )
+    chain.refresh_from_db()
     native_coin = chain.native_coin
     crypto = native_coin
     if not native:
@@ -355,6 +400,59 @@ def create_deposit_context(*, native: bool = False, confirmed: bool = True):
         project=project,
         customer=customer,
         vault=vault,
+        chain=chain,
+        crypto=crypto,
+        transfer=transfer,
+    )
+
+
+def create_tron_deposit_context():
+    wallet = Wallet.objects.create()
+    project = Project.objects.create(name="TronDepositTestProject")
+    customer = Customer.objects.create(project=project, uid="tron-deposit-customer")
+    chain = Chain.objects.create(
+        code=ChainCode.Tron,
+        rpc="",
+        tron_api_key="tron-key",
+        active=True,
+    )
+    crypto = Crypto.objects.create(
+        name="Tron Deposit USDT",
+        symbol="USDT",
+        coingecko_id="tron-deposit-usdt",
+    )
+    ChainCryptoDeployment.objects.create(
+        crypto=crypto,
+        chain=chain,
+        address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+        decimals=6,
+    )
+    slot_address = "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb"
+    TronVaultSlot.objects.create(
+        customer=customer,
+        chain=chain,
+        usage=TronVaultSlotUsage.DEPOSIT,
+        address=slot_address,
+        salt=b"\x22" * 32,
+    )
+    transfer = Transfer.objects.create(
+        chain=chain,
+        block=1,
+        block_hash="b" * 64,
+        hash="3" * 64,
+        crypto=crypto,
+        from_address="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        to_address=slot_address,
+        value="1000000",
+        amount=Decimal("1"),
+        timestamp=1,
+        datetime=timezone.now(),
+        status=TransferStatus.CONFIRMED,
+    )
+    return SimpleNamespace(
+        wallet=wallet,
+        project=project,
+        customer=customer,
         chain=chain,
         crypto=crypto,
         transfer=transfer,

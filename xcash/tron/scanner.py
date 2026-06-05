@@ -12,8 +12,8 @@ from django.utils import timezone
 from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.codec import TronAddressCodec
+from tron.models import TronVaultSlot
 from tron.models import TronWatchCursor
-from tron.watchers import load_tron_filter_addresses
 
 from chains.models import Chain
 from chains.models import ChainType
@@ -57,9 +57,6 @@ class TronUsdtPaymentScanner:
             )
             .get()
         )
-        # filter_addresses 命中 Redis 缓存，DifferRecipientAddress 变更走 tron/signals.py 失效；
-        # 旧的"每轮 DB 全表读"模式对单 chain_type 而非单 chain pk 缓存，多 Tron 链共享一份。
-        filter_addresses = load_tron_filter_addresses()
         cursor = cls._get_or_create_cursor(
             chain=chain,
             contract_address=usdt_mapping.address,
@@ -73,6 +70,7 @@ class TronUsdtPaymentScanner:
         # 替代"每块一次单行 update"，长追平时把 N 次写库压缩为 1 次。
         latest_block: int = 0
         last_successfully_scanned: int | None = None
+        matched_addresses_seen: set[str] = set()
         try:
             latest_block = client.get_latest_solid_block_number()
             Chain.objects.filter(pk=chain.pk).update(
@@ -96,8 +94,10 @@ class TronUsdtPaymentScanner:
                         client=client,
                         chain=chain,
                         block_number=block_number,
-                        filter_addresses=filter_addresses,
                         usdt_mapping=usdt_mapping,
+                    )
+                    matched_addresses_seen.update(
+                        event.observed.to_address for event in parsed_events
                     )
                     events_seen += len(parsed_events)
                     for event in parsed_events:
@@ -134,7 +134,7 @@ class TronUsdtPaymentScanner:
         )
 
         return TronScanSummary(
-            filter_addresses=len(filter_addresses),
+            filter_addresses=len(matched_addresses_seen),
             blocks_scanned=blocks_scanned,
             events_seen=events_seen,
         )
@@ -195,11 +195,10 @@ class TronUsdtPaymentScanner:
         client: TronHttpClient,
         chain: Chain,
         block_number: int,
-        filter_addresses: set[str],
         usdt_mapping: ChainCryptoDeployment,
     ) -> list[ParsedTronTransferEvent]:
         page_fingerprint: str | None = None
-        collected: list[ParsedTronTransferEvent] = []
+        candidates: list[ParsedTronTransferEvent] = []
         seen_fingerprints: set[str] = set()
         block_hash: str | None = None
 
@@ -233,11 +232,10 @@ class TronUsdtPaymentScanner:
                     row=row,
                     expected_block_number=block_number,
                     block_hash=block_hash,
-                    filter_addresses=filter_addresses,
                     usdt_mapping=usdt_mapping,
                 )
                 if event is not None:
-                    collected.append(event)
+                    candidates.append(event)
 
             page_fingerprint = meta.get("fingerprint")
             if not page_fingerprint:
@@ -252,7 +250,28 @@ class TronUsdtPaymentScanner:
                 )
             seen_fingerprints.add(page_fingerprint)
 
-        return collected
+        return cls.filter_matched_events(chain=chain, candidates=candidates)
+
+    @staticmethod
+    def filter_matched_events(
+        *,
+        chain: Chain,
+        candidates: list[ParsedTronTransferEvent],
+    ) -> list[ParsedTronTransferEvent]:
+        if not candidates:
+            return []
+        candidate_addresses = {event.observed.to_address for event in candidates}
+        matched_addresses = TronVaultSlot.matched_addresses_for_candidates(
+            chain=chain,
+            candidates=candidate_addresses,
+        )
+        if not matched_addresses:
+            return []
+        return [
+            event
+            for event in candidates
+            if event.observed.to_address in matched_addresses
+        ]
 
     @classmethod
     def _parse_contract_event(
@@ -262,7 +281,6 @@ class TronUsdtPaymentScanner:
         row: dict,
         expected_block_number: int,
         block_hash: str,
-        filter_addresses: set[str],
         usdt_mapping: ChainCryptoDeployment,
     ) -> ParsedTronTransferEvent | None:
         if not isinstance(row, dict):
@@ -303,9 +321,6 @@ class TronUsdtPaymentScanner:
             from_address = cls._event_address_to_base58(result.get("from"))
             to_address = cls._event_address_to_base58(result.get("to"))
         except ValueError:
-            return None
-
-        if to_address not in filter_addresses:
             return None
 
         try:

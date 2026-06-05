@@ -22,7 +22,6 @@ from currencies.service import CryptoService
 from projects.models import Project
 
 from .models import Invoice
-from .models import InvoiceBillingMode
 from .models import InvoiceStatus
 from .serializers import InvoiceCreateSerializer
 from .serializers import InvoiceDisplaySerializer
@@ -98,10 +97,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 methods=validated_data["methods"],
                 notify_url=validated_data.get("notify_url", ""),
                 return_url=validated_data.get("return_url", ""),
-                billing_mode=validated_data.get(
-                    "billing_mode",
-                    InvoiceBillingMode.DIFFER,
-                ),
                 expires_at=timezone.now()
                 + timedelta(minutes=validated_data["duration"]),
             )

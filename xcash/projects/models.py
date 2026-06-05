@@ -6,7 +6,6 @@ from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 from shortuuid.django_fields import ShortUUIDField
 
-from chains.models import Chain
 from common.consts import UPPER_ALPHABET
 from common.fields import AddressField
 
@@ -105,7 +104,7 @@ class Project(models.Model):
 
     @property
     def is_ready(self) -> tuple[bool, list[str]]:
-        # 错误项采用统一的"短名词 + 状态"格式，便于前端横排拼接（如"通知地址未配置、差额账单收款地址未配置"）
+        # 错误项采用统一的"短名词 + 状态"格式，便于前端横排拼接。
         errors: list[str] = []
         if not self.vault:
             errors.append(_("金库地址未配置"))  # noqa
@@ -115,19 +114,6 @@ class Project(models.Model):
             errors.append(_("通知地址未配置"))  # noqa
 
         return (not errors), errors
-
-    def recipients(self, chain: Chain):
-        from invoices.models import DifferRecipientAddress
-
-        return set(
-            DifferRecipientAddress.objects.filter(
-                project=self,
-                chain_type=chain.type,
-            ).values_list(
-                "address",
-                flat=True,
-            ),
-        )
 
 
 class Customer(models.Model):

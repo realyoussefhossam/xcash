@@ -15,8 +15,9 @@ from django.utils.translation import gettext_lazy as _
 logger = structlog.get_logger()
 
 from aml.models import RiskLevel
+from tron.models import TronVaultSlot
+from tron.models import TronVaultSlotUsage
 
-from chains.capabilities import ChainProductCapabilityService
 from chains.models import ChainType
 from common.fields import AddressField
 from common.fields import SysNoField
@@ -44,59 +45,6 @@ class InvoiceStatus(models.TextChoices):
 class InvoiceProtocol(models.TextChoices):
     NATIVE = "native", _("Xcash 原生")
     EPAY_V1 = "epay_v1", _("EPay V1")
-
-
-class InvoiceBillingMode(models.TextChoices):
-    DIFFER = "differ", _("差额")
-    CONTRACT = "contract", _("合约")
-
-
-class DifferRecipientAddress(models.Model):
-    """差额账单的商户收款地址。
-
-    新架构下合约账单不再使用该模型分配收款地址；它只服务于差额账单，
-    用于在没有 VaultSlot 合约收款方案的链上扫描买家入账。
-    """
-
-    name = models.CharField(verbose_name=_("备注名称"), blank=True)
-    project = models.ForeignKey(
-        "projects.Project",
-        on_delete=models.CASCADE,
-        verbose_name=_("项目"),
-    )
-    chain_type = models.CharField(
-        _("地址格式"),
-        choices=ChainType,
-        help_text="EVM: Ethereum, BSC, Polygon, Base...<br>Tron: Tron",
-    )
-    address = AddressField(verbose_name=_("差额账单收款地址"), unique=True)
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("创建时间"))
-
-    class Meta:
-        verbose_name = _("差额账单收款地址")
-        verbose_name_plural = _("差额账单收款地址")
-
-    def __str__(self):
-        return self.address
-
-    def save(self, *args, **kwargs):
-        # 差额账单收款地址的链上发现完全由内部扫描器负责；模型层只保留数据校验，不再派发外部订阅同步。
-        self.full_clean()
-        return super().save(*args, **kwargs)
-
-    def clean(self) -> None:
-        """校验差额账单收款地址允许进入的链类型。"""
-        super().clean()
-        if not self.chain_type:
-            return
-
-        if (
-            self.chain_type
-            not in ChainProductCapabilityService.INVOICE_RECIPIENT_CHAIN_TYPES
-        ):
-            raise ValidationError(
-                {"chain_type": _("当前版本差额账单收款地址仅支持 EVM / Tron。")}
-            )
 
 
 class Invoice(models.Model):
@@ -148,7 +96,7 @@ class Invoice(models.Model):
         decimal_places=8,
         blank=True,
         null=True,
-        help_text=_("支付加密货币数量可能在原始数量上差额浮动"),
+        help_text=_("支付加密货币数量"),
     )
     pay_address = AddressField(
         verbose_name=_("支付地址"),
@@ -201,13 +149,6 @@ class Invoice(models.Model):
         db_index=True,
         verbose_name=_("协议"),
     )
-    billing_mode = models.CharField(
-        choices=InvoiceBillingMode,
-        default=InvoiceBillingMode.DIFFER,
-        max_length=16,
-        db_index=True,
-        verbose_name=_("计费模式"),
-    )
 
     created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
     updated_at = models.DateTimeField(_("更新时间"), auto_now=True)
@@ -241,33 +182,15 @@ class Invoice(models.Model):
     def available_methods(
         cls,
         project: Project,
-        billing_mode: str = InvoiceBillingMode.DIFFER,
     ) -> dict[str, list[str]]:
-        """返回项目在指定 billing_mode 下可用的 crypto→链列表，是「最终 methods」的唯一生成器。
-
-        买家在 select_method 时只校验 (crypto, chain) 是否在 invoice.methods 内、不再按
-        billing_mode 复检（select_method 直接按 billing_mode 分配），故这里产出的组合必须是
-        该 billing_mode 下真正可付的——否则买家会选中一个无法分配的组合。
-
-        逻辑 = 系统支持的 invoice (crypto, chain) 组合 ∩ 该 billing_mode 下项目可收款的链
-              ∩ SaaS 白名单。
-        - CONTRACT：仅 EVM 链，且项目已设 vault（见 contract_receivable_chain_codes）。
-        - DIFFER：项目已配 DifferRecipientAddress 的 chain_type 对应的链（EVM/Tron 通用），
-          且不暴露链原生币；当前差额模式依赖可被 scanner 稳定观测的代币入账。
-        """
+        """返回项目可用的 crypto→链列表，是账单最终 methods 的唯一生成器。"""
         from projects.service import ProjectService
 
-        if billing_mode == InvoiceBillingMode.CONTRACT:
-            receivable_codes = ProjectService.contract_receivable_chain_codes(project)
-        else:
-            receivable_codes = ProjectService.differ_receivable_chain_codes(project)
+        receivable_codes = ProjectService.contract_receivable_chain_codes(project)
 
         # allowed_methods 已按 chain_codes=receivable_codes 收敛查询，返回的每个 symbol 的
         # 链集合必为 receivable_codes 子集且非空——故此处无需再做交集或空集过滤。
         allowed = CryptoService.allowed_methods(chain_codes=receivable_codes)
-        if billing_mode == InvoiceBillingMode.DIFFER:
-            allowed = cls.filter_non_native_methods(allowed)
-
         methods = {
             symbol: sorted(chain_codes) for symbol, chain_codes in allowed.items()
         }
@@ -277,65 +200,10 @@ class Invoice(models.Model):
             methods=methods,
         )
 
-    @staticmethod
-    def filter_non_native_methods(
-        allowed: dict[str, set[str]],
-    ) -> dict[str, set[str]]:
-        """从 methods 中移除每条链自己的原生币组合，保留同链上的合约代币。"""
-        chain_codes = {
-            chain_code
-            for chain_code_set in allowed.values()
-            for chain_code in chain_code_set
-        }
-        if not chain_codes:
-            return allowed
-
-        from chains.models import Chain  # noqa: PLC0415
-
-        native_symbol_by_chain = {
-            chain.code: chain.spec.native_coin_symbol.upper()
-            for chain in Chain.objects.filter(code__in=chain_codes)
-        }
-
-        filtered: dict[str, set[str]] = {}
-        for crypto_symbol, crypto_chain_codes in allowed.items():
-            non_native_chain_codes = {
-                chain_code
-                for chain_code in crypto_chain_codes
-                if native_symbol_by_chain.get(chain_code) != crypto_symbol.upper()
-            }
-            if non_native_chain_codes:
-                filtered[crypto_symbol] = non_native_chain_codes
-        return filtered
-
-    def _allocate_differ_payment(
-        self,
-        crypto: "Crypto",
-        chain: "Chain",
-        crypto_amount: Decimal,
-    ) -> tuple[str, Decimal]:
-        """差额账单：寻找空闲的 (pay_address, pay_amount) 支付组合。"""
-        detail = (
-            f"project={self.project_id}, crypto={crypto.symbol}, chain={chain.code}"
-        )
-        pay_address, pay_amount = Invoice.get_pay_differ(
-            project=self.project,
-            crypto=crypto,
-            chain=chain,
-            crypto_amount=crypto_amount,
-        )
-        if not (pay_address and pay_amount):
-            logger.warning(
-                "Invoice pay method allocation failed",
-                detail=detail,
-            )
-            raise self.InvoiceAllocationError(detail)
-        return pay_address, pay_amount
-
     def _has_contract_slot_payment_overlap(
         self,
         *,
-        slot: VaultSlot,
+        slot,
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
@@ -345,14 +213,13 @@ class Invoice(models.Model):
         # 占用判据与 uniq_invoice_active_payment 约束保持一致——只看 status=WAITING，
         # 不叠加 expires_at 过滤：过期账单要等状态翻成 EXPIRED 才真正释放槽位，否则约束
         # 仍锁着该 (pay_address, pay_amount) 组合，而这里若漏判就会让分配陷入
-        # IntegrityError 重试死循环（同 get_pay_differ 的处理）。
+        # IntegrityError 重试死循环。
         return Invoice.objects.filter(
             project=self.project,
             crypto=crypto,
             chain=chain,
             pay_address=slot.address,
             pay_amount=crypto_amount,
-            billing_mode=InvoiceBillingMode.CONTRACT,
             status=InvoiceStatus.WAITING,
         ).exists()
 
@@ -362,7 +229,7 @@ class Invoice(models.Model):
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
-    ) -> VaultSlot:
+    ):
         """返回本次合约账单可使用的 INVOICE VaultSlot。"""
         vault_address = self.project.vault
         if not vault_address:
@@ -370,10 +237,17 @@ class Invoice(models.Model):
                 f"project={self.project_id} VaultSlot Vault 地址未配置"
             )
 
-        reusable_slots = VaultSlot.objects.filter(
+        if chain.type == ChainType.TRON:
+            slot_model = TronVaultSlot
+            slot_usage = TronVaultSlotUsage.INVOICE
+        else:
+            slot_model = VaultSlot
+            slot_usage = VaultSlotUsage.INVOICE
+
+        reusable_slots = slot_model.objects.filter(
             project=self.project,
             chain=chain,
-            usage=VaultSlotUsage.INVOICE,
+            usage=slot_usage,
         ).order_by("invoice_index", "pk")
         for slot in reusable_slots:
             if not self._has_contract_slot_payment_overlap(
@@ -383,7 +257,9 @@ class Invoice(models.Model):
                 crypto_amount=crypto_amount,
             ):
                 db_transaction.on_commit(
-                    lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk)
+                    lambda slot_pk=slot.pk, model=slot_model: model.schedule_deploy(
+                        slot_pk
+                    )
                 )
                 return slot
 
@@ -392,17 +268,15 @@ class Invoice(models.Model):
         ]
         invoice_index = 0 if latest_index is None else latest_index + 1
         try:
-            VaultSlot.ensure_invoice_address(
-                project=self.project,
-                chain=chain,
-                invoice_index=invoice_index,
+            slot_model.ensure_invoice_address(
+                project=self.project, chain=chain, invoice_index=invoice_index
             )
         except RuntimeError as exc:
             raise self.InvoiceAllocationError(str(exc)) from exc
-        return VaultSlot.objects.get(
+        return slot_model.objects.get(
             project=self.project,
             chain=chain,
-            usage=VaultSlotUsage.INVOICE,
+            usage=slot_usage,
             invoice_index=invoice_index,
         )
 
@@ -422,6 +296,15 @@ class Invoice(models.Model):
 
     @db_transaction.atomic
     def select_method(self, crypto: "Crypto", chain: "Chain"):
+        from projects.service import ProjectService
+
+        if chain.code not in ProjectService.contract_receivable_chain_codes(
+            self.project
+        ):
+            raise self.InvoiceAllocationError(
+                f"project={self.project_id}, chain={chain.code} 未开放 VaultSlot 收款"
+            )
+
         # 先锁账单行，保证同一账单的多次切链/切币只能留下一个当前支付指引。
         Invoice.objects.select_for_update().get(pk=self.pk)
         self.refresh_from_db()
@@ -449,18 +332,11 @@ class Invoice(models.Model):
         for _retry in range(self.MAX_ALLOCATION_RETRY):
             try:
                 with db_transaction.atomic():
-                    if self.billing_mode == InvoiceBillingMode.CONTRACT:
-                        pay_address, pay_amount = self._allocate_contract_slot(
-                            crypto,
-                            chain,
-                            crypto_amount,
-                        )
-                    else:
-                        pay_address, pay_amount = self._allocate_differ_payment(
-                            crypto,
-                            chain,
-                            crypto_amount,
-                        )
+                    pay_address, pay_amount = self._allocate_contract_slot(
+                        crypto,
+                        chain,
+                        crypto_amount,
+                    )
 
                     created_at = timezone.now()
                     self._set_current_payment(
@@ -479,67 +355,6 @@ class Invoice(models.Model):
                 continue
 
         raise self.InvoiceAllocationError(f"{detail} (alloc retry exceeded)")
-
-    @classmethod
-    def get_pay_differ(
-        cls,
-        project: Project,
-        crypto: "Crypto",
-        chain: "Chain",
-        crypto_amount: Decimal,
-    ) -> tuple[str | None, Decimal | None]:
-        """Differ amount 分配算法：为每张 Invoice 找到一个唯一的 (地址, 金额) 组合。
-
-        核心思路：
-        1. 从基础金额起步，以 crypto.differ_step 为单位生成 101 个候选金额（差额 0~100 档），
-           浮动范围极小（通常 < 0.001%），对买家感知影响可忽略。
-        2. 先遍历金额再遍历地址（双层循环），保证同一账单产生的差额尽量小——
-           优先在最小差额下轮换地址，地址不够时才升档。
-        3. 并发安全由 Invoice 的部分唯一约束（uniq_invoice_active_payment）保证，
-           冲突时由 select_method() 的 IntegrityError 重试循环处理。
-           不使用 SELECT FOR UPDATE——悲观锁范围过广（101×N 行）会与 FK 约束检查
-           形成环形等待，导致死锁。
-        4. 若 101 × N 个组合全部被占用，返回 (None, None) 表示分配失败。
-        """
-        from projects.service import ProjectService
-
-        amounts = [crypto_amount + step * crypto.differ_step for step in range(101)]
-        addresses = list(
-            ProjectService.invoice_recipient_addresses(
-                project,
-                chain_type=chain.type,
-            )
-        )
-        if not addresses:
-            return None, None
-
-        # 乐观并发：普通 SELECT 读取已占用的当前支付指引，不加行锁。
-        # 占用判据必须与 uniq_invoice_active_payment 约束严格一致——只看 status=WAITING，
-        # 不能再叠加 expires_at 过滤。约束是 partial unique index，无法引用 now()，因此
-        # 凡 status=WAITING 的账单（哪怕已过期但状态尚未被过期任务翻成 EXPIRED）都仍然
-        # 锁着其 (pay_address, pay_amount) 组合。若这里按 expires_at 把"过期未翻转"的账单
-        # 当成空闲返回，_set_current_payment 的 UPDATE 必然命中约束抛 IntegrityError，
-        # 而重试会反复返回同一组合无法前进，最终耗尽 MAX_ALLOCATION_RETRY 抛
-        # InvoiceAllocationError——即便仍有大量真正空闲组合也分配不出去。
-        # 过期账单的组合由 check_expired / fallback_invoice_expired 把状态翻成 EXPIRED 后
-        # 自然释放。并发选中同一空隙的情形仍由约束拦截，外层 select_method() 重试推进。
-        existing = set(
-            Invoice.objects.filter(
-                project=project,
-                crypto=crypto,
-                chain=chain,
-                status=InvoiceStatus.WAITING,
-                pay_amount__in=amounts,
-                pay_address__in=addresses,
-            ).values_list("pay_address", "pay_amount")
-        )
-
-        for amount in amounts:
-            for address in addresses:
-                if (address, amount) not in existing:
-                    return address, amount
-
-        return None, None
 
     @property
     def crypto_address(self):

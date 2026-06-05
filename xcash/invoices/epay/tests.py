@@ -12,7 +12,6 @@ from django.utils import timezone
 from web3 import Web3
 
 from chains.constants import ChainCode
-from chains.constants import ChainType
 from chains.models import Chain
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
@@ -24,7 +23,6 @@ from invoices.epay.sign import build_epay_v1_sign
 from invoices.epay.sign import epay_v1_signing_string
 from invoices.epay.sign import format_epay_money
 from invoices.epay.sign import verify_epay_v1_sign
-from invoices.models import DifferRecipientAddress
 from invoices.models import EpayMerchant
 from invoices.models import EpayOrder
 from invoices.models import Invoice
@@ -374,14 +372,10 @@ class EpaySubmitServiceTests(TestCase):
             decimals=6,
         )
         Fiat.objects.get_or_create(code="CNY")
-        DifferRecipientAddress.objects.create(
-            name="EPay Submit Recipient",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000C1"
-            ),
+        self.project.vault = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000C1"
         )
+        self.project.save(update_fields=["vault"])
 
     def _signed_params(self, **overrides):
         params = {
@@ -698,7 +692,7 @@ class EpaySubmitServiceTests(TestCase):
     @patch("invoices.epay.service.check_saas_permission")
     def test_submit_rejects_when_project_has_no_payment_methods(self, mock_check):
         # EPay 建单若项目没有任何可用收款方式，必须拒绝而不是创建不可支付账单并占用商户单号。
-        DifferRecipientAddress.objects.filter(project=self.project).delete()
+        Project.objects.filter(pk=self.project.pk).update(vault=None)
 
         params = self._signed_params(out_trade_no="EPAY-NO-METHODS-1001")
 

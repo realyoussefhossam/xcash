@@ -36,30 +36,6 @@
   },
   {
     "type": "function",
-    "name": "predictVaultSlot",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address payable"
-      },
-      {
-        "name": "salt",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "vaultSlotTemplate",
     "inputs": [],
     "outputs": [

@@ -17,10 +17,10 @@ invoices 模块 — 加密货币支付账单管理。
    不锁候选支付组合，依赖 uniq_invoice_active_payment
    部分唯一约束防冲突，外层 IntegrityError 重试循环处理并发碰撞。
 
-   - Invoice.select_method() — 锁 Invoice，get_pay_differ 普通 SELECT → UPDATE → 重试
+   - Invoice.select_method() — 锁 Invoice，分配 VaultSlot 支付指引 → UPDATE → 重试
 
-   原因：get_pay_differ 的候选范围跨 101×N 行，悲观锁会与 FK 约束检查
-   （FOR KEY SHARE on Project）形成环形等待，导致死锁。
+   原因：并发账单可能同时选择同一 VaultSlot 支付组合；唯一约束是最终一致性
+   边界，IntegrityError 重试负责推进到下一个可用组合。
 
 新增涉及 Invoice 支付指引并发写入的路径时，必须遵守上述协议。
 """

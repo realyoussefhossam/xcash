@@ -8,11 +8,14 @@ from rest_framework.mixins import RetrieveModelMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
+from tron.models import TronVaultSlot
 
+from chains.capabilities import ChainProductCapabilityService
 from chains.constants import ChainType
 from chains.models import Chain
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
+from currencies.models import Crypto
 from deposits.models import Deposit
 from evm.models import VaultSlot
 from projects.models import Customer
@@ -38,10 +41,7 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
 
     @action(detail=False, methods=["get"])
     def address(self, request, project_appid=None):
-        """获取 VaultSlot 充币地址。
-
-        VaultSlot 按具体 EVM 链预测，不再支持只传 chain_type。
-        """
+        """获取 VaultSlot 充币地址。"""
         uid = request.query_params.get("uid", "")
         chain_type = request.query_params.get("chain_type", "")
         chain_code = request.query_params.get("chain", "")
@@ -70,5 +70,23 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
             raise APIError(ErrorCode.INVALID_CHAIN)
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
-        deposit_address = VaultSlot.ensure_deposit_address(chain=chain, customer=customer)
+        if chain.type == ChainType.TRON:
+            try:
+                usdt = Crypto.objects.get(symbol="USDT", active=True)
+            except Crypto.DoesNotExist:
+                raise APIError(ErrorCode.INVALID_CRYPTO) from None
+            if not ChainProductCapabilityService.supports_deposit_address(
+                chain=chain,
+                crypto=usdt,
+            ):
+                raise APIError(ErrorCode.INVALID_CHAIN)
+            deposit_address = TronVaultSlot.ensure_deposit_address(
+                chain=chain,
+                customer=customer,
+            )
+        else:
+            deposit_address = VaultSlot.ensure_deposit_address(
+                chain=chain,
+                customer=customer,
+            )
         return Response({"deposit_address": deposit_address})

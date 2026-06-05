@@ -25,6 +25,7 @@ from common.models import UndeletableModel
 
 if TYPE_CHECKING:
     from chains.keys import EvmSignedPayload
+    from chains.keys import TronSignedPayload
     from deposits.models import Deposit
     from invoices.models import Invoice
 
@@ -373,18 +374,24 @@ class Wallet(UndeletableModel):
         from django.db import IntegrityError
 
         from chains.keys import derive_evm_address
+        from chains.keys import derive_tron_address
 
         bip44_account = self.get_bip44_account(usage)
 
-        # 当前仅支持 EVM 链派生；新增链族时在 chains/keys.py 扩展派生分支。
-        if chain_type != ChainType.EVM:
+        if chain_type == ChainType.EVM:
+            expected_address = derive_evm_address(
+                mnemonic=self.decrypt_mnemonic(),
+                bip44_account=bip44_account,
+                address_index=address_index,
+            )
+        elif chain_type == ChainType.TRON:
+            expected_address = derive_tron_address(
+                mnemonic=self.decrypt_mnemonic(),
+                bip44_account=bip44_account,
+                address_index=address_index,
+            )
+        else:
             raise NotImplementedError(f"unsupported chain_type={chain_type}")
-
-        expected_address = derive_evm_address(
-            mnemonic=self.decrypt_mnemonic(),
-            bip44_account=bip44_account,
-            address_index=address_index,
-        )
 
         created = False  # noqa
         try:
@@ -486,6 +493,30 @@ class Address(UndeletableModel):
             address_index=self.address_index,
         )
         return sign_evm_transaction(private_key=private_key, tx_dict=tx_dict)
+
+    def sign_tron_transaction(self, *, unsigned_transaction: dict) -> TronSignedPayload:
+        """用本地址私钥对 TronGrid unsigned transaction 签名。
+
+        私钥只在内存中按 m/44'/195'/{account}'/0/index 临时派生；调用方拿到的是
+        可广播 payload 与 txID，不接触也不记录私钥材料。
+        """
+        from chains.keys import derive_tron_private_key
+        from chains.keys import sign_tron_transaction
+
+        if self.chain_type != ChainType.TRON:
+            raise NotImplementedError(
+                f"sign_tron_transaction 不支持 chain_type={self.chain_type}"
+            )
+
+        private_key = derive_tron_private_key(
+            mnemonic=self.wallet.decrypt_mnemonic(),
+            bip44_account=self.bip44_account,
+            address_index=self.address_index,
+        )
+        return sign_tron_transaction(
+            private_key=private_key,
+            unsigned_transaction=unsigned_transaction,
+        )
 
 
 class TxTaskType(models.TextChoices):
@@ -905,8 +936,9 @@ class Transfer(models.Model):
                 return False
             return handler.match(self, tx_task)
 
-        # 当前内部主动交易仅在 EVM 链创建，非 EVM 链不存在可认领的内部任务，
-        # 统一交回外部收款逻辑。
+        # Tron 的归集(slot→vault)收款方是系统外 vault,不会被扫描器当作入账观测,
+        # 故 Tron 没有可被 resolve_by_hash 命中的内部 Transfer;归集任务统一由
+        # tron.tasks.confirm_tron_receipt_tx_tasks 按回执收口,不走此路径。
         return False
 
     @db_transaction.atomic
@@ -979,7 +1011,10 @@ class Transfer(models.Model):
             DepositService.confirm_deposit(self.deposit)
         elif self.type in {TransferType.Collect}:
             tx_task = TxTask.resolve_by_hash(chain=self.chain, tx_hash=self.hash)
-            if tx_task is None or self.chain.type != ChainType.EVM:
+            if tx_task is None:
+                return
+            # Tron 归集不走 Transfer(Collect) 收口(见 _match_internal),此处仅处理 EVM。
+            if self.chain.type != ChainType.EVM:
                 return
             from evm.internal_tx.routing import get_handler
 

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -26,6 +27,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from django.conf import settings
 from eth_account import Account
+from eth_keys import keys
 
 from chains.constants import ChainType
 
@@ -44,6 +46,18 @@ class EvmSignedPayload:
     raw_transaction: str
 
 
+@dataclass(frozen=True)
+class TronSignedPayload:
+    """一笔已签名 Tron 交易的归一化结果。
+
+    tx_hash 是 raw_data 的 sha256，格式为 64 位小写十六进制；raw_transaction
+    是可直接提交给 /wallet/broadcasttransaction 的 JSON payload。
+    """
+
+    tx_hash: str
+    raw_transaction: dict
+
+
 def normalize_hex(value: str) -> str:
     """统一为小写、带 0x 前缀的十六进制字符串。"""
     normalized = value if value.startswith("0x") else f"0x{value}"
@@ -54,6 +68,9 @@ def coin_for_chain_type(chain_type: str) -> Bip44Coins:
     """把链族标识映射到 bip_utils 的 BIP44 币种。新增链在此扩 case。"""
     if chain_type == ChainType.EVM:
         return Bip44Coins.ETHEREUM
+    if chain_type == ChainType.TRON:
+        # Tron 官方 SLIP-44 coin type 是 195，bip_utils 的 TRON 枚举即 m/44'/195'。
+        return Bip44Coins.TRON
     raise NotImplementedError(f"unsupported chain_type={chain_type}")
 
 
@@ -178,10 +195,84 @@ def derive_evm_private_key(
     )
 
 
+def derive_tron_address(
+    *,
+    mnemonic: str,
+    bip44_account: int,
+    address_index: int,
+) -> str:
+    """派生 Tron Base58Check 地址（T...，m/44'/195'/{account}'/0/index）。"""
+    return (
+        _bip44_account_ctx(
+            mnemonic=mnemonic,
+            chain_type=ChainType.TRON,
+            bip44_account=bip44_account,
+            address_index=address_index,
+        )
+        .PublicKey()
+        .ToAddress()
+    )
+
+
+def derive_tron_private_key(
+    *,
+    mnemonic: str,
+    bip44_account: int,
+    address_index: int,
+) -> str:
+    """派生 Tron 私钥（32 字节十六进制，无 0x 前缀）。仅供进程内签名使用。"""
+    return (
+        _bip44_account_ctx(
+            mnemonic=mnemonic,
+            chain_type=ChainType.TRON,
+            bip44_account=bip44_account,
+            address_index=address_index,
+        )
+        .PrivateKey()
+        .Raw()
+        .ToBytes()
+        .hex()
+    )
+
+
 def sign_evm_transaction(*, private_key: str, tx_dict: dict) -> EvmSignedPayload:
     """用给定私钥对 legacy EIP-155 交易签名，返回归一化后的 tx_hash 与 raw_transaction。"""
     signed = Account.sign_transaction(tx_dict, private_key)
     return EvmSignedPayload(
         tx_hash=normalize_hex(signed.hash.hex()),
         raw_transaction=normalize_hex(signed.raw_transaction.hex()),
+    )
+
+
+def sign_tron_transaction(
+    *,
+    private_key: str,
+    unsigned_transaction: dict,
+) -> TronSignedPayload:
+    """签名 TronGrid 生成的 unsigned transaction。
+
+    Tron txID = sha256(raw_data bytes)，签名为 secp256k1 recoverable signature。
+    只接受节点返回的 raw_data_hex，避免在应用侧手搓 ref_block/expiration 细节。
+    """
+    raw_data_hex = str(unsigned_transaction.get("raw_data_hex") or "").lower()
+    if raw_data_hex.startswith("0x"):
+        raw_data_hex = raw_data_hex[2:]
+    try:
+        raw_data = bytes.fromhex(raw_data_hex)
+    except ValueError as exc:
+        raise ValueError("invalid tron raw_data_hex") from exc
+    if not raw_data:
+        raise ValueError("tron raw_data_hex is required")
+
+    tx_hash_bytes = hashlib.sha256(raw_data).digest()
+    private_key_bytes = bytes.fromhex(private_key.removeprefix("0x"))
+    signature = keys.PrivateKey(private_key_bytes).sign_msg_hash(tx_hash_bytes)
+    signed_payload = dict(unsigned_transaction)
+    signatures = list(signed_payload.get("signature") or [])
+    signatures.append(signature.to_bytes().hex())
+    signed_payload["signature"] = signatures
+
+    return TronSignedPayload(
+        tx_hash=tx_hash_bytes.hex(),
+        raw_transaction=signed_payload,
     )

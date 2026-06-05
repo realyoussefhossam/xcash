@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from django.db.models import QuerySet
+from tron.config import tron_vault_slot_runtime_ready
 
 from chains.models import ChainType
 from chains.service import ChainService
-from invoices.models import DifferRecipientAddress
+from currencies.models import ChainCryptoDeployment
 from projects.models import Project
 
 
@@ -23,53 +20,27 @@ class ProjectService:
         return Project.objects.get(pk=project_id)
 
     @staticmethod
-    def invoice_recipients(
-        project: Project,
-        *,
-        chain_type: str | None = None,
-    ) -> QuerySet[DifferRecipientAddress]:
-        qs = DifferRecipientAddress.objects.filter(project=project)
-        if chain_type:
-            qs = qs.filter(chain_type=chain_type)
-        return qs
-
-    @staticmethod
-    def invoice_recipient_addresses(
-        project: Project,
-        *,
-        chain_type: str | None = None,
-    ) -> set[str]:
-        return set(
-            ProjectService.invoice_recipients(
-                project,
-                chain_type=chain_type,
-            ).values_list("address", flat=True)
-        )
-
-    @staticmethod
-    def differ_receivable_chain_codes(project: Project) -> set[str]:
-        """差额（DIFFER）模式下项目可收款的链 code 集合。
-
-        差额收款依赖 DifferRecipientAddress：get_pay_differ 在该 chain_type 的收款地址集合上
-        轮换 (地址, 金额) 组合。按已配置地址的 chain_type 展开为该类型下全部 active 链，
-        EVM、Tron 均可走差额模式。
-        """
-        differ_types = set(
-            ProjectService.invoice_recipients(project).values_list(
-                "chain_type",
-                flat=True,
-            )
-        )
-        return ChainService.codes_of_types(differ_types)
-
-    @staticmethod
     def contract_receivable_chain_codes(project: Project) -> set[str]:
-        """合约（CONTRACT）模式下项目可收款的链 code 集合。
+        """VaultSlot 合约模式下项目可收款的链 code 集合。
 
-        合约收款依赖项目不可变 vault 地址，且仅 EVM 链支持（VaultSlot 智能合约）。设置 vault
-        后即可在全部 active EVM 链通过 VaultSlot 收款，不依赖 DifferRecipientAddress；未设
-        vault 则无法走合约模式，返回空集。
+        合约收款依赖项目不可变 vault 地址；Tron 只有 Nile 验证结论与 factory/template/
+        fee_limit 明确配置后才暴露，默认配置下始终只返回 EVM。
         """
         if not project.vault:
             return set()
-        return ChainService.codes_of_types({ChainType.EVM})
+        chain_codes = ChainService.codes_of_types({ChainType.EVM})
+        if not tron_vault_slot_runtime_ready():
+            return chain_codes
+
+        tron_codes = set(
+            ChainCryptoDeployment.objects.filter(
+                chain__type=ChainType.TRON,
+                chain__active=True,
+                crypto__symbol="USDT",
+                crypto__active=True,
+                active=True,
+            )
+            .exclude(address="")
+            .values_list("chain__code", flat=True)
+        )
+        return chain_codes | tron_codes

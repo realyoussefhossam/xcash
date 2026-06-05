@@ -376,3 +376,8 @@ xcash/media/
 .pytest_cache/
 .ipython/
 .envs/*
+
+### Foundry 合约工程编译产物(xcash/tron/contracts、xcash/evm/contracts)
+# out/ 已被上方 IntelliJ 段的全局 out/ 命中;此处显式列出 Foundry 的 cache/,避免编译缓存入库
+xcash/tron/contracts/cache/
+xcash/tron/contracts/out/

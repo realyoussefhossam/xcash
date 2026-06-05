@@ -71,9 +71,9 @@ The fund path, shown in green, is fixed by smart contracts and only flows from "
 | Dedicated deposit addresses | Assign a dedicated deposit address to each user so they can transfer in anytime and be credited after confirmation, like an exchange |
 | Full self-custody | Collections flow through smart contracts directly to your wallet; Xcash never takes custody of funds |
 | Zero platform fees | No transaction percentage fee; only small on-chain gas costs apply |
-| Multi-chain and multi-asset | Covers major EVM chains and Tron, with support for arbitrary ERC-20 tokens |
+| Multi-chain and multi-asset | Covers major EVM chains, with support for arbitrary ERC-20 tokens |
 | Multi-merchant and multi-project | Manage multiple merchants and projects in isolation on a single instance |
-| Contract invoices | EVM chains can generate an independent CREATE2 collection address for each invoice |
+| Contract invoices | EVM chains can generate an independent VaultSlot collection address for each invoice |
 | On-chain risk control | Integrates MistTrack risk scoring for source addresses of payments and deposits |
 | Webhook callbacks | Push payment and deposit events in real time |
 | EasyPay compatibility | Supports the standard EasyPay V1 protocol for smooth migration |
@@ -83,23 +83,21 @@ The fund path, shown in green, is fixed by smart contracts and only flows from "
 
 Xcash provides two ways to receive funds. Distinguish them before integration:
 
-- **Payments**: invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice, and the invoice completes after the buyer pays. This is suitable for one-off collection scenarios such as e-commerce checkout and subscription billing. Payments have two address allocation modes:
-  - **Differential payments**: buyers share collection addresses, and invoices are distinguished by tiny amount differences. This works on all chains with no extra deployment cost, but the number of concurrent invoices for the same asset and same amount is limited by the available difference slots, so high-concurrency same-price orders may fail to allocate.
-  - **Contract payments**: EVM-only. CREATE2 predicts an independent collection address for each invoice. Addresses never collide, naturally support high concurrency, and amounts do not need differential offsets.
+- **Payments**: invoice-based collection. Each transaction creates a fixed-amount, time-limited invoice, and the invoice completes after the buyer pays. This is suitable for one-off collection scenarios such as e-commerce checkout and subscription billing. Payments now use VaultSlot contract collection: the system assigns an independent collection address to each invoice, avoiding address collisions and amount offsets.
 - **Deposits**: exchange-style top-ups. Each user gets a dedicated deposit address shared across chains, monitored in real time. Users can transfer in anytime and be credited after block confirmation without creating an order. This is suitable for wallets, trading platforms, and other businesses that maintain user balances.
 
 ## Chain Support
 
 | Feature | ETH | BNB Chain | Arbitrum | Base | Tron | Polygon | Avalanche | Optimism | Other EVM |
 |:--:|:---:|:---------:|:--------:|:----:|:----:|:-------:|:---------:|:--------:|:------:|
-| Payment | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Almost all |
+| Payment | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Almost all |
 | Deposit | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Almost all |
 
 ## Token Support
 
 EVM chains support arbitrary ERC-20 tokens. Add the token contract address in the admin panel to enable assets such as USDT, USDC, or other on-chain assets required by your business.
 
-Tron currently supports payment only and is mainly intended for TRC20-USDT collection.
+Tron VaultSlot collection is still being integrated and is not currently exposed for payments or deposits.
 
 ## Built-in Risk Control Integration
 

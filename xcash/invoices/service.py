@@ -8,8 +8,10 @@ from aml.tasks import screen_invoice_aml
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils import timezone
+from tron.models import TronVaultSlot
 
 from chains.models import Chain
+from chains.models import ChainType
 from chains.models import ConfirmMode
 from chains.models import TransferType
 from chains.service import ChainService
@@ -27,7 +29,6 @@ from webhooks.service import WebhookService
 
 from .exceptions import InvoiceStatusError
 from .models import Invoice
-from .models import InvoiceBillingMode
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
 
@@ -42,17 +43,16 @@ class InvoiceService:
     def finalize_methods(
         *,
         project,
-        billing_mode: str,
         requested,
         currency: str | None = None,
     ) -> dict[str, list[str]]:
-        """按 billing_mode 生成/收敛账单最终 methods。
+        """生成/收敛账单最终 methods。
 
-        Invoice.available_methods(project, billing_mode) 是该模式下真正可付款的
-        crypto -> chain 集合；调用方未指定 methods 时直接采用全集，指定时必须是全集
-        子集。计价货币本身是加密货币时，最终 methods 还会收敛到该单一币种。
+        Invoice.available_methods(project) 是真正可付款的 crypto -> chain 集合；
+        调用方未指定 methods 时直接采用全集，指定时必须是全集子集。计价货币本身
+        是加密货币时，最终 methods 还会收敛到该单一币种。
         """
-        available = Invoice.available_methods(project, billing_mode)
+        available = Invoice.available_methods(project)
         if not available:
             raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
 
@@ -251,25 +251,12 @@ class InvoiceService:
             status__in=[InvoiceStatus.WAITING, InvoiceStatus.EXPIRED],
         )
 
-        differ_candidate = (
-            base_filter.filter(
-                billing_mode=InvoiceBillingMode.DIFFER,
-                pay_amount=transfer.amount,
-            )
+        candidate = (
+            base_filter.filter(pay_amount=transfer.amount)
             .order_by("-started_at", "-pk")
             .values("pk")
             .first()
         )
-        contract_candidate = (
-            base_filter.filter(
-                billing_mode=InvoiceBillingMode.CONTRACT,
-                pay_amount=transfer.amount,
-            )
-            .order_by("-started_at", "-pk")
-            .values("pk")
-            .first()
-        )
-        candidate = differ_candidate or contract_candidate
         if candidate is None:
             return False
 
@@ -341,8 +328,8 @@ class InvoiceService:
             return False
         if not (invoice.started_at <= transfer.datetime <= invoice.expires_at):
             return False
-        # CONTRACT 与 DIFFER 现统一要求 pay_amount 与到账金额精确相等：候选已在
-        # try_match_invoice 用精确金额选出，复核保持同一口径，杜绝溢付被误判匹配。
+        # 账单合约收款要求 pay_amount 与到账金额精确相等：候选已在 try_match_invoice
+        # 用精确金额选出，复核保持同一口径，杜绝溢付被误判匹配。
         # pay_amount 为 None 时 == 比较天然返回 False，无需单独判空。
         return invoice.pay_amount == transfer.amount
 
@@ -371,7 +358,10 @@ class InvoiceService:
         invoice.refresh_from_db()
 
         try:
-            VaultSlot.schedule_collect_for_invoice(invoice.pk)
+            if invoice.chain.type == ChainType.TRON:
+                TronVaultSlot.schedule_collect_for_invoice(invoice.pk)
+            else:
+                VaultSlot.schedule_collect_for_invoice(invoice.pk)
         except Exception:
             logger.exception("调度 Invoice VaultSlot 归集任务失败", invoice_id=invoice.pk)
 

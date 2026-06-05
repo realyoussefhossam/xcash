@@ -12,9 +12,6 @@ router.register("chains", InternalChainViewSet, basename="internal-chain")
 
 # 嵌套在 /projects/{appid}/ 下的业务端点
 from internal_api.viewsets.deposits import InternalDepositViewSet
-from internal_api.viewsets.differ_recipient_addresses import (
-    DifferRecipientAddressViewSet,
-)
 from internal_api.viewsets.epay import EpayMerchantView
 from internal_api.viewsets.invoices import InternalInvoiceViewSet
 from internal_api.viewsets.stats import StatsViewSet
@@ -24,11 +21,6 @@ from internal_api.viewsets.webhooks import WebhookEventViewSet
 project_router = SimpleRouter(trailing_slash=False)
 project_router.register("invoices", InternalInvoiceViewSet, basename="internal-invoice")
 project_router.register("deposits", InternalDepositViewSet, basename="internal-deposit")
-project_router.register(
-    "differ-recipient-addresses",
-    DifferRecipientAddressViewSet,
-    basename="internal-differ-recipient-address",
-)
 project_router.register(
     "webhook-events", WebhookEventViewSet, basename="internal-webhook-event"
 )

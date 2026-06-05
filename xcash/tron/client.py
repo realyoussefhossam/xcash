@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
@@ -22,7 +23,7 @@ class TronHttpClient:
 
     def __init__(self, *, chain):
         self.chain = chain
-        self.base_url = self.BASE_URL
+        self.base_url = getattr(chain, "tron_base_url", "") or self.BASE_URL
         self.timeout = settings.TRON_RPC_TIMEOUT
 
     def _headers(self) -> dict[str, str]:
@@ -167,6 +168,128 @@ class TronHttpClient:
             url=f"{self.base_url}/walletsolidity/gettransactioninfobyid",
             request_label="failed to fetch transaction info",
             json_body={"value": tx_hash},
+        )
+        return response.json()
+
+    def get_account(self, *, address: str) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/getaccount",
+            request_label="failed to fetch account",
+            json_body={"address": address, "visible": True},
+        )
+        return response.json()
+
+    def get_contract(self, *, address: str) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/getcontract",
+            request_label="failed to fetch contract",
+            json_body={"value": address, "visible": True},
+        )
+        return response.json()
+
+    def trigger_constant_contract(
+        self,
+        *,
+        owner_address: str,
+        contract_address: str,
+        function_selector: str,
+        parameter: str,
+    ) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/triggerconstantcontract",
+            request_label="failed to trigger constant contract",
+            json_body={
+                "owner_address": owner_address,
+                "contract_address": contract_address,
+                "function_selector": function_selector,
+                "parameter": parameter,
+                "visible": True,
+            },
+        )
+        return response.json()
+
+    def trigger_smart_contract(
+        self,
+        *,
+        owner_address: str,
+        contract_address: str,
+        function_selector: str,
+        parameter: str,
+        fee_limit: int,
+    ) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/triggersmartcontract",
+            request_label="failed to trigger smart contract",
+            json_body={
+                "owner_address": owner_address,
+                "contract_address": contract_address,
+                "function_selector": function_selector,
+                "parameter": parameter,
+                "fee_limit": int(fee_limit),
+                "visible": True,
+            },
+        )
+        return response.json()
+
+    def broadcast_transaction(self, *, transaction: dict) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/broadcasttransaction",
+            request_label="failed to broadcast transaction",
+            json_body=transaction,
+        )
+        return response.json()
+
+    def create_trx_transfer(
+        self,
+        *,
+        owner_address: str,
+        to_address: str,
+        amount_sun: int,
+    ) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/createtransaction",
+            request_label="failed to create TRX transfer",
+            json_body={
+                "owner_address": owner_address,
+                "to_address": to_address,
+                "amount": int(amount_sun),
+                "visible": True,
+            },
+        )
+        return response.json()
+
+    def deploy_contract(
+        self,
+        *,
+        owner_address: str,
+        name: str,
+        abi: list,
+        bytecode: str,
+        fee_limit: int,
+        parameter: str = "",
+    ) -> dict:
+        response = self._request_with_retry(
+            method="POST",
+            url=f"{self.base_url}/wallet/deploycontract",
+            request_label="failed to deploy contract",
+            json_body={
+                "owner_address": owner_address,
+                "name": name,
+                "abi": json.dumps(abi, separators=(",", ":")),
+                "bytecode": bytecode.removeprefix("0x"),
+                "parameter": parameter,
+                "fee_limit": int(fee_limit),
+                "call_value": "0",
+                "consume_user_resource_percent": 100,
+                "origin_energy_limit": int(fee_limit),
+                "visible": True,
+            },
         )
         return response.json()
 

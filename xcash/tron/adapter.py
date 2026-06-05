@@ -3,8 +3,10 @@ from __future__ import annotations
 from tron.client import TronClientError
 from tron.client import TronHttpClient
 from tron.codec import TronAddressCodec
+from tron.intents import trc20_balance_of_parameter
 
 from chains.adapters import AdapterInterface
+from chains.adapters import TxCheckResult
 from chains.adapters import TxCheckStatus
 
 
@@ -17,18 +19,94 @@ class TronAdapter(AdapterInterface):
         return self.validate_address(address)
 
     def is_contract(self, chain, address: str) -> bool:
-        return False
+        if not self.validate_address(address):
+            return False
+        try:
+            payload = TronHttpClient(chain=chain).get_contract(address=address)
+        except TronClientError:
+            return False
+        return bool(payload.get("bytecode") or payload.get("abi"))
 
     def get_balance(self, address, chain, crypto) -> int:
-        raise NotImplementedError("Tron invoice-only adapter does not support balances")
+        if not self.validate_address(address):
+            raise ValueError(f"invalid tron address: {address}")
 
-    def tx_result(self, chain, tx_hash: str) -> TxCheckStatus | Exception:
+        client = TronHttpClient(chain=chain)
+        if crypto == chain.native_coin:
+            try:
+                return int(client.get_account(address=address).get("balance") or 0)
+            except TronClientError as exc:
+                raise RuntimeError("failed to fetch Tron native balance") from exc
+
+        token_address = crypto.address(chain)
+        if not token_address:
+            raise ValueError(
+                f"Crypto {crypto.symbol} is not deployed on chain {chain.code}."
+            )
+
         try:
-            payload = TronHttpClient(chain=chain).get_transaction_info_by_id(tx_hash)
+            payload = client.trigger_constant_contract(
+                owner_address=address,
+                contract_address=token_address,
+                function_selector="balanceOf(address)",
+                parameter=trc20_balance_of_parameter(address),
+            )
+        except TronClientError as exc:
+            raise RuntimeError("failed to fetch Tron TRC20 balance") from exc
+
+        constant_result = payload.get("constant_result") or []
+        if not constant_result:
+            return 0
+        return int(str(constant_result[0]), 16)
+
+    def tx_result(self, chain, tx_hash: str) -> TxCheckStatus | TxCheckResult | Exception:
+        try:
+            client = TronHttpClient(chain=chain)
+            payload = client.get_transaction_info_by_id(tx_hash)
         except TronClientError as exc:
             return exc
 
+        if not payload or payload.get("id") != tx_hash:
+            return TxCheckStatus.MISSING
+
         receipt = payload.get("receipt") or {}
-        if payload.get("id") == tx_hash and receipt.get("result") == "SUCCESS":
-            return TxCheckStatus.SUCCEEDED
-        return RuntimeError(f"tron tx {tx_hash} not succeeded")
+        block_number = self.receipt_block_number(payload)
+        block_hash = self.receipt_block_hash(
+            client=client,
+            block_number=block_number,
+        )
+        result = receipt.get("result")
+        if result == "SUCCESS":
+            return TxCheckResult(
+                status=TxCheckStatus.SUCCEEDED,
+                block_number=block_number,
+                block_hash=block_hash,
+            )
+        if result:
+            return TxCheckResult(
+                status=TxCheckStatus.FAILED,
+                block_number=block_number,
+                block_hash=block_hash,
+            )
+        return TxCheckStatus.MISSING
+
+    @staticmethod
+    def receipt_block_number(payload: dict) -> int | None:
+        try:
+            block_number = int(payload.get("blockNumber") or 0)
+        except (TypeError, ValueError):
+            return None
+        return block_number if block_number > 0 else None
+
+    @staticmethod
+    def receipt_block_hash(
+        *,
+        client: TronHttpClient,
+        block_number: int | None,
+    ) -> str | None:
+        if block_number is None:
+            return None
+        try:
+            return client.get_solid_block_id(block_number=block_number)
+        except TronClientError:
+            return None

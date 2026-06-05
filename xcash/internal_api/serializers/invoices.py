@@ -24,7 +24,6 @@ class InternalInvoiceDetailSerializer(serializers.ModelSerializer):
             "pay_address",
             "worth",
             "status",
-            "billing_mode",
             "protocol",
             "risk_level",
             "risk_score",

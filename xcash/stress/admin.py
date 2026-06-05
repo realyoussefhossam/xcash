@@ -23,7 +23,6 @@ class InvoiceStressCaseInline(TabularInline):
     fields = (
         "sequence",
         "status",
-        "billing_mode",
         "crypto",
         "chain",
         "invoice_sys_no",
@@ -316,7 +315,6 @@ class InvoiceStressCaseAdmin(ModelAdmin):
         "stress_run",
         "sequence",
         "status",
-        "billing_mode",
         "crypto",
         "chain",
         "invoice_sys_no",
@@ -328,7 +326,7 @@ class InvoiceStressCaseAdmin(ModelAdmin):
         "webhook_timestamp_ok",
         "collection_verified",
     )
-    list_filter = ("stress_run", "status", "billing_mode")
+    list_filter = ("stress_run", "status")
     search_fields = ("invoice_sys_no", "invoice_out_no", "tx_hash")
 
     def has_add_permission(self, request):

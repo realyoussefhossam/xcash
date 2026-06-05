@@ -2,6 +2,7 @@
 pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {XcashVaultSlotTemplate} from "../src/XcashVaultSlotTemplate.sol";
 import {XcashVaultSlotFactory} from "../src/XcashVaultSlotFactory.sol";
 import {MockERC20} from "./helpers/MockERC20.sol";
@@ -77,11 +78,11 @@ contract XcashVaultSlotFuzzTest is Test {
         assertEq(address(slot).balance, 0);
     }
 
-    /// 对任意 vault + salt，链上 CREATE2 部署地址必须等于 predictVaultSlot 的预测值，
+    /// 对任意 vault + salt，链上 CREATE2 部署地址必须等于 OZ Clones 预测公式的结果，
     /// 保证链下 contracts_codec.py 的地址预测与合约严格对齐。
     function testFuzz_predict_matches_deploy(address vaultArg, bytes32 salt) public {
         assumeNotZeroAddress(vaultArg);
-        address predicted = factory.predictVaultSlot(payable(vaultArg), salt);
+        address predicted = _predict(payable(vaultArg), salt);
 
         address deployed = factory.deployVaultSlot(payable(vaultArg), salt);
 
@@ -93,8 +94,8 @@ contract XcashVaultSlotFuzzTest is Test {
     function testFuzz_distinct_salts_yield_distinct_slots(bytes32 saltA, bytes32 saltB) public view {
         vm.assume(saltA != saltB);
 
-        address slotA = factory.predictVaultSlot(vault, saltA);
-        address slotB = factory.predictVaultSlot(vault, saltB);
+        address slotA = _predict(vault, saltA);
+        address slotB = _predict(vault, saltB);
 
         assertNotEq(slotA, slotB);
     }
@@ -105,6 +106,12 @@ contract XcashVaultSlotFuzzTest is Test {
     {
         return XcashVaultSlotTemplate(
             payable(factory.deployVaultSlot(vault_, keccak256(bytes(saltLabel))))
+        );
+    }
+
+    function _predict(address payable vault_, bytes32 salt) private view returns (address) {
+        return Clones.predictDeterministicAddressWithImmutableArgs(
+            factory.vaultSlotTemplate(), abi.encodePacked(vault_), salt, address(factory)
         );
     }
 }

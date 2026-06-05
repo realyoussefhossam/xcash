@@ -11,9 +11,11 @@ from rest_framework.decorators import action as view_action
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
+from tron.models import TronVaultSlot
 
 from chains.capabilities import ChainProductCapabilityService
 from chains.models import Chain
+from chains.models import ChainType
 from common.consts import APPID_HEADER
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
@@ -103,8 +105,11 @@ class DepositViewSet(viewsets.GenericViewSet):
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
 
-        deposit_address = VaultSlot.ensure_deposit_address(chain, customer)
-        if settings.DEBUG:
+        if chain.type == ChainType.TRON:
+            deposit_address = TronVaultSlot.ensure_deposit_address(chain, customer)
+        else:
+            deposit_address = VaultSlot.ensure_deposit_address(chain, customer)
+        if settings.DEBUG and chain.type == ChainType.EVM:
             wait_deposit_address_deployed(chain=chain, address=deposit_address)
         return Response({"deposit_address": deposit_address})
 

@@ -183,7 +183,6 @@ const signature = crypto
 | `amount` | string | 是 | 计价金额，范围 `0.00000001` 到 `1000000` |
 | `duration` | integer | 否 | 有效期分钟数，范围 `10` 到 `30`，默认 `10` |
 | `methods` | object | 否 | 限定支付方式，格式 `{"币种": ["链码"]}` |
-| `billing_mode` | string | 否 | `differ` 差额账单，或 `contract` 合约账单；默认 `differ` |
 | `notify_url` | string | 否 | 账单级 Webhook 地址，优先于项目默认通知地址 |
 | `return_url` | string | 否 | 支付完成后的同步跳转地址 |
 
@@ -191,20 +190,12 @@ const signature = crypto
 
 `methods` 是最终可支付组合的收敛条件：
 
-- 不传 `methods`：系统按项目配置和账单模式生成全部可用组合。
+- 不传 `methods`：系统按项目配置生成全部可用组合。
 - 传入 `methods`：必须是系统生成组合的子集，否则返回无可用支付方式。
 - 当 `currency` 本身是加密货币时，最终 `methods` 会自动收敛到该币种。
 - `crypto` symbol 使用大写，`chain` code 使用上方表格中的小写 code。
 
-### 账单模式
-
-`differ` 是默认模式：
-
-- 通过项目页配置的“差额账单收款地址”收款。
-- 支持 EVM / Tron 中已启用的非 Gas 代币支付组合。
-- 通过同一收款地址上的微小金额差额区分账单。
-
-`contract` 是 EVM VaultSlot 模式：
+### VaultSlot 收款
 
 - 只支持 EVM 链。
 - 项目必须先配置“收款归集地址”，且该地址必须是符合系统校验规则的 EVM 多签地址。
@@ -222,7 +213,7 @@ const signature = crypto
   "amount": "29.99",
   "duration": 15,
   "methods": {
-    "USDT": ["ethereum", "tron"],
+    "USDT": ["ethereum"],
     "USDC": ["base"]
   },
   "notify_url": "https://merchant.example.com/xcash/webhook",
@@ -230,7 +221,7 @@ const signature = crypto
 }
 ```
 
-合约账单示例：
+指定加密货币计价示例：
 
 ```json
 {
@@ -239,7 +230,6 @@ const signature = crypto
   "currency": "USDT",
   "amount": "100",
   "duration": 15,
-  "billing_mode": "contract",
   "methods": {
     "USDT": ["ethereum", "base"]
   },
@@ -506,7 +496,7 @@ EPay 入口不使用 Xcash HMAC 头，使用 EPay 自有 MD5 签名。
 | `sign` | string | 是 | MD5 签名 |
 | `sign_type` | string | 是 | 固定 `MD5` |
 
-EPay 订单固定创建为 `differ` 账单，有效期 15 分钟。
+EPay 订单固定创建为 VaultSlot 账单，有效期 15 分钟。
 
 ### EPay 签名
 
@@ -614,9 +604,7 @@ params["sign"] = hashlib.md5(
 | 错误码 | 说明 | HTTP |
 |--------|------|------|
 | `5000` | 账单类型错误 | 400 |
-| `5002` | 差额账单数值错误 | 400 |
 | `5003` | 支付时间错误 | 400 |
-| `5004` | 差额不足 | 400 |
 | `5005` | 无效参数：`sys_no` | 400 |
 | `5006` | 账单状态错误 | 400 |
 | `5007` | 不允许的链与加密货币 | 400 |

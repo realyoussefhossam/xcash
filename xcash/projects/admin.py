@@ -1,6 +1,5 @@
 from django import forms
 from django.contrib import admin
-from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from django.utils.html import format_html_join
 from django.utils.translation import gettext_lazy as _
@@ -8,15 +7,9 @@ from unfold.decorators import display
 from unfold.widgets import UnfoldAdminTextInputWidget
 from unfold.widgets import UnfoldAdminURLInputWidget
 
-from chains.adapters import AdapterFactory
-from chains.capabilities import ChainProductCapabilityService
-from chains.constants import ChainType
-from chains.models import Address
 from common.admin import ModelAdmin
 from common.admin import ReadOnlyModelAdmin
 from common.admin import StackedInline
-from common.admin import TabularInline
-from invoices.models import DifferRecipientAddress
 from invoices.models import EpayMerchant
 from projects.models import Customer
 from projects.models import Project
@@ -132,82 +125,6 @@ class ProjectHmacKeyWidget(UnfoldAdminTextInputWidget):
         )
 
 
-class DifferRecipientAddressInlineForm(forms.ModelForm):
-    """差额账单收款地址 inline 表单，包含地址格式校验和跨项目占用检查。"""
-
-    allowed_chain_types = frozenset(ChainType.values)
-
-    class Meta:
-        model = DifferRecipientAddress
-        fields = ("name", "chain_type", "address")
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["chain_type"].choices = [
-            choice
-            for choice in ChainType.choices
-            if choice[0] in self.allowed_chain_types
-        ]
-
-    def clean(self):
-        cleaned_data = super().clean()
-        chain_type = cleaned_data.get("chain_type")
-        address = cleaned_data.get("address")
-        if not chain_type or not address:
-            return cleaned_data
-
-        if chain_type not in self.allowed_chain_types:
-            raise ValidationError(_("当前用途不支持该地址格式"))
-
-        adapter = AdapterFactory.get_adapter(chain_type=chain_type)
-        if not adapter.validate_address(address=address):
-            raise forms.ValidationError(_("地址格式错误"))
-
-        # inline 场景下 project 由 parent 自动注入，不在 cleaned_data 里；
-        # 用 instance.project_id 或 parent_instance 来做跨项目占用检查。
-        project = getattr(self.instance, "project", None)
-        qs = DifferRecipientAddress.objects.filter(address=address)
-        if project:
-            qs = qs.exclude(project=project)
-        if qs.exists():
-            raise ValidationError(_("地址已被其他项目占用"))
-
-        return cleaned_data
-
-    def clean_address(self):
-        address = self.cleaned_data.get("address")
-        if address and Address.objects.filter(address=address).exists():
-            raise ValidationError(_("不能设置为系统内账户"))
-        return address
-
-
-class DifferRecipientAddressInline(TabularInline):
-    """项目差额账单收款地址 inline。"""
-
-    model = DifferRecipientAddress
-    form = DifferRecipientAddressInlineForm
-    extra = 0
-    fields = ("name", "chain_type", "address")
-    allowed_chain_types = ChainProductCapabilityService.INVOICE_RECIPIENT_CHAIN_TYPES
-    verbose_name = _("差额账单收款地址")
-    verbose_name_plural = _("差额账单收款地址")
-
-    def get_formset(self, request, obj=None, **kwargs):
-        base_form = self.form
-
-        class InlineForm(base_form):
-            allowed_chain_types = self.allowed_chain_types
-
-        kwargs["form"] = InlineForm
-        formset = super().get_formset(request, obj, **kwargs)
-        formset.form.base_fields["chain_type"].choices = [
-            choice
-            for choice in ChainType.choices
-            if choice[0] in self.allowed_chain_types
-        ]
-        return formset
-
-
 class EpayMerchantInline(StackedInline):
     # EpayMerchant 与 Project 是 OneToOne，限制 max_num=1 避免在表单上误导用户可以新增多条。
     model = EpayMerchant
@@ -233,7 +150,6 @@ class EpayMerchantInline(StackedInline):
 class ProjectAdmin(ModelAdmin):
     form = ProjectForm
     inlines = (
-        DifferRecipientAddressInline,
         EpayMerchantInline,
     )
     list_display = (

@@ -16,7 +16,11 @@ contract XcashVaultSlotTemplate {
     event XcashCollected(address indexed token, uint256 amount);
 
     receive() external payable {
-        _forwardNative();
+        if (msg.value == 0) revert ZeroAmount();
+        emit XcashNativeReceived(msg.sender, msg.value);
+
+        (bool ok,) = vault().call{value: msg.value}("");
+        if (!ok) revert ForwardFailed();
     }
 
     function collect(address token) external {
@@ -33,15 +37,16 @@ contract XcashVaultSlotTemplate {
 
     function _collectERC20(address token) private {
         uint256 amount = IERC20BalanceOf(token).balanceOf(address(this));
-        if (amount == 0) revert ZeroAmount();
+        if (amount == 0) return;
         address payable vault_ = vault();
-        emit XcashCollected(token, amount);
 
-        (bool ok, bytes memory data) =
-            token.call(abi.encodeCall(IERC20Transfer.transfer, (vault_, amount)));
-        if (!ok || !_isERC20TransferReturnSuccess(data)) {
+        (bool ok,) = token.call(abi.encodeCall(IERC20Transfer.transfer, (vault_, amount)));
+        if (!ok) revert ERC20TransferFailed();
+        if (IERC20BalanceOf(token).balanceOf(address(this)) != 0) {
             revert ERC20TransferFailed();
         }
+
+        emit XcashCollected(token, amount);
     }
 
     function vault() public view returns (address payable vault_) {
@@ -54,25 +59,6 @@ contract XcashVaultSlotTemplate {
         }
         vault_ = payable(address(rawVault));
         if (vault_ == address(0)) revert ZeroVault();
-    }
-
-    function _isERC20TransferReturnSuccess(bytes memory data) private pure returns (bool) {
-        if (data.length == 0) return true;
-        if (data.length != 32) return false;
-
-        uint256 value;
-        assembly ("memory-safe") {
-            value := mload(add(data, 32))
-        }
-        return value == 1;
-    }
-
-    function _forwardNative() private {
-        if (msg.value == 0) revert ZeroAmount();
-        emit XcashNativeReceived(msg.sender, msg.value);
-
-        (bool ok,) = vault().call{value: msg.value}("");
-        if (!ok) revert ForwardFailed();
     }
 }
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tron.config import tron_vault_slot_runtime_ready
+
 from chains.models import ChainType
 
 
@@ -24,6 +26,10 @@ class ChainProductCapabilityService:
 
     @classmethod
     def supports_deposit_address(cls, *, chain, crypto) -> bool:
-        return chain.type in cls.DEPOSIT_CHAIN_TYPES and crypto.support_this_chain(
-            chain
-        )
+        if not crypto.support_this_chain(chain):
+            return False
+        if chain.type in cls.DEPOSIT_CHAIN_TYPES:
+            return True
+        if chain.type == ChainType.TRON:
+            return crypto.symbol == "USDT" and tron_vault_slot_runtime_ready()
+        return False

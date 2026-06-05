@@ -165,12 +165,18 @@ contract XcashVaultSlotTest is Test {
         assertEq(token.balanceOf(address(slot)), 0);
     }
 
-    function test_collect_erc20_reverts_when_balance_is_zero() public {
+    function test_collect_erc20_noop_when_balance_is_zero() public {
+        // 空收是良性幂等（前序归集已把余额扫空）：collect 必须安静收尾——不 revert、
+        // 不 emit、余额保持 0，避免把"无事可做"误报成 FAILED 任务。
         XcashVaultSlotTemplate slot = _deployVaultSlot("erc20-zero");
         MockERC20 token = new MockERC20();
 
-        vm.expectRevert(XcashVaultSlotTemplate.ZeroAmount.selector);
+        vm.recordLogs();
         slot.collect(address(token));
+
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(token.balanceOf(address(slot)), 0);
+        assertEq(token.balanceOf(vault), 0);
     }
 
     function test_collect_erc20_reverts_when_token_returns_false() public {

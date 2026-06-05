@@ -16,7 +16,6 @@ from evm.scanner.watchers import clear_evm_watch_set_cache
 from evm.scanner.watchers import load_matched_addresses_for_candidates
 from evm.scanner.watchers import load_watch_set
 from evm.tests._fixtures import make_evm_chain
-from invoices.models import DifferRecipientAddress
 from projects.models import Customer
 from projects.models import Project
 
@@ -93,42 +92,25 @@ class EvmWatchSetCacheTests(TestCase):
             {self.token_deployment.address: self.token_deployment},
         )
 
-    def test_candidate_lookup_matches_vault_slots_and_differ_recipient_addresses(self):
-        recipient_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000d01"
-        )
-        DifferRecipientAddress.objects.create(
-            project=self._create_project(),
-            chain_type=ChainType.EVM,
-            address=recipient_address,
-        )
+    def test_candidate_lookup_matches_vault_slots(self):
         unknown_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000d02"
         )
 
         matched_addresses = load_matched_addresses_for_candidates(
             chain=self.chain,
-            addresses={self.vault_slot.address, recipient_address, unknown_address},
+            addresses={self.vault_slot.address, unknown_address},
         )
 
         self.assertEqual(
             matched_addresses,
-            frozenset({self.vault_slot.address, recipient_address}),
+            frozenset({self.vault_slot.address}),
         )
 
-    def test_candidate_lookup_excludes_non_candidate_and_non_evm_addresses(self):
-        recipient_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000d02"
-        )
-        DifferRecipientAddress.objects.create(
-            project=self._create_project(),
-            chain_type=ChainType.TRON,
-            address=recipient_address,
-        )
-
+    def test_candidate_lookup_excludes_non_candidate_addresses(self):
         matched_addresses = load_matched_addresses_for_candidates(
             chain=self.chain,
-            addresses={self.address.address, recipient_address},
+            addresses={self.address.address},
         )
 
         self.assertEqual(matched_addresses, frozenset())

@@ -29,23 +29,8 @@ contract XcashVaultSlotFactory {
     {
         if (vault == address(0)) revert ZeroVault();
         vaultSlot = Clones.cloneDeterministicWithImmutableArgs(
-            vaultSlotTemplate, _encodeVaultArg(vault), salt
+            vaultSlotTemplate, abi.encodePacked(vault), salt
         );
         emit XcashVaultSlotDeployed(vaultSlot, vault, salt);
-    }
-
-    function predictVaultSlot(address payable vault, bytes32 salt)
-        external
-        view
-        returns (address)
-    {
-        if (vault == address(0)) revert ZeroVault();
-        return Clones.predictDeterministicAddressWithImmutableArgs(
-            vaultSlotTemplate, _encodeVaultArg(vault), salt, address(this)
-        );
-    }
-
-    function _encodeVaultArg(address payable vault) private pure returns (bytes memory) {
-        return abi.encodePacked(vault);
     }
 }

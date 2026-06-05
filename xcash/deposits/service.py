@@ -4,7 +4,10 @@ import structlog
 from aml.tasks import screen_deposit_aml
 from django.db import transaction as db_transaction
 from django.utils import timezone
+from tron.models import TronVaultSlot
+from tron.models import TronVaultSlotUsage
 
+from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferType
 from common.internal_callback import CallbackEvent
@@ -97,14 +100,24 @@ class DepositService:
         if not transfer.crypto.active:
             return False
 
-        try:
-            customer = VaultSlot.objects.get(
-                chain=transfer.chain,
-                address=transfer.to_address,
-                usage=VaultSlotUsage.DEPOSIT,
-            ).customer
-        except VaultSlot.DoesNotExist:
-            return False
+        if transfer.chain.type == ChainType.TRON:
+            try:
+                customer = TronVaultSlot.objects.get(
+                    chain=transfer.chain,
+                    address=transfer.to_address,
+                    usage=TronVaultSlotUsage.DEPOSIT,
+                ).customer
+            except TronVaultSlot.DoesNotExist:
+                return False
+        else:
+            try:
+                customer = VaultSlot.objects.get(
+                    chain=transfer.chain,
+                    address=transfer.to_address,
+                    usage=VaultSlotUsage.DEPOSIT,
+                ).customer
+            except VaultSlot.DoesNotExist:
+                return False
 
         transfer.type = TransferType.Deposit
         transfer.save(update_fields=["type"])
@@ -146,6 +159,8 @@ class DepositService:
         if transfer.crypto_id == transfer.chain.native_coin.pk:
             return False
 
+        if transfer.chain.type == ChainType.TRON:
+            return TronVaultSlot.schedule_collect_for_deposit(deposit.pk) is not None
         return VaultSlot.schedule_collect_for_deposit(deposit.pk) is not None
 
     @classmethod

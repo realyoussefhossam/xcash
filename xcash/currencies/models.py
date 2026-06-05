@@ -144,10 +144,6 @@ class Crypto(models.Model):
                 return scale
         raise ValueError("系统精度超出范围")
 
-    @cached_property
-    def differ_step(self):
-        return Decimal("10") ** self.scale
-
     def to_fiat(self, fiat: Fiat, amount: Decimal) -> Decimal:
         return round_decimal(amount * self.price(fiat.code), -4)
 

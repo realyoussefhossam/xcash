@@ -50,9 +50,7 @@ class ErrorCode(Enum):
 
     # Invoice
     INVALID_INVOICE_CURRENCY = ErrorInfo("5000", _("账单类型错误"), 400)
-    INVALID_DIFFER_INVOICE_VALUE = ErrorInfo("5002", _("差额账单数值错误"), 400)
     DURATION_ERROR = ErrorInfo("5003", _("支付时间错误"), 400)
-    DIFFER_NOT_ENOUGH = ErrorInfo("5004", _("差额不足"), 400)
     INVALID_INVOICE_ID = ErrorInfo("5005", _("无效参数：sys_no"), 400)
     INVALID_INVOICE_STATUS = ErrorInfo("5006", _("账单状态错误"), 400)
     CHAIN_CRYPTO_NOT_ALLOWED = ErrorInfo("5007", _("不允许的链与加密货币"), 400)

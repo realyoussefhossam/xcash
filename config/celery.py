@@ -116,9 +116,21 @@ currencies_tasks = {
 # tron app
 # ---------------------------
 tron_tasks = {
+    "dispatch_tron_tx_tasks": {
+        "task": "tron.tasks.dispatch_tron_tx_tasks",
+        "schedule": EVM_BROADCAST_SCHEDULE_SECONDS,
+    },
     "scan_active_tron_chains": {
         "task": "tron.tasks.scan_active_tron_chains",
         "schedule": SCAN_DISPATCH_SCHEDULE_SECONDS,
+    },
+    "confirm_tron_receipt_tx_tasks": {
+        "task": "tron.tasks.confirm_tron_receipt_tx_tasks",
+        "schedule": EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS,
+    },
+    "execute_due_tron_vault_slot_collect_schedules": {
+        "task": "tron.tasks.execute_due_tron_vault_slot_collect_schedules",
+        "schedule": EVM_VAULT_SLOT_COLLECT_SCHEDULE_SECONDS,
     },
 }
 

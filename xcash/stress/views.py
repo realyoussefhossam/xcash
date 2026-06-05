@@ -135,11 +135,9 @@ def _verify_webhook(
 def _update_stress_case(case, nonce, result: _VerifyResult):
     """原子更新 InvoiceStressCase 状态。
 
-    对差额账单维持 PAID → SUCCEEDED；对合约账单 webhook 验证通过时只推到
-    WEBHOOK_OK，等待 run-level 归集验证任务再决定 SUCCEEDED / FAILED。
+    账单 webhook 验证通过时只推到 WEBHOOK_OK，等待 run-level 归集验证任务
+    再决定 SUCCEEDED / FAILED。
     """
-    from invoices.models import InvoiceBillingMode
-
     with transaction.atomic():
         case = InvoiceStressCase.objects.select_for_update().get(pk=case.pk)
 
@@ -181,13 +179,9 @@ def _update_stress_case(case, nonce, result: _VerifyResult):
             case.error = "; ".join(result.errors)
             case.finished_at = now
             update_fields.append("finished_at")
-        elif case.billing_mode == InvoiceBillingMode.CONTRACT:
-            # 合约账单 webhook OK 只是中间态，等 collection CONFIRMED 才 SUCCEEDED。
-            case.status = InvoiceStressCaseStatus.WEBHOOK_OK
         else:
-            case.status = InvoiceStressCaseStatus.SUCCEEDED
-            case.finished_at = now
-            update_fields.append("finished_at")
+            # 合约账单 webhook OK 只是中间态，等 collection 验证后才 SUCCEEDED。
+            case.status = InvoiceStressCaseStatus.WEBHOOK_OK
 
         case.save(update_fields=update_fields)
 

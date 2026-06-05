@@ -40,7 +40,6 @@ from evm.models import VaultSlotCollectSchedule
 from evm.models import VaultSlotUsage
 from evm.tests._fixtures import make_evm_chain
 from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
 from invoices.models import InvoiceStatus
 from projects.models import Customer
 from projects.models import Project
@@ -731,7 +730,6 @@ class VaultSlotAddressSchedulingTests(TestCase):
             chain=self.chain,
             pay_amount="10.00000000",
             pay_address=slot.address,
-            billing_mode=InvoiceBillingMode.CONTRACT,
             status=InvoiceStatus.COMPLETED,
             expires_at=timezone.now(),
         )

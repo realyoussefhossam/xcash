@@ -32,11 +32,8 @@ from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
-from invoices.exceptions import InvoiceAllocationError
 from invoices.exceptions import InvoiceStatusError
-from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
 from invoices.models import InvoiceProtocol
 from invoices.models import InvoiceStatus
 from invoices.serializers import InvoiceCreateSerializer
@@ -58,7 +55,6 @@ class InvoiceTestMixin:
         project_name: str = "TestProject",
         crypto_symbol: str = "USDT",
         chain_name: str = ChainCode.Ethereum,
-        with_recipient: bool = True,
     ):
         self.user = User.objects.create(username=username)
         self.project = Project.objects.create(
@@ -76,16 +72,6 @@ class InvoiceTestMixin:
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
-        if with_recipient:
-            self.recipient_address = Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000A1"
-            )
-            DifferRecipientAddress.objects.create(
-                name="收款地址-test",
-                project=self.project,
-                chain_type=ChainType.EVM,
-                address=self.recipient_address,
-            )
 
     def create_test_invoice(self, *, out_no: str = "test-order", **kwargs) -> Invoice:
         defaults = {
@@ -118,77 +104,6 @@ class InvoiceInitializationTests(TestCase):
             active=True,
         )
 
-    def test_project_with_differ_recipient_can_initialize_and_select_method(
-        self,
-    ):
-        # 支付链路使用商户指定收款地址，不依赖项目钱包派生地址，应能正常创建账单并分配收款地址。
-        self.eth.prices = {"USD": "1"}
-        self.eth.save(update_fields=["prices"])
-        project = Project.objects.create(name="DifferRecipientInvoice")
-        DifferRecipientAddress.objects.create(
-            name="商户指定收款地址",
-            project=project,
-            chain_type=ChainType.EVM,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000b1"
-            ),
-        )
-        invoice = Invoice.objects.create(
-            project=project,
-            out_no="differ-recipient-invoice",
-            title="Remote invoice",
-            currency="USD",
-            amount=Decimal("15"),
-            methods={"ETH": [ChainCode.Ethereum]},
-            expires_at=timezone.now() + timedelta(minutes=10),
-        )
-
-        with (
-            patch("invoices.tasks.check_expired.apply_async"),
-            patch.object(
-                Invoice,
-                "select_method",
-                wraps=invoice.select_method,
-            ) as select_method_mock,
-            patch(
-                "invoices.service.CryptoService.get_by_symbol",
-                return_value=self.eth,
-            ),
-            patch(
-                "invoices.service.ChainService.get_by_code",
-                return_value=self.chain,
-            ),
-            patch(
-                "invoices.service.FiatService.get_by_code",
-                side_effect=lambda code: SimpleNamespace(
-                    code=code,
-                    fiat_price=Mock(return_value=Decimal("1")),
-                ),
-            ),
-            patch(
-                "invoices.models.FiatService.to_crypto",
-                return_value=Decimal("15"),
-            ),
-            patch(
-                "invoices.models.FiatService.get_by_code",
-                side_effect=lambda code: SimpleNamespace(
-                    code=code,
-                    fiat_price=Mock(return_value=Decimal("1")),
-                ),
-            ),
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            InvoiceService.initialize_invoice(invoice)
-
-        invoice.refresh_from_db()
-        self.assertEqual(invoice.status, InvoiceStatus.WAITING)
-        self.assertEqual(
-            invoice.pay_address,
-            Web3.to_checksum_address("0x00000000000000000000000000000000000000b1"),
-        )
-        select_method_mock.assert_called_once_with(self.eth, self.chain)
-
-
 class InvoicePaymentSelectionTests(TestCase):
     def setUp(self):
         self.user = User.objects.create(username="merchant-payments")
@@ -211,12 +126,6 @@ class InvoicePaymentSelectionTests(TestCase):
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
-        DifferRecipientAddress.objects.create(
-            name="收款地址-1",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address="0x00000000000000000000000000000000000000A1",
-        )
 
     def create_invoice(self, *, out_no: str = "payment-order") -> Invoice:
         return Invoice.objects.create(
@@ -310,7 +219,7 @@ class InvoicePaymentSelectionTests(TestCase):
 
     def test_select_method_skips_expired_waiting_payment_combo(self):
         # 回归：旧账单已过 expires_at 但状态仍是 WAITING 时，其 (pay_address, pay_amount)
-        # 组合仍被 uniq_invoice_active_payment 约束锁定。差额分配必须把它视为已占用、
+        # 组合仍被 uniq_invoice_active_payment 约束锁定。支付分配必须把它视为已占用、
         # 跳到下一档金额，而不是当成空闲再次返回（那会触发约束冲突并陷入重试死循环）。
         first = self.create_invoice(out_no="expired-waiting-first")
         first.select_method(self.crypto, self.chain_a)
@@ -519,16 +428,11 @@ class InvoiceFinalizeMethodsOrderingTests(TestCase):
             address="0x0000000000000000000000000000000000000002",
             decimals=6,
         )
-        DifferRecipientAddress.objects.create(
-            name="ordered-recipient",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000000003",
-        )
+        project.vault = "0x0000000000000000000000000000000000000003"
+        project.save(update_fields=["vault"])
 
         methods = InvoiceService.finalize_methods(
             project=project,
-            billing_mode=InvoiceBillingMode.DIFFER,
             requested={crypto.symbol: [eth_chain.code, bsc_chain.code]},
         )
 
@@ -553,12 +457,8 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
-        DifferRecipientAddress.objects.create(
-            name="收款地址-1",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address="0x00000000000000000000000000000000000000A1",
-        )
+        self.project.vault = "0x00000000000000000000000000000000000000A1"
+        self.project.save(update_fields=["vault"])
 
     def test_select_method_allocates_distinct_payments_under_concurrency(self):
         # 两个并发账单抢同一条链/币种支付组合时，必须各自拿到不同当前支付指引。
@@ -666,52 +566,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    def test_available_methods_only_exposes_usdt_for_tron_invoice(self):
-        project = Project.objects.create(
-            name="Invoice Capability Project",
-        )
-        tron_usdt = Crypto.objects.create(
-            name="Tether USD",
-            symbol="USDT",
-            coingecko_id="tether-tron-invoice-capability",
-        )
-        tron_usdc = Crypto.objects.create(
-            name="USD Coin",
-            symbol="USDC",
-            coingecko_id="usd-coin-tron-invoice-capability",
-        )
-        tron_chain = Chain.objects.create(
-            code=ChainCode.Tron,
-            rpc="http://tron.invalid",
-            active=True,
-        )
-        ChainCryptoDeployment.objects.create(
-            crypto=tron_usdt,
-            chain=tron_chain,
-            address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-            decimals=6,
-        )
-        ChainCryptoDeployment.objects.create(
-            crypto=tron_usdc,
-            chain=tron_chain,
-            address="TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
-            decimals=6,
-        )
-        DifferRecipientAddress.objects.create(
-            name="tron-pay",
-            project=project,
-            chain_type=ChainType.TRON,
-            address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
-        )
-
-        methods = Invoice.available_methods(project)
-
-        self.assertEqual(methods["USDT"], [tron_chain.code])
-        self.assertNotIn("USDC", methods)
-
     def test_contract_available_methods_exposes_evm_for_vault_project(self):
-        # 合约模式（CONTRACT）：项目设置了 vault 但没有任何差额收款地址。合约收款走
-        # VaultSlot，不依赖 DifferRecipientAddress，故 EVM 链币组合在合约模式下可用。
         project = Project.objects.create(
             name="Invoice Contract Only Project",
             vault="0x0000000000000000000000000000000000008801",
@@ -733,46 +588,9 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             decimals=6,
         )
 
-        contract_methods = Invoice.available_methods(
-            project, InvoiceBillingMode.CONTRACT
-        )
-        differ_methods = Invoice.available_methods(project, InvoiceBillingMode.DIFFER)
-
-        self.assertEqual(contract_methods[usdt.symbol], [eth_chain.code])
-        # 没配差额收款地址 → 差额模式无可用方式。
-        self.assertEqual(differ_methods, {})
-
-    def test_differ_available_methods_excludes_native_coin(self):
-        project = Project.objects.create(
-            name="Invoice Differ Non Native Project",
-        )
-        eth_chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
-        usdt = Crypto.objects.create(
-            name="USDT EVM Differ Non Native",
-            symbol="USDTDIFFNN",
-            coingecko_id="usdt-evm-differ-non-native",
-        )
-        ChainCryptoDeployment.objects.create(
-            crypto=usdt,
-            chain=eth_chain,
-            address="0x0000000000000000000000000000000000008841",
-            decimals=6,
-        )
-        DifferRecipientAddress.objects.create(
-            name="evm-differ-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000008842",
-        )
-
-        methods = Invoice.available_methods(project, InvoiceBillingMode.DIFFER)
+        methods = Invoice.available_methods(project)
 
         self.assertEqual(methods[usdt.symbol], [eth_chain.code])
-        self.assertNotIn(eth_chain.native_coin.symbol, methods)
 
     @override_settings(IS_SAAS=True, INTERNAL_API_TOKEN="xcash-saas-token")
     def test_available_methods_filters_by_cached_saas_chain_crypto_whitelist(self):
@@ -817,12 +635,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             address="0x0000000000000000000000000000000000009913",
             decimals=6,
         )
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000009914",
-        )
+        project.vault = "0x0000000000000000000000000000000000009914"
+        project.save(update_fields=["vault"])
         cache.set(
             f"saas:permission:{project.appid}",
             {
@@ -871,12 +685,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             address="0x0000000000000000000000000000000000009922",
             decimals=6,
         )
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000009923",
-        )
+        project.vault = "0x0000000000000000000000000000000000009923"
+        project.save(update_fields=["vault"])
         cache.set(
             f"saas:permission:{project.appid}",
             {
@@ -914,12 +724,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             address="0x0000000000000000000000000000000000009931",
             decimals=6,
         )
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000009932",
-        )
+        project.vault = "0x0000000000000000000000000000000000009932"
+        project.save(update_fields=["vault"])
         cache.set(
             f"saas:permission:{project.appid}",
             {
@@ -936,142 +742,37 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         self.assertEqual(methods[usdt.symbol], [eth_chain.code])
 
 
-class InvoiceDifferBillingValidationTests(TestCase):
-    """差额账单链类型校验：差额模式可用性取决于项目是否为该 chain_type 配了差额收款地址，
-    而非硬绑 Tron——EVM 同样可以走差额模式。"""
-
-    def setUp(self):
-        cache.clear()
-        self.factory = APIRequestFactory()
-        Fiat.objects.get_or_create(code="USD")
-        self.eth_chain = Chain.objects.create(
-            code=ChainCode.Ethereum,
-            rpc="",
-            active=True,
-        )
-        self.usdt = Crypto.objects.create(
-            name="USDT EVM Differ",
-            symbol="USDTEVMD",
-            coingecko_id="usdt-evm-differ-billing",
-        )
-        ChainCryptoDeployment.objects.create(
-            crypto=self.usdt,
-            chain=self.eth_chain,
-            address="0x0000000000000000000000000000000000007701",
-            decimals=6,
-        )
-
-    def build_serializer(self, project):
-        request = self.factory.post(
-            "/invoices",
-            {},
-            format="json",
-            HTTP_XC_APPID=project.appid,
-        )
-        data = {
-            "out_no": "differ-evm-order",
-            "title": "differ evm",
-            "currency": self.usdt.symbol,
-            "amount": "10",
-            "methods": {self.usdt.symbol: [self.eth_chain.code]},
-            "billing_mode": InvoiceBillingMode.DIFFER,
-        }
-        return InvoiceCreateSerializer(data=data, context={"request": request})
-
-    def test_evm_differ_allowed_when_recipient_address_configured(self):
-        # 配了 EVM 差额收款地址 → EVM 合约代币可走差额模式，校验通过。
-        project = Project.objects.create(
-            name="EVM Differ With Recipient",
-        )
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000007702",
-        )
-
-        serializer = self.build_serializer(project)
-
-        self.assertTrue(serializer.is_valid(raise_exception=True))
-
-    def test_evm_differ_rejected_without_recipient_address(self):
-        # 只设了 vault（合约收款）但没配差额收款地址：available_methods 仍会因合约路径暴露
-        # EVM，但差额模式缺少收款地址无法分配，必须在校验阶段拒绝。
-        project = Project.objects.create(
-            name="EVM Vault Only",
-            vault="0x0000000000000000000000000000000000007703",
-        )
-
-        serializer = self.build_serializer(project)
-
-        with self.assertRaises(APIError) as ctx:
-            serializer.is_valid(raise_exception=True)
-        self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
-
-    def test_evm_differ_rejects_native_coin_method(self):
-        project = Project.objects.create(
-            name="EVM Differ Native Rejected",
-        )
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000007704",
-        )
-        request = self.factory.post(
-            "/invoices",
-            {},
-            format="json",
-            HTTP_XC_APPID=project.appid,
-        )
-        native = self.eth_chain.native_coin
-        serializer = InvoiceCreateSerializer(
-            data={
-                "out_no": "differ-evm-native-order",
-                "title": "differ evm native",
-                "currency": "USD",
-                "amount": "10",
-                "methods": {native.symbol: [self.eth_chain.code]},
-                "billing_mode": InvoiceBillingMode.DIFFER,
-            },
-            context={"request": request},
-        )
-
-        with self.assertRaises(APIError) as ctx:
-            serializer.is_valid(raise_exception=True)
-        self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
-
-
 class InvoiceContractBillingValidationTests(TestCase):
-    """合约账单的最终 methods 生成：CONTRACT 模式只暴露 EVM 链，默认 methods 自动过滤掉
-    Tron（而非报错），是「系统按 billing_mode 动态生成最终 methods」的核心行为。"""
+    """账单最终 methods 生成只暴露当前 VaultSlot 支持的 EVM 链。"""
 
     def setUp(self):
         cache.clear()
         self.factory = APIRequestFactory()
-        # 同时配了 Tron 差额地址和 vault 的多链商户。
         self.project = Project.objects.create(
             name="Invoice Mixed Billing Project",
             vault="0x0000000000000000000000000000000000007801",
         )
-        DifferRecipientAddress.objects.create(
-            name="tron-pay",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
-        )
-        # Tron 能力规则（supports_existing_invoice_method）限定 Tron 上只放行 USDT，
-        # 故混合多链场景必须用真实 USDT 符号，Tron 侧才会出现在可用方式里。
         self.usdt = Crypto.objects.create(
             name="Tether USD",
             symbol="USDT",
             coingecko_id="usdt-mixed-billing",
         )
+        Fiat.objects.get_or_create(code="USD")
         self.eth_chain = Chain.objects.create(
-            code=ChainCode.Ethereum, rpc="", active=True
+            code=ChainCode.Ethereum,
+            rpc="",
+            active=False,
         )
+        Chain.objects.filter(pk=self.eth_chain.pk).update(
+            rpc="http://evm.invalid",
+            active=True,
+        )
+        self.eth_chain.refresh_from_db()
         self.tron_chain = Chain.objects.create(
-            code=ChainCode.Tron, rpc="http://tron.invalid", active=True
+            code=ChainCode.Tron,
+            rpc="http://tron.invalid",
+            tron_api_key="tron-key",
+            active=True,
         )
         ChainCryptoDeployment.objects.create(
             crypto=self.usdt,
@@ -1086,7 +787,7 @@ class InvoiceContractBillingValidationTests(TestCase):
             decimals=6,
         )
 
-    def build_serializer(self, *, methods, billing_mode):
+    def build_serializer(self, *, methods):
         request = self.factory.post(
             "/invoices",
             {},
@@ -1099,16 +800,12 @@ class InvoiceContractBillingValidationTests(TestCase):
             "currency": self.usdt.symbol,
             "amount": "10",
             "methods": methods,
-            "billing_mode": billing_mode,
         }
         return InvoiceCreateSerializer(data=data, context={"request": request})
 
-    def test_default_methods_contract_filters_out_tron(self):
-        # 不传 methods + CONTRACT：系统应自动生成 EVM-only 的最终 methods，
-        # Tron 被过滤掉而不是抛错（修复并集 + reject 导致的误报）。
-        serializer = self.build_serializer(
-            methods={}, billing_mode=InvoiceBillingMode.CONTRACT
-        )
+    def test_default_methods_filters_out_tron(self):
+        # 不传 methods：系统应自动生成 EVM-only 的最终 methods，Tron 被过滤掉而不是抛错。
+        serializer = self.build_serializer(methods={})
 
         self.assertTrue(serializer.is_valid(raise_exception=True))
         self.assertEqual(
@@ -1116,28 +813,64 @@ class InvoiceContractBillingValidationTests(TestCase):
             {self.usdt.symbol: [self.eth_chain.code]},
         )
 
-    def test_default_methods_differ_filters_out_evm(self):
-        # 同一项目走差额：差额收款地址只配了 Tron，故默认 methods 只含 Tron。
-        serializer = self.build_serializer(
-            methods={}, billing_mode=InvoiceBillingMode.DIFFER
-        )
-
-        self.assertTrue(serializer.is_valid(raise_exception=True))
-        self.assertEqual(
-            serializer.validated_data["methods"],
-            {self.usdt.symbol: [self.tron_chain.code]},
-        )
-
-    def test_explicit_tron_under_contract_rejected(self):
-        # 显式要求 Tron 走合约 → 合约模式不支持 Tron，拒绝。
+    def test_explicit_tron_rejected(self):
+        # 显式要求 Tron → 当前 VaultSlot 收款不支持 Tron，拒绝。
         serializer = self.build_serializer(
             methods={self.usdt.symbol: [self.tron_chain.code]},
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         with self.assertRaises(APIError) as ctx:
             serializer.is_valid(raise_exception=True)
         self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
+
+    @override_settings(
+        TRON_VAULT_SLOT_NILE_VERIFIED=True,
+        TRON_VAULT_SLOT_FACTORY_ADDRESS="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        TRON_VAULT_SLOT_TEMPLATE_ADDRESS="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+        TRON_VAULT_SLOT_FEE_LIMIT=150_000_000,
+        TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT=300_000_000,
+    )
+    def test_tron_methods_exposed_only_after_runtime_gate(self):
+        methods = Invoice.available_methods(self.project)
+
+        self.assertEqual(
+            set(methods[self.usdt.symbol]),
+            {self.eth_chain.code, self.tron_chain.code},
+        )
+
+    @override_settings(
+        TRON_VAULT_SLOT_NILE_VERIFIED=True,
+        TRON_VAULT_SLOT_FACTORY_ADDRESS="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        TRON_VAULT_SLOT_TEMPLATE_ADDRESS="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+        TRON_VAULT_SLOT_FEE_LIMIT=150_000_000,
+        TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT=300_000_000,
+    )
+    def test_select_method_allocates_tron_vault_slot(self):
+        from tron.models import TronVaultSlot
+
+        invoice = Invoice.objects.create(
+            project=self.project,
+            out_no="tron-select-method",
+            title="tron",
+            currency=self.usdt.symbol,
+            amount=Decimal("10"),
+            methods={self.usdt.symbol: [self.tron_chain.code]},
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+        selected = invoice.select_method(self.usdt, self.tron_chain)
+
+        self.assertTrue(selected)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.chain, self.tron_chain)
+        self.assertTrue(invoice.pay_address.startswith("T"))
+        self.assertTrue(
+            TronVaultSlot.objects.filter(
+                chain=self.tron_chain,
+                project=self.project,
+                address=invoice.pay_address,
+            ).exists()
+        )
 
 
 class InvoiceConfirmDropStatusTests(TestCase):
@@ -1272,12 +1005,8 @@ class InvoiceExpiredMatchTests(TestCase):
         self.recipient_address = Web3.to_checksum_address(
             "0x00000000000000000000000000000000000000E1"
         )
-        DifferRecipientAddress.objects.create(
-            name="收款地址-expired",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address=self.recipient_address,
-        )
+        self.project.vault = self.recipient_address
+        self.project.save(update_fields=["vault"])
 
     def test_expired_invoice_can_still_match_current_payment_by_transfer_time(self):
         # scanner 可能晚于过期任务看到链上交易；只要交易发生在账单窗口内，
@@ -1350,14 +1079,10 @@ class FallbackInvoiceExpiredTests(TestCase):
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
-        DifferRecipientAddress.objects.create(
-            name="收款地址-fallback",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000F1"
-            ),
+        self.project.vault = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000F1"
         )
+        self.project.save(update_fields=["vault"])
 
     def test_fallback_expires_waiting_invoices(self):
         # fallback 任务应批量将过期的 WAITING 账单标记为 EXPIRED。
@@ -1418,14 +1143,10 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             active=True,
         )
         Fiat.objects.get_or_create(code="USD")
-        DifferRecipientAddress.objects.create(
-            name="收款地址-atomic",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000A7"
-            ),
+        self.project.vault = Web3.to_checksum_address(
+            "0x00000000000000000000000000000000000000A7"
         )
+        self.project.save(update_fields=["vault"])
 
     def test_check_expired_skips_already_matched_invoice(self):
         # 并发场景：check_expired 执行时如果账单已被 try_match 推进到 CONFIRMING，
@@ -1466,28 +1187,6 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, InvoiceStatus.CONFIRMING)
         self.assertEqual(invoice.transfer_id, transfer.pk)
-
-
-class InvoiceAllocationRetryExhaustedTests(InvoiceTestMixin, TestCase):
-    """MAX_ALLOCATION_RETRY 耗尽场景：所有地址/金额组合被占用时应抛出 InvoiceAllocationError。"""
-
-    def setUp(self):
-        self.setup_base_fixtures(
-            username="merchant-retry",
-            project_name="RetryProject",
-            crypto_symbol="USDTR",
-            chain_name=ChainCode.BSC,
-        )
-
-    def test_select_method_raises_when_all_payments_occupied(self):
-        # 当所有地址/金额组合都被占用时，应抛出 InvoiceAllocationError。
-        invoice = self.create_test_invoice(out_no="retry-order")
-
-        with (
-            patch.object(Invoice, "get_pay_differ", return_value=(None, None)),
-            self.assertRaises(InvoiceAllocationError),
-        ):
-            invoice.select_method(self.crypto, self.chain)
 
 
 class InvoiceCreatePermissionCheckTests(TestCase):
@@ -1775,7 +1474,7 @@ class InvoiceSelectForUpdateLockScopeTests(InvoicePaymentSelectionTests):
             InvoiceService.drop_invoice(invoice)
 
 
-class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
+class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
     def setUp(self):
         self.setup_base_fixtures()
 
@@ -1799,10 +1498,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         invoice.refresh_from_db()
 
-    def test_invoice_default_billing_mode_is_differ(self):
-        invoice = self._make_minimal_invoice()
-        self.assertEqual(invoice.billing_mode, InvoiceBillingMode.DIFFER)
-
     def test_contract_slot_uses_project_vault(self):
         vault_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000F01"
@@ -1811,7 +1506,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         invoice = self.create_test_invoice(
             out_no="contract-vault-source",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         pay_address, pay_amount = invoice._allocate_contract_slot(
@@ -1839,7 +1533,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         invoice = self.create_test_invoice(
             out_no="contract-slot-row",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         with self.captureOnCommitCallbacks(execute=False):
@@ -1869,7 +1562,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         invoice = self.create_test_invoice(
             out_no="contract-slot-object",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         with self.captureOnCommitCallbacks(execute=False):
@@ -1897,7 +1589,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         first_invoice = self.create_test_invoice(
             out_no="contract-reuse-first",
-            billing_mode=InvoiceBillingMode.CONTRACT,
             status=InvoiceStatus.EXPIRED,
             expires_at=timezone.now() - timedelta(minutes=1),
         )
@@ -1915,7 +1606,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-second",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         second_pay_address, _ = second_invoice._allocate_contract_slot(
@@ -1947,7 +1637,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         first_invoice = self.create_test_invoice(
             out_no="contract-waiting-expired-first",
-            billing_mode=InvoiceBillingMode.CONTRACT,
             expires_at=timezone.now() - timedelta(minutes=1),
         )
         first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
@@ -1967,7 +1656,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
 
         second_invoice = self.create_test_invoice(
             out_no="contract-waiting-expired-second",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         second_pay_address, _ = second_invoice._allocate_contract_slot(
             self.crypto,
@@ -1993,7 +1681,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         first_invoice = self.create_test_invoice(
             out_no="contract-reuse-amount-first",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
             self.crypto,
@@ -2009,7 +1696,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-amount-second",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         second_pay_address, _ = second_invoice._allocate_contract_slot(
@@ -2042,7 +1728,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         first_invoice = self.create_test_invoice(
             out_no="contract-reuse-crypto-first",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
             self.crypto,
@@ -2058,7 +1743,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-reuse-crypto-second",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         second_pay_address, _ = second_invoice._allocate_contract_slot(
@@ -2085,7 +1769,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         first_invoice = self.create_test_invoice(
             out_no="contract-overlap-first",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         first_pay_address, first_pay_amount = first_invoice._allocate_contract_slot(
             self.crypto,
@@ -2101,7 +1784,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         )
         second_invoice = self.create_test_invoice(
             out_no="contract-overlap-second",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         second_pay_address, _ = second_invoice._allocate_contract_slot(
@@ -2137,7 +1819,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
         self.project.save(update_fields=["vault"])
         invoice = self.create_test_invoice(
             out_no="contract-retry-reselect",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         with self.captureOnCommitCallbacks(execute=False):
             VaultSlot.ensure_invoice_address(
@@ -2195,7 +1876,6 @@ class InvoiceBillingModeFieldTest(TestCase, InvoiceTestMixin):
     def test_contract_slot_rejects_project_without_vault(self):
         invoice = self.create_test_invoice(
             out_no="contract-vault-missing",
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         with self.assertRaises(Invoice.InvoiceAllocationError):
@@ -2212,7 +1892,6 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
         )
         self.invoice = self.create_test_invoice(
             out_no="contract-match-order",
-            billing_mode=InvoiceBillingMode.CONTRACT,
             amount=Decimal("100"),
         )
         self.slot_address = Web3.to_checksum_address(
@@ -2223,7 +1902,6 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
             chain=self.chain,
             pay_address=self.slot_address,
             pay_amount=Decimal("100"),
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
         self.invoice.refresh_from_db()
 
@@ -2266,7 +1944,6 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
     def test_contract_match_uses_exact_amount_when_slot_is_shared(self):
         newer_invoice = self.create_test_invoice(
             out_no="contract-match-newer",
-            billing_mode=InvoiceBillingMode.CONTRACT,
             amount=Decimal("150"),
         )
         Invoice.objects.filter(pk=newer_invoice.pk).update(
@@ -2274,7 +1951,6 @@ class TryMatchContractInvoiceTest(TestCase, InvoiceTestMixin):
             chain=self.chain,
             pay_address=self.slot_address,
             pay_amount=Decimal("150"),
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         transfer = self._make_transfer(Decimal("100"))

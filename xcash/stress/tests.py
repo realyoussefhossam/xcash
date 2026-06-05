@@ -23,13 +23,11 @@ from stress.models import InvoiceStressCaseStatus
 from stress.models import StressRun
 from stress.models import StressRunStatus
 from stress.payment import simulate_payment
-from stress.service import _ANVIL_RECIPIENT_ADDRESSES
 from stress.service import STRESS_FIXED_METHODS
 from stress.service import StressService
 from stress.service import _build_deposit_cases
 from stress.service import _build_stress_cases
 from stress.service import _require_stress_methods_ready
-from stress.service import _setup_differ_recipient_addresses
 from stress.service import _setup_wallet_for_vault
 from stress.tasks import _do_payment
 from stress.tasks import _execute
@@ -48,9 +46,7 @@ from currencies.models import Crypto
 from currencies.models import Fiat
 from evm.models import VaultSlot
 from evm.models import VaultSlotUsage
-from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
-from invoices.models import InvoiceBillingMode
 from projects.models import Project
 
 
@@ -67,14 +63,11 @@ class StressServiceTests(SimpleTestCase):
         self.addCleanup(cleanup_patch.stop)
 
     def test_create_invoice_posts_project_available_local_methods(self):
-        from invoices.models import InvoiceBillingMode
-
         project = SimpleNamespace(appid="app-1", hmac_key="secret")
         stress_run = SimpleNamespace(pk=12, project=project)
         case = SimpleNamespace(
             sequence=7,
             stress_run=stress_run,
-            billing_mode=InvoiceBillingMode.DIFFER,
         )
 
         response = Mock()
@@ -105,48 +98,12 @@ class StressServiceTests(SimpleTestCase):
         self.assertEqual(payload["out_no"], "STRESS-12-7")
         build_headers_mock.assert_called_once_with(project, body)
 
-    def test_create_invoice_includes_case_billing_mode(self):
-        from invoices.models import InvoiceBillingMode
-
-        project = SimpleNamespace(appid="app-2", hmac_key="secret")
-        stress_run = SimpleNamespace(pk=33, project=project)
-        case = SimpleNamespace(
-            sequence=4,
-            stress_run=stress_run,
-            billing_mode=InvoiceBillingMode.CONTRACT,
-        )
-        response = Mock()
-        response.status_code = 200
-        response.json.return_value = {"sys_no": "INV-CONTRACT"}
-
-        with (
-            patch(
-                "stress.service.Invoice.available_methods",
-                return_value={
-                    "ETH": ["anvil"],
-                    "USDT": ["anvil"],
-                },
-            ),
-            patch.object(
-                StressService,
-                "_build_hmac_headers",
-                return_value={"X-Test": "1"},
-            ),
-            patch("stress.service.httpx.post", return_value=response) as post_mock,
-        ):
-            StressService.create_invoice(case)
-
-        body = post_mock.call_args.kwargs["content"]
-        payload = json.loads(body)
-        self.assertEqual(payload["billing_mode"], InvoiceBillingMode.CONTRACT)
-
     def test_create_invoice_raises_when_project_methods_incomplete(self):
         project = SimpleNamespace(appid="app-1", hmac_key="secret")
         stress_run = SimpleNamespace(pk=12, project=project)
         case = SimpleNamespace(
             sequence=7,
             stress_run=stress_run,
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
         with (
@@ -221,9 +178,8 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Project.objects.create", return_value=created_project
             ),
-            patch("stress.service._setup_differ_recipient_addresses"),
-            # 账单压测会稳定包含 CONTRACT/VaultSlot case，prepare 需要触发钱包与
-            # Vault 注资；本单元测试只关心生成的 case，故 mock 掉这些远端依赖。
+            # 账单压测需要触发钱包与 Vault 注资；本单元测试只关心生成的 case，
+            # 故 mock 掉这些远端依赖。
             patch("stress.service._setup_wallet_for_vault"),
             patch("stress.service._fund_vault_for_stress"),
             patch(
@@ -239,7 +195,7 @@ class StressServiceTests(SimpleTestCase):
         self.assertEqual(len(created_cases), 5)
         self.assertTrue(all(not hasattr(case, "scenario") for case in created_cases))
 
-    def test_build_stress_cases_mixes_differ_and_contract_billing_modes(self):
+    def test_build_stress_cases_creates_invoice_cases(self):
         stress = StressRun(id=23, count=100)
 
         with (
@@ -248,13 +204,10 @@ class StressServiceTests(SimpleTestCase):
         ):
             cases = _build_stress_cases(stress)
 
-        billing_modes = [case.billing_mode for case in cases]
-        self.assertEqual(billing_modes.count(InvoiceBillingMode.DIFFER), 50)
-        self.assertEqual(billing_modes.count(InvoiceBillingMode.CONTRACT), 50)
+        self.assertEqual(len(cases), 100)
+        self.assertTrue(all(case.stress_run is stress for case in cases))
 
-    def test_prepare_funds_vault_when_invoice_cases_include_contract_billing(self):
-        from invoices.models import InvoiceBillingMode
-
+    def test_prepare_funds_vault_when_invoice_cases_exist(self):
         stress = StressRun(
             id=23,
             count=2,
@@ -268,7 +221,6 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Project.objects.create", return_value=created_project
             ),
-            patch("stress.service._setup_differ_recipient_addresses"),
             patch("stress.service._setup_wallet_for_vault") as setup_wallet_mock,
             patch("stress.service._fund_vault_for_stress") as fund_vault_mock,
             patch(
@@ -282,11 +234,7 @@ class StressServiceTests(SimpleTestCase):
 
         setup_wallet_mock.assert_called_once_with(created_project)
         fund_vault_mock.assert_called_once_with(created_project)
-        created_cases = bulk_create_mock.call_args.args[0]
-        self.assertIn(
-            InvoiceBillingMode.CONTRACT,
-            {case.billing_mode for case in created_cases},
-        )
+        self.assertEqual(len(bulk_create_mock.call_args.args[0]), 2)
 
     def test_prepare_seeds_full_saas_permission_cache_for_created_project(self):
         stress = StressRun(
@@ -307,9 +255,8 @@ class StressServiceTests(SimpleTestCase):
             patch(
                 "stress.service.Project.objects.create", return_value=created_project
             ),
-            patch("stress.service._setup_differ_recipient_addresses"),
-            # 账单压测会稳定包含 CONTRACT/VaultSlot case，prepare 需要触发钱包与
-            # Vault 注资；本测试只关心 SaaS 权限缓存预置，故 mock 掉这些远端依赖。
+            # 账单压测需要触发钱包与 Vault 注资；本测试只关心 SaaS 权限缓存预置，
+            # 故 mock 掉这些远端依赖。
             patch("stress.service._setup_wallet_for_vault"),
             patch("stress.service._fund_vault_for_stress"),
             patch("stress.service.cache", create=True) as cache_mock,
@@ -326,31 +273,6 @@ class StressServiceTests(SimpleTestCase):
         cache_mock.set.assert_any_call(
             "saas:permission:XC-STRESS:stale", expected_perm, 86400
         )
-
-    def test_prepare_raises_when_recipient_setup_fails(self):
-        stress = StressRun(
-            id=23,
-            count=5,
-            status=StressRunStatus.PREPARING,
-        )
-        stress.save = Mock()
-
-        with (
-            patch("stress.service.Project.objects.create", return_value=Project(pk=99)),
-            patch(
-                "stress.service._setup_differ_recipient_addresses",
-                side_effect=RuntimeError("recipient setup failed"),
-            ),
-            patch("stress.service.cache", create=True) as cache_mock,
-            patch(
-                "stress.service.InvoiceStressCase.objects.bulk_create"
-            ) as bulk_create_mock,
-            self.assertRaisesMessage(RuntimeError, "recipient setup failed"),
-        ):
-            StressService.prepare(stress)
-
-        bulk_create_mock.assert_not_called()
-        cache_mock.set.assert_not_called()
 
     def test_build_deposit_cases_uses_decimal_sampling_without_float_uniform(self):
         stress = StressRun(
@@ -997,28 +919,6 @@ class StressRecipientSetupTests(TestCase):
             active=True,
         )
 
-    def test_setup_differ_recipient_addresses_creates_local_recipients_without_templates(
-        self,
-    ):
-        _setup_differ_recipient_addresses(self.project)
-
-        recipients = list(
-            DifferRecipientAddress.objects.filter(project=self.project)
-            .order_by("chain_type", "address")
-            .values("chain_type", "address")
-        )
-
-        self.assertEqual(
-            recipients,
-            [
-                {
-                    "chain_type": ChainType.EVM.value,
-                    "address": _ANVIL_RECIPIENT_ADDRESSES[0],
-                },
-            ],
-        )
-
-
 class FinalizeStressTimeoutTests(TestCase):
     def setUp(self):
         self.stress_run = StressRun.objects.create(
@@ -1328,10 +1228,10 @@ class StressWebhookTests(TestCase):
         self.assertTrue(self.case.webhook_received)
 
 
-class HandleInvoiceWebhookBillingModeTests(TestCase):
-    """webhook 验证通过后按 billing_mode 分流。"""
+class HandleInvoiceWebhookTests(TestCase):
+    """invoice webhook 验证通过后进入归集验证中间态。"""
 
-    def _build_case(self, *, billing_mode):
+    def _build_case(self):
         from projects.models import Project
 
         project = Project.objects.create(
@@ -1354,7 +1254,6 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
             invoice_sys_no="INV-WH-1",
             invoice_out_no="OUT-WH-1",
             status=InvoiceStressCaseStatus.PAID,
-            billing_mode=billing_mode,
         )
 
     def _post_webhook(self, *, case):
@@ -1392,23 +1291,8 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
         request.META[f"HTTP_{SIGNATURE_HEADER.upper().replace('-', '_')}"] = signature
         return stress_webhook_view(request)
 
-    def test_differ_invoice_webhook_ok_marks_succeeded(self):
-        from invoices.models import InvoiceBillingMode
-
-        case = self._build_case(billing_mode=InvoiceBillingMode.DIFFER)
-
-        with patch("stress.views.StressService.on_case_finished") as on_finish_mock:
-            self._post_webhook(case=case)
-
-        case.refresh_from_db()
-        self.assertEqual(case.status, InvoiceStressCaseStatus.SUCCEEDED)
-        self.assertIsNotNone(case.finished_at)
-        on_finish_mock.assert_called_once()
-
-    def test_contract_invoice_webhook_ok_marks_webhook_ok(self):
-        from invoices.models import InvoiceBillingMode
-
-        case = self._build_case(billing_mode=InvoiceBillingMode.CONTRACT)
+    def test_invoice_webhook_ok_marks_webhook_ok(self):
+        case = self._build_case()
 
         with (
             patch("stress.views.StressService.on_case_finished") as on_finish_mock,
@@ -1425,10 +1309,8 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
         on_finish_mock.assert_not_called()
         trigger_mock.assert_called_once_with(case.stress_run_id)
 
-    def test_contract_invoice_webhook_can_arrive_while_payment_task_is_paying(self):
-        from invoices.models import InvoiceBillingMode
-
-        case = self._build_case(billing_mode=InvoiceBillingMode.CONTRACT)
+    def test_invoice_webhook_can_arrive_while_payment_task_is_paying(self):
+        case = self._build_case()
         case.status = InvoiceStressCaseStatus.PAYING
         case.save(update_fields=["status"])
 
@@ -1447,10 +1329,8 @@ class HandleInvoiceWebhookBillingModeTests(TestCase):
         on_finish_mock.assert_not_called()
         trigger_mock.assert_called_once_with(case.stress_run_id)
 
-    def test_contract_invoice_webhook_replay_does_not_flip_to_failed(self):
-        from invoices.models import InvoiceBillingMode
-
-        case = self._build_case(billing_mode=InvoiceBillingMode.CONTRACT)
+    def test_invoice_webhook_replay_does_not_flip_to_failed(self):
+        case = self._build_case()
 
         # 首次 webhook：PAID → WEBHOOK_OK
         with (
@@ -1483,7 +1363,7 @@ class StressContractProvisioningTests(TestCase):
 
     覆盖 vault 修复与链命名收敛后、stress 合约单的建单前置与收款分配：
     - _setup_wallet_for_vault 把系统钱包派生的项目专用 EVM 地址写入 project.vault；
-    - _require_stress_methods_ready 按 CONTRACT 校验：缺 vault 时即便配了差额收款地址也要报错；
+    - _require_stress_methods_ready 校验 project.vault；
     - 合约 Invoice.select_method 在 vault 就绪时真实分配 VaultSlot 收款地址，缺 vault 时分配失败。
 
     这些路径在 stress 单元测试里被 mock 掩盖，必须走真实 DB + 真实分配逻辑才能暴露 vault 缺失。
@@ -1529,7 +1409,6 @@ class StressContractProvisioningTests(TestCase):
             amount=Decimal("10"),
             methods=methods,
             expires_at=timezone.now() + timedelta(minutes=10),
-            billing_mode=InvoiceBillingMode.CONTRACT,
         )
 
     def test_setup_wallet_for_vault_assigns_unique_system_derived_vault(self):
@@ -1569,24 +1448,14 @@ class StressContractProvisioningTests(TestCase):
             vault="0x0000000000000000000000000000000000009001",
         )
         self.assertEqual(
-            _require_stress_methods_ready(project, InvoiceBillingMode.CONTRACT),
+            _require_stress_methods_ready(project),
             STRESS_FIXED_METHODS,
         )
 
-    def test_require_stress_methods_ready_uses_case_billing_mode(self):
+    def test_require_stress_methods_ready_requires_vault(self):
         project = self.make_project(name="stress-ready-no-vault")
-        DifferRecipientAddress.objects.create(
-            name="evm-pay",
-            project=project,
-            chain_type=ChainType.EVM,
-            address="0x0000000000000000000000000000000000009101",
-        )
-        self.assertEqual(
-            _require_stress_methods_ready(project, InvoiceBillingMode.DIFFER),
-            STRESS_FIXED_METHODS,
-        )
         with self.assertRaisesMessage(RuntimeError, "收款地址未准备完整"):
-            _require_stress_methods_ready(project, InvoiceBillingMode.CONTRACT)
+            _require_stress_methods_ready(project)
 
     def test_contract_select_method_allocates_vault_slot_with_vault(self):
         project = self.make_project(

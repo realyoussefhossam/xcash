@@ -20,7 +20,6 @@ from currencies.service import FiatService
 from projects.service import ProjectService
 
 from .models import Invoice
-from .models import InvoiceBillingMode
 from .models import InvoiceProtocol
 from .models import InvoiceStatus
 from .service import InvoiceService
@@ -72,7 +71,7 @@ class InvoiceCreateSerializer(Serializer):
         min_value=Decimal("0.00000001"),
         max_value=Decimal(
             "1000000"
-        ),  # 单笔上限 100 万，防止天文数字金额干扰汇率换算和差额分配
+        ),  # 单笔上限 100 万，防止天文数字金额干扰汇率换算和支付分配
     )
     duration = serializers.IntegerField(
         required=False,
@@ -83,11 +82,6 @@ class InvoiceCreateSerializer(Serializer):
     methods = serializers.JSONField(required=False, default=dict)
     notify_url = serializers.URLField(required=False)
     return_url = serializers.URLField(required=False)
-    billing_mode = serializers.ChoiceField(
-        choices=InvoiceBillingMode,
-        default=InvoiceBillingMode.DIFFER,
-        required=False,
-    )
 
     def _get_project(self):
         # 缓存到实例，避免 validate_out_no / validate_methods / validate 三处重复查询。
@@ -120,11 +114,8 @@ class InvoiceCreateSerializer(Serializer):
         ):
             raise APIError(ErrorCode.TOO_MANY_WAITING)
 
-        # billing_mode 决定可付组合：合约（EVM+vault）与差额（对应 chain_type 收款地址）
-        # 各自的可用方式不同，最终 methods 由 finalize_methods 按模式动态生成/收敛。
         attrs["methods"] = InvoiceService.finalize_methods(
             project=project,
-            billing_mode=attrs.get("billing_mode", InvoiceBillingMode.DIFFER),
             requested=attrs.get("methods") or {},
             currency=attrs["currency"],
         )

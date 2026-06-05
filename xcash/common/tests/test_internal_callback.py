@@ -121,7 +121,7 @@ class InternalCallbackTest(TestCase):
 
         from common.internal_callback import InternalCallback
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"invoice\.paid"):
             InternalCallback(
                 event="invoice.paid",  # 不在 CallbackEvent 内
                 appid="XC-test",
@@ -137,7 +137,7 @@ class InternalCallbackTest(TestCase):
         from common.internal_callback import InternalCallback
 
         # invoice/deposit 缺 worth → 报错
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="必须且只能带 worth"):
             InternalCallback(
                 event=CallbackEvent.INVOICE_CONFIRMED,
                 appid="XC-test",
@@ -145,7 +145,7 @@ class InternalCallbackTest(TestCase):
                 currency="USDT",
             )
         # gas_fee 缺 tx_detail（误用 worth）→ 报错
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="gas_fee 回调必须且只能带 tx_detail"):
             InternalCallback(
                 event=CallbackEvent.GAS_FEE_VAULT_SLOT_DEPLOY,
                 appid="XC-test",

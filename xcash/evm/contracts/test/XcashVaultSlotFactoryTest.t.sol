@@ -2,6 +2,7 @@
 pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {XcashVaultSlotTemplate} from "../src/XcashVaultSlotTemplate.sol";
 import {XcashVaultSlotFactory} from "../src/XcashVaultSlotFactory.sol";
 import {MockERC20} from "./helpers/MockERC20.sol";
@@ -40,15 +41,9 @@ contract XcashVaultSlotFactoryTest is Test {
         new XcashVaultSlotFactory(address(wrongTemplate));
     }
 
-    function test_factory_exposes_single_predict_vault_slot_selector() public pure {
-        bytes4 selector = XcashVaultSlotFactory.predictVaultSlot.selector;
-
-        assertEq(selector, bytes4(keccak256("predictVaultSlot(address,bytes32)")));
-    }
-
     function test_predict_address_matches_deployed_vault_slot() public {
         bytes32 salt = keccak256("deposit-001");
-        address predicted = factory.predictVaultSlot(vault, salt);
+        address predicted = _predict(vault, salt);
 
         vm.expectEmit(true, true, true, true, address(factory));
         emit XcashVaultSlotDeployed(predicted, vault, salt);
@@ -61,7 +56,7 @@ contract XcashVaultSlotFactoryTest is Test {
 
     function test_deployed_vault_slot_forwards_native_coin_and_emits_from_vault_slot() public {
         bytes32 salt = keccak256("native-deposit");
-        address payable predicted = payable(factory.predictVaultSlot(vault, salt));
+        address payable predicted = payable(_predict(vault, salt));
         address payer = address(0xA11CE);
         vm.deal(payer, 1 ether);
 
@@ -80,7 +75,7 @@ contract XcashVaultSlotFactoryTest is Test {
 
     function test_deployed_vault_slot_collects_erc20_to_vault() public {
         bytes32 salt = keccak256("erc20-deposit");
-        address predicted = factory.predictVaultSlot(vault, salt);
+        address predicted = _predict(vault, salt);
         MockERC20 token = new MockERC20();
         token.mint(predicted, 1000e18);
         address deployed = factory.deployVaultSlot(vault, salt);
@@ -104,8 +99,8 @@ contract XcashVaultSlotFactoryTest is Test {
 
     function test_same_salt_with_different_vaults_deploys_different_vault_slots() public {
         bytes32 salt = keccak256("shared-business-id");
-        address firstPredicted = factory.predictVaultSlot(vault, salt);
-        address secondPredicted = factory.predictVaultSlot(secondVault, salt);
+        address firstPredicted = _predict(vault, salt);
+        address secondPredicted = _predict(secondVault, salt);
 
         assertNotEq(firstPredicted, secondPredicted);
 
@@ -128,5 +123,11 @@ contract XcashVaultSlotFactoryTest is Test {
         assertTrue(ok);
         assertEq(vault.balance, 0);
         assertEq(secondVault.balance, 1 ether);
+    }
+
+    function _predict(address payable vault_, bytes32 salt) private view returns (address) {
+        return Clones.predictDeterministicAddressWithImmutableArgs(
+            address(vaultSlotTemplate), abi.encodePacked(vault_), salt, address(factory)
+        );
     }
 }

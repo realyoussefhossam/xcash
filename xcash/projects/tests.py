@@ -6,12 +6,9 @@ from django.test import TestCase
 from django.test.client import RequestFactory
 
 from chains.constants import ChainCode
-from chains.constants import ChainType
 from chains.models import Chain
 from common.admin import ModelAdmin
 from currencies.models import Crypto
-from invoices.models import DifferRecipientAddress
-from projects.admin import DifferRecipientAddressInline
 from projects.admin import ProjectAdmin
 from projects.admin import ProjectForm
 from projects.models import Project
@@ -77,23 +74,6 @@ class ProjectAdminTests(TestCase):
 
         save_model_mock.assert_called_once()
 
-    def test_payment_address_inline_form_validates(self):
-        request = self.factory.get("/admin/projects/project/add/")
-        request.user = self.user
-
-        inline = DifferRecipientAddressInline(Project, admin.site)
-        formset_class = inline.get_formset(request, self.project)
-        form = formset_class.form(
-            data={
-                "name": "Invoice Inline",
-                "chain_type": ChainType.EVM,
-                "address": "0x52908400098527886E0F7030069857D2E4169EE7",
-            },
-            instance=DifferRecipientAddress(project=self.project),
-        )
-
-        self.assertTrue(form.is_valid(), form.errors)
-
     def test_project_form_accepts_contract_vault(self):
         contract_address = "0x52908400098527886E0F7030069857D2E4169EE7"
         form = ProjectForm(
@@ -137,43 +117,3 @@ class ProjectAdminTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("vault", form.errors)
-
-
-class DifferRecipientAddressCapabilityTests(TestCase):
-    def setUp(self):
-        self.project = Project.objects.create(name="Recipient Capability Project")
-
-    def test_clean_allows_tron_recipient_address(self):
-        recipient = DifferRecipientAddress(
-            name="Tron Recipient",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address="TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT",
-        )
-
-        recipient.clean()
-
-    def test_invoice_recipient_queryset_returns_project_recipients(self):
-        from projects.service import ProjectService
-
-        DifferRecipientAddress.objects.create(
-            name="Invoice Recipient",
-            project=self.project,
-            chain_type=ChainType.EVM,
-            address="0x52908400098527886E0F7030069857D2E4169EE7",
-        )
-        recipient = DifferRecipientAddress(
-            name="Other Chain Recipient",
-            project=self.project,
-            chain_type=ChainType.TRON,
-            address="TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT",
-        )
-        recipient.save()
-
-        qs = ProjectService.invoice_recipients(
-            self.project,
-            chain_type=ChainType.EVM,
-        )
-
-        self.assertEqual(qs.count(), 1)
-        self.assertEqual(qs.first().chain_type, ChainType.EVM)

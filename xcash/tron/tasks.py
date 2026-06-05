@@ -1,13 +1,149 @@
+import time
+
 import structlog
 from celery import shared_task
+from django.db import transaction as db_transaction
+from django.db.models import Q
 from tron.client import TronClientError
+from tron.models import TronTxTask
+from tron.models import TronVaultSlotCollectSchedule
+from tron.saas_gas_billing import notify_vault_slot_collect_gas_fee
+from tron.saas_gas_billing import notify_vault_slot_deploy_gas_fee
 from tron.scanner import TronUsdtPaymentScanner
 
+from chains.adapters import AdapterFactory
+from chains.adapters import TxCheckResult
+from chains.adapters import TxCheckStatus
 from chains.constants import ChainType
 from chains.models import Chain
+from chains.models import TxTask
+from chains.models import TxTaskStatus
+from chains.models import TxTaskType
 from common.decorators import singleton_task
+from common.time import ago
 
 logger = structlog.get_logger()
+
+
+def tx_check_status(result: TxCheckStatus | TxCheckResult) -> TxCheckStatus:
+    return result.status if isinstance(result, TxCheckResult) else result
+
+
+def has_required_confirmations(*, chain: Chain, result: TxCheckResult | None) -> bool:
+    if result is None or result.block_number is None:
+        return False
+    confirmed_at_or_before = chain.latest_block_number - chain.confirm_block_count
+    return int(result.block_number) <= confirmed_at_or_before
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=30, use_params=True)
+def broadcast_tron_task(pk: int) -> None:
+    tx_task = TronTxTask.objects.select_related("base_task", "chain", "sender").get(pk=pk)
+    if not tx_task.can_rebroadcast:
+        return
+    try:
+        tx_task.broadcast()
+    except TronClientError as exc:
+        logger.warning(
+            "Tron 任务广播失败",
+            task_pk=tx_task.pk,
+            chain=tx_task.chain.code,
+            error=str(exc),
+        )
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=64)
+@db_transaction.atomic
+def dispatch_tron_tx_tasks() -> None:
+    now_ms = int(time.time() * 1000)
+    tasks = (
+        TronTxTask.objects.select_for_update()
+        .select_related("base_task")
+        .filter(
+            Q(base_task__status=TxTaskStatus.QUEUED)
+            | Q(
+                base_task__status=TxTaskStatus.PENDING_CHAIN,
+                expiration__lte=now_ms,
+            ),
+            Q(last_attempt_at__isnull=True) | Q(last_attempt_at__lt=ago(minutes=2)),
+            created_at__lt=ago(seconds=2),
+        )
+        .order_by("created_at")[:16]
+    )
+    for task in tasks:
+        db_transaction.on_commit(lambda pk=task.pk: broadcast_tron_task.delay(pk))
+
+
+def notify_gas_fee_for_receipt_task(task: TxTask) -> None:
+    """按任务类型把已确认终局的链上成本回调给 SaaS 计费。"""
+    if task.tx_type == TxTaskType.VaultSlotDeploy:
+        notify_vault_slot_deploy_gas_fee(tx_task=task)
+    elif task.tx_type == TxTaskType.VaultSlotCollect:
+        notify_vault_slot_collect_gas_fee(tx_task=task)
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=55)
+def confirm_tron_receipt_tx_tasks() -> None:
+    """按回执收口 Tron 主动发起的链上任务(部署 / 归集)。
+
+    部署不产生 TRC20 入账,归集是 slot→vault(收款方为系统外 vault),二者都不会被
+    扫描器当作「打入系统观察地址」的入账观测,无法靠扫描器确认;统一在此用
+    adapter.tx_result 查回执推进终局,并在成功终局时按类型回调 SaaS 计费。
+    """
+    tasks = (
+        TxTask.objects.select_related("chain")
+        .filter(
+            chain__type=ChainType.TRON,
+            tx_type__in=(TxTaskType.VaultSlotDeploy, TxTaskType.VaultSlotCollect),
+            status__in=(TxTaskStatus.PENDING_CHAIN, TxTaskStatus.PENDING_CONFIRM),
+            tx_hash__isnull=False,
+        )
+        .exclude(tx_hash="")
+        .order_by("updated_at")[:32]
+    )
+    for task in tasks:
+        adapter = AdapterFactory.get_adapter(task.chain.type)
+        raw_result = adapter.tx_result(chain=task.chain, tx_hash=task.tx_hash)
+        if isinstance(raw_result, Exception):
+            logger.warning(
+                "Tron 主动交易回执确认查询失败",
+                chain=task.chain.code,
+                tx_task_id=task.pk,
+                tx_hash=task.tx_hash,
+                error=str(raw_result),
+            )
+            continue
+
+        result_meta = raw_result if isinstance(raw_result, TxCheckResult) else None
+        status = tx_check_status(raw_result)
+        if status == TxCheckStatus.SUCCEEDED:
+            TxTask.mark_pending_confirm(chain=task.chain, tx_hash=task.tx_hash)
+            if not has_required_confirmations(chain=task.chain, result=result_meta):
+                continue
+            updated = TxTask.mark_finalized_success(
+                chain=task.chain,
+                tx_hash=task.tx_hash,
+            )
+            if updated:
+                notify_gas_fee_for_receipt_task(task)
+        elif status == TxCheckStatus.MISSING:
+            continue
+        elif status == TxCheckStatus.FAILED:
+            TxTask.mark_finalized_failed(
+                task_id=task.pk,
+                expected_status=task.status,
+            )
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=55)
+def execute_due_tron_vault_slot_collect_schedules() -> None:
+    created_count = TronVaultSlotCollectSchedule.execute_due()
+    if created_count:
+        logger.info("Tron VaultSlot 到期归集计划已创建链上任务", count=created_count)
 
 
 @shared_task(ignore_result=True)

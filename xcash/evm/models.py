@@ -403,7 +403,6 @@ class VaultSlot(models.Model):
         invoice_pk: int,
     ) -> VaultSlotCollectSchedule | None:
         from invoices.models import Invoice
-        from invoices.models import InvoiceBillingMode
 
         invoice = Invoice.objects.select_related(
             "project",
@@ -411,8 +410,6 @@ class VaultSlot(models.Model):
             "crypto",
         ).get(pk=invoice_pk)
 
-        if invoice.billing_mode != InvoiceBillingMode.CONTRACT:
-            return None
         if (
             invoice.chain_id is None
             or invoice.crypto_id is None

@@ -523,19 +523,16 @@ def _finalize_collection_verification(
 @singleton_task(timeout=180, use_params=True)
 def verify_invoice_collection(self, stress_run_id: int) -> None:
     """VaultSlot 合约账单不再执行旧 collector 归集，webhook OK 后直接收口。"""
-    from invoices.models import InvoiceBillingMode
-
     try:
         stress = StressRun.objects.select_related("project").get(pk=stress_run_id)
     except StressRun.DoesNotExist:
         return
 
-    # 只处理已经通过 webhook 验证的合约 case。压测并发下可能有少数 case
+    # 只处理已经通过 webhook 验证的账单 case。压测并发下可能有少数 case
     # 仍停留在 CREATED/PAYING；它们不应阻塞同轮其他已完成归集的 case。
     webhook_ok_cases = list(
         InvoiceStressCase.objects.filter(
             stress_run=stress,
-            billing_mode=InvoiceBillingMode.CONTRACT,
             status=InvoiceStressCaseStatus.WEBHOOK_OK,
         )
     )
