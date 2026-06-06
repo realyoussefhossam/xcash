@@ -988,6 +988,26 @@ class TronReceiptConfirmTaskTests(TestCase):
         )
         return base_task
 
+    def create_deploy_task(self, *, tx_hash="b" * 64) -> TxTask:
+        base_task = TxTask.objects.create(
+            chain=self.chain,
+            sender=self.sender,
+            tx_type=TxTaskType.VaultSlotDeploy,
+            status=TxTaskStatus.PENDING_CHAIN,
+        )
+        base_task.append_tx_hash(tx_hash)
+        TronTxTask.objects.create(
+            base_task=base_task,
+            sender=self.sender,
+            chain=self.chain,
+            to="TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+            function_selector="deployVaultSlot(address,bytes32)",
+            parameter="00" * 64,
+            fee_limit=150_000_000,
+        )
+        VaultSlot.objects.filter(pk=self.slot.pk).update(deploy_tx_task=base_task)
+        return base_task
+
     @patch("tron.tasks.notify_vault_slot_deploy_gas_fee")
     @patch("tron.tasks.notify_vault_slot_collect_gas_fee")
     @patch("tron.tasks.AdapterFactory.get_adapter")
@@ -1015,6 +1035,34 @@ class TronReceiptConfirmTaskTests(TestCase):
             collect_gas_fee.call_args.kwargs["tx_task"].pk, base_task.pk
         )
         deploy_gas_fee.assert_not_called()
+
+    @patch("tron.tasks.notify_vault_slot_deploy_gas_fee")
+    @patch("tron.tasks.notify_vault_slot_collect_gas_fee")
+    @patch("tron.tasks.AdapterFactory.get_adapter")
+    def test_confirm_finalizes_deploy_marks_slot_deployed_and_triggers_gas_fee(
+        self,
+        get_adapter,
+        collect_gas_fee,
+        deploy_gas_fee,
+    ):
+        base_task = self.create_deploy_task()
+        adapter = Mock()
+        adapter.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.SUCCEEDED,
+            block_number=100,
+            block_hash="d" * 64,
+        )
+        get_adapter.return_value = adapter
+
+        confirm_tron_receipt_tx_tasks()
+
+        base_task.refresh_from_db()
+        self.slot.refresh_from_db()
+        self.assertEqual(base_task.status, TxTaskStatus.CONFIRMED)
+        self.assertTrue(self.slot.is_deployed)
+        deploy_gas_fee.assert_called_once()
+        self.assertEqual(deploy_gas_fee.call_args.kwargs["tx_task"].pk, base_task.pk)
+        collect_gas_fee.assert_not_called()
 
     @patch("tron.tasks.notify_vault_slot_collect_gas_fee")
     @patch("tron.tasks.AdapterFactory.get_adapter")

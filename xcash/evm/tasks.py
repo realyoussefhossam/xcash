@@ -12,6 +12,8 @@ from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.tasks import dispatch_block_confirmation_checks_if_needed
+from chains.vault_slots import mark_deployed_by_task
+from chains.vault_slots import mark_deployed_if_on_chain_for_task
 from common.decorators import singleton_task
 from common.time import ago
 from evm.internal_tx.routing import NON_TRANSFER_TX_TASK_TYPES
@@ -162,6 +164,7 @@ def confirm_non_transfer_tx_tasks() -> None:
                 tx_hash=task.tx_hash,
             )
             if updated and task.tx_type == TxTaskType.VaultSlotDeploy:
+                mark_deployed_by_task(task)
                 notify_vault_slot_deploy_gas_fee(tx_task=task)
         elif status == TxCheckStatus.MISSING:
             continue
@@ -172,6 +175,8 @@ def confirm_non_transfer_tx_tasks() -> None:
             )
             if updated:
                 get_handler(TxTaskType(task.tx_type)).finalize_failed(task)
+                if task.tx_type == TxTaskType.VaultSlotDeploy:
+                    mark_deployed_if_on_chain_for_task(task)
 
 
 @shared_task(ignore_result=True)

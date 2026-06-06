@@ -256,6 +256,7 @@ class VaultSlotAdminBase(ReadOnlyModelAdmin):
         "address",
         "salt",
         "deploy_tx_task",
+        "is_deployed",
         "has_received",
         "created_at",
     )
@@ -277,6 +278,7 @@ class DepositVaultSlotAdmin(VaultSlotAdminBase):
         "project",
         "chain",
         "address",
+        "is_deployed",
         "has_received",
         "created_at",
     )
@@ -291,6 +293,7 @@ class InvoiceVaultSlotAdmin(VaultSlotAdminBase):
         "invoice_index",
         "chain",
         "address",
+        "is_deployed",
         "has_received",
         "created_at",
     )

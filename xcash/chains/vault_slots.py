@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import structlog
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
 
+from chains.models import TERMINAL_TX_TASK_STATUSES
 from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxTask
@@ -10,6 +12,8 @@ from chains.models import TxTaskStatus
 from chains.models import VaultSlot
 from chains.models import VaultSlotCollectSchedule
 from chains.models import VaultSlotUsage
+
+logger = structlog.get_logger()
 
 
 def ensure_deposit_address(*, chain: Chain, customer) -> str:
@@ -25,9 +29,10 @@ def ensure_deposit_address(*, chain: Chain, customer) -> str:
         customer=customer,
     ).first()
     if existing is not None:
-        db_transaction.on_commit(
-            lambda slot_pk=existing.pk: VaultSlot.schedule_deploy(slot_pk)
-        )
+        if not existing.is_deployed:
+            db_transaction.on_commit(
+                lambda slot_pk=existing.pk: VaultSlot.schedule_deploy(slot_pk)
+            )
         return existing.address
 
     if not project.vault:
@@ -79,9 +84,10 @@ def ensure_invoice_address(*, project, chain: Chain, invoice_index: int) -> str:
         invoice_index=invoice_index,
     ).first()
     if existing is not None:
-        db_transaction.on_commit(
-            lambda slot_pk=existing.pk: VaultSlot.schedule_deploy(slot_pk)
-        )
+        if not existing.is_deployed:
+            db_transaction.on_commit(
+                lambda slot_pk=existing.pk: VaultSlot.schedule_deploy(slot_pk)
+            )
         return existing.address
 
     if not project.vault:
@@ -135,18 +141,29 @@ def schedule_deploy(slot_pk: int) -> TxTask | None:
         # 并发 waiters 可能在首个事务更新 deploy_tx_task 前就已经发起
         # SELECT ... FOR UPDATE 并排队。拿到锁后必须重新读这个判重字段，
         # 否则会继续使用排队查询开始时的旧值，为同一 CREATE2 地址重复建任务。
-        slot.refresh_from_db(fields=["deploy_tx_task"])
+        slot.refresh_from_db(fields=["deploy_tx_task", "is_deployed"])
 
-        if slot.deploy_tx_task_id is not None:
-            deploy_task = TxTask.objects.get(pk=slot.deploy_tx_task_id)
-            # 仍在途或已确认成功的部署任务直接复用；只有失败终局才需重建。
-            if deploy_task.status != TxTaskStatus.FAILED:
-                return deploy_task
+        if slot.is_deployed:
+            return None
 
         backend = get_backend(slot.chain)
         backend.validate_runtime(chain=slot.chain)
+
+        deploy_task = None
+        if slot.deploy_tx_task_id is not None:
+            deploy_task = TxTask.objects.get(pk=slot.deploy_tx_task_id)
+
         if backend.is_deployed_on_chain(chain=slot.chain, address=slot.address):
+            mark_deployed(slot)
             return None
+
+        if (
+            deploy_task is not None
+            and deploy_task.status not in TERMINAL_TX_TASK_STATUSES
+        ):
+            return deploy_task
+        if deploy_task is not None and deploy_task.status == TxTaskStatus.CONFIRMED:
+            return deploy_task
 
         if not slot.project.vault:
             raise RuntimeError(f"Project {slot.project_id} VaultSlot Vault 地址未配置")
@@ -157,6 +174,51 @@ def schedule_deploy(slot_pk: int) -> TxTask | None:
         if isinstance(task, TxTask):
             VaultSlot.objects.filter(pk=slot.pk).update(deploy_tx_task=task)
         return task
+
+
+def mark_deployed(slot: VaultSlot) -> bool:
+    updated = VaultSlot.objects.filter(pk=slot.pk, is_deployed=False).update(
+        is_deployed=True
+    )
+    if updated:
+        slot.is_deployed = True
+    return bool(updated)
+
+
+def mark_deployed_by_task(tx_task: TxTask) -> bool:
+    return bool(
+        VaultSlot.objects.filter(
+            deploy_tx_task=tx_task,
+            is_deployed=False,
+        ).update(is_deployed=True)
+    )
+
+
+def mark_deployed_if_on_chain_for_task(tx_task: TxTask) -> bool:
+    slot = (
+        VaultSlot.objects.select_related("chain")
+        .filter(deploy_tx_task=tx_task)
+        .first()
+    )
+    if slot is None:
+        return False
+    if slot.is_deployed:
+        return True
+    backend = get_backend(slot.chain)
+    try:
+        deployed = backend.is_deployed_on_chain(chain=slot.chain, address=slot.address)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "VaultSlot 部署失败后链上状态检查失败",
+            chain=slot.chain.code,
+            vault_slot_id=slot.pk,
+            tx_task_id=tx_task.pk,
+            error=str(exc),
+        )
+        return False
+    if not deployed:
+        return False
+    return mark_deployed(slot)
 
 
 def schedule_collect_for_deposit(deposit_pk: int) -> VaultSlotCollectSchedule | None:

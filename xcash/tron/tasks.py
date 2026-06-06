@@ -18,6 +18,8 @@ from chains.models import Chain
 from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
+from chains.vault_slots import mark_deployed_by_task
+from chains.vault_slots import mark_deployed_if_on_chain_for_task
 from common.decorators import singleton_task
 from common.time import ago
 
@@ -127,14 +129,18 @@ def confirm_tron_receipt_tx_tasks() -> None:
                 tx_hash=task.tx_hash,
             )
             if updated:
+                if task.tx_type == TxTaskType.VaultSlotDeploy:
+                    mark_deployed_by_task(task)
                 notify_gas_fee_for_receipt_task(task)
         elif status == TxCheckStatus.MISSING:
             continue
         elif status == TxCheckStatus.FAILED:
-            TxTask.mark_finalized_failed(
+            updated = TxTask.mark_finalized_failed(
                 task_id=task.pk,
                 expected_status=task.status,
             )
+            if updated and task.tx_type == TxTaskType.VaultSlotDeploy:
+                mark_deployed_if_on_chain_for_task(task)
 
 
 @shared_task(ignore_result=True)

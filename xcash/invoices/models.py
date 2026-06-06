@@ -246,9 +246,10 @@ class Invoice(models.Model):
                 chain=chain,
                 crypto_amount=crypto_amount,
             ):
-                db_transaction.on_commit(
-                    lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk)
-                )
+                if not slot.is_deployed:
+                    db_transaction.on_commit(
+                        lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk)
+                    )
                 return slot
 
         latest_index = reusable_slots.aggregate(max_index=Max("invoice_index"))[

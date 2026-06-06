@@ -14,13 +14,17 @@ from django.utils import timezone
 from eth_utils import keccak
 from web3 import Web3
 
+from chains.adapters import TxCheckResult
+from chains.adapters import TxCheckStatus
 from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
+from chains.models import Chain
 from chains.models import ChainType
 from chains.models import Transfer
 from chains.models import TransferStatus
 from chains.models import TransferType
+from chains.models import TxTask
 from chains.models import TxTaskStatus
 from chains.models import TxTaskType
 from chains.models import VaultSlot
@@ -385,6 +389,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         schedule.assert_not_called()
         slot.refresh_from_db()
         self.assertIsNone(slot.deploy_tx_task)
+        self.assertTrue(slot.is_deployed)
 
     def test_schedule_deploy_returns_recorded_unfinalized_deploy_tx_task(self):
         slot = self._create_vault_slot()
@@ -407,11 +412,12 @@ class VaultSlotAddressSchedulingTests(TestCase):
             existing_task = VaultSlot.schedule_deploy(slot.pk)
         existing_task.status = TxTaskStatus.CONFIRMED
         existing_task.save(update_fields=["status", "updated_at"])
+        VaultSlot.objects.filter(pk=slot.pk).update(is_deployed=True)
 
         with address_patch, patch.object(EvmTxTask, "schedule") as schedule:
             task = VaultSlot.schedule_deploy(slot.pk)
 
-        self.assertEqual(task.pk, existing_task.pk)
+        self.assertIsNone(task)
         schedule.assert_not_called()
 
     def test_schedule_deploy_recreates_after_failed_recorded_deploy_tx_task(self):
@@ -449,7 +455,78 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertIsNone(task)
         slot.refresh_from_db()
         self.assertEqual(slot.deploy_tx_task, failed_task)
+        self.assertTrue(slot.is_deployed)
         schedule.assert_not_called()
+
+    @patch("evm.tasks.notify_vault_slot_deploy_gas_fee")
+    @patch("evm.tasks.AdapterFactory.get_adapter")
+    def test_confirmed_deploy_marks_vault_slot_deployed(
+        self,
+        get_adapter,
+        notify_gas_fee,
+    ):
+        from evm.tasks import confirm_non_transfer_tx_tasks
+
+        slot = self._create_vault_slot()
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "aa" * 32
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+        adapter = Mock()
+        adapter.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.SUCCEEDED,
+            block_number=1,
+            block_hash="b" * 64,
+        )
+        get_adapter.return_value = adapter
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.PENDING_CONFIRM)
+
+        confirm_non_transfer_tx_tasks()
+
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.CONFIRMED)
+        self.assertTrue(slot.is_deployed)
+        notify_gas_fee.assert_called_once()
+        self.assertEqual(notify_gas_fee.call_args.kwargs["tx_task"].pk, task.pk)
+
+    @patch("evm.tasks.notify_vault_slot_deploy_gas_fee")
+    @patch("evm.tasks.AdapterFactory.get_adapter")
+    def test_failed_deploy_marks_deployed_when_slot_has_external_code(
+        self,
+        get_adapter,
+        notify_gas_fee,
+    ):
+        from evm.tasks import confirm_non_transfer_tx_tasks
+
+        slot = self._create_vault_slot()
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "ac" * 32
+        adapter = Mock()
+        adapter.tx_result.return_value = TxCheckResult(
+            status=TxCheckStatus.FAILED,
+            block_number=1,
+            block_hash="c" * 64,
+        )
+        get_adapter.return_value = adapter
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.PENDING_CONFIRM)
+
+        with patch("evm.vault_slots.is_deployed_on_chain", return_value=True):
+            confirm_non_transfer_tx_tasks()
+
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.FAILED)
+        self.assertTrue(slot.is_deployed)
+        notify_gas_fee.assert_not_called()
 
     @patch("evm.saas_gas_billing.send_internal_callback")
     def test_confirmed_deploy_notifies_saas_gas_fee(self, send_callback_mock):

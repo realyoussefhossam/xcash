@@ -848,6 +848,11 @@ class VaultSlot(models.Model):
         related_name="deployed_vault_slot",
         verbose_name=_("部署交易任务"),
     )
+    is_deployed = models.BooleanField(
+        _("是否已部署"),
+        default=False,
+        help_text=_("链上已观测到该 VaultSlot 合约 code。"),
+    )
     has_received = models.BooleanField(
         _("是否收到过资金"),
         default=False,
@@ -910,12 +915,6 @@ class VaultSlot(models.Model):
                     "VaultSlot invoice_index is required for invoice usage"
                 )
         return super().save(*args, **kwargs)
-
-    @property
-    def is_deployed(self) -> bool:
-        if self.deploy_tx_task_id is None:
-            return False
-        return self.deploy_tx_task.status == TxTaskStatus.CONFIRMED
 
     @staticmethod
     def build_salt(
