@@ -1145,6 +1145,38 @@ class VaultSlotReceivedFlagTests(TestCase):
         self.assertEqual(balance.synced_block_number, transfer.block)
         self.assertEqual(balance.last_tx_hash, transfer.hash)
 
+    def test_transfer_confirm_refreshes_source_vault_slot_balance(self):
+        transfer = Transfer.objects.create(
+            chain=self.chain,
+            block=100,
+            block_hash="0x" + "77" * 32,
+            hash="0x" + "88" * 32,
+            crypto=self.crypto,
+            from_address=self.slot_address,
+            to_address=Web3.to_checksum_address("0x" + "de" * 20),
+            value=Decimal("1000000"),
+            amount=Decimal("1"),
+            timestamp=1_700_000_003,
+            datetime=timezone.now(),
+        )
+        adapter = type("Adapter", (), {"get_balance": lambda *_args: 765_432})()
+
+        with patch(
+            "chains.vault_slot_balances.AdapterFactory.get_adapter",
+            return_value=adapter,
+        ):
+            transfer.confirm()
+
+        balance = VaultSlotBalance.objects.get(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=self.crypto,
+        )
+        self.assertEqual(balance.value, Decimal("765432"))
+        self.assertEqual(balance.amount, Decimal("0.765432"))
+        self.assertEqual(balance.synced_block_number, transfer.block)
+        self.assertEqual(balance.last_tx_hash, transfer.hash)
+
 
 class BlockNumberUpdatedCompensationTests(TestCase):
     """验证 block_number_updated 在满批时自调度补偿。"""

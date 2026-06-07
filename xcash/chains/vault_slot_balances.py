@@ -8,7 +8,6 @@ from django.utils import timezone
 
 from chains.adapters import AdapterFactory
 from chains.models import Transfer
-from chains.models import TransferType
 from chains.models import TxTask
 from chains.models import VaultSlot
 from chains.models import VaultSlotBalance
@@ -82,30 +81,27 @@ def refresh_vault_slot_balance_safely(
         return None
 
 
-def refresh_vault_slot_balances_for_transfer(transfer: Transfer) -> None:
-    """Transfer 确认后刷新受影响 VaultSlot 的链上余额快照。"""
-    slots = list(
+def refresh_vault_slot_balance_for_transfer(transfer: Transfer) -> None:
+    """Transfer 确认后刷新命中的 VaultSlot 链上余额快照。"""
+    # 当前业务模型不允许一笔 Transfer 的发送方和接收方同时都是系统内 VaultSlot；
+    # 这里仅定位唯一命中的端点，兼容外部入账(to)与 VaultSlot 转出(from)两种方向。
+    affected_addresses = {transfer.from_address, transfer.to_address}
+    slot = (
         VaultSlot.objects.select_related("chain")
-        .filter(chain=transfer.chain, address=transfer.to_address)
-        .order_by("pk")[:1]
+        .filter(chain=transfer.chain, address__in=affected_addresses)
+        .order_by("pk")
+        .first()
     )
-    if transfer.type == TransferType.Collect:
-        source_slot = (
-            VaultSlot.objects.select_related("chain")
-            .filter(chain=transfer.chain, address=transfer.from_address)
-            .first()
-        )
-        if source_slot is not None and all(slot.pk != source_slot.pk for slot in slots):
-            slots.append(source_slot)
+    if slot is None:
+        return
 
-    for slot in slots:
-        refresh_vault_slot_balance_safely(
-            slot=slot,
-            crypto=transfer.crypto,
-            trigger_tx_hash=transfer.hash,
-            block_number=transfer.block,
-            reason="transfer_confirm",
-        )
+    refresh_vault_slot_balance_safely(
+        slot=slot,
+        crypto=transfer.crypto,
+        trigger_tx_hash=transfer.hash,
+        block_number=transfer.block,
+        reason="transfer_confirm",
+    )
 
 
 def refresh_vault_slot_balance_for_collect_task(tx_task: TxTask) -> VaultSlotBalance | None:

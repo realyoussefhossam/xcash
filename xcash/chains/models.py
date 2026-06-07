@@ -1493,10 +1493,10 @@ class Transfer(models.Model):
     def _refresh_vault_slot_balances(self) -> None:
         """确认后按链上余额真值刷新受影响 VaultSlot 余额快照。"""
         from chains.vault_slot_balances import (  # noqa: PLC0415
-            refresh_vault_slot_balances_for_transfer,
+            refresh_vault_slot_balance_for_transfer,
         )
 
-        refresh_vault_slot_balances_for_transfer(self)
+        refresh_vault_slot_balance_for_transfer(self)
 
     def _dispatch_business_drop(self) -> None:
         """统一按已归类的业务类型分发回退动作，drop() 专用。"""
