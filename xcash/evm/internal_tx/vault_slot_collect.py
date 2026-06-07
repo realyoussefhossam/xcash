@@ -15,8 +15,8 @@ from chains.models import Transfer
 from chains.models import TransferType
 from chains.models import TxTask
 from chains.models import VaultSlot
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from evm.contracts_codec import predict_xcash_vault_slot_address
 from evm.internal_tx.facts import MatchedTransferFact
 from evm.internal_tx.log_utils import matches_transfer_log
@@ -85,18 +85,18 @@ def _decode_collect_target(
 
 
 def _crypto_for_collect_token(*, chain: Chain, token_address: str) -> Crypto | None:
-    """零地址映射为原生币，其余按 ChainCryptoDeployment 查 Crypto；未登记返回 None。"""
+    """零地址映射为原生币，其余按 CryptoOnChain 查 Crypto；未登记返回 None。"""
     if Web3.to_checksum_address(token_address) == Web3.to_checksum_address(
         _ZERO_ADDRESS
     ):
         return chain.native_coin
 
-    chain_crypto_deployment = (
-        ChainCryptoDeployment.objects.select_related("crypto")
+    crypto_on_chain = (
+        CryptoOnChain.objects.select_related("crypto")
         .filter(chain=chain, address__iexact=Web3.to_checksum_address(token_address))
         .first()
     )
-    return chain_crypto_deployment.crypto if chain_crypto_deployment is not None else None
+    return crypto_on_chain.crypto if crypto_on_chain is not None else None
 
 
 @dataclass(frozen=True)

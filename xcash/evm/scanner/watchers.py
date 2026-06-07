@@ -6,14 +6,14 @@ from django.core.cache import cache
 
 from chains.models import Chain
 from chains.models import VaultSlot
-from currencies.models import ChainCryptoDeployment
+from currencies.models import CryptoOnChain
 
 
 @dataclass(frozen=True)
 class EvmWatchSet:
     """描述某条 EVM 链当前需要关注的代币集合与本轮命中的观察地址。"""
 
-    tokens_by_address: dict[str, ChainCryptoDeployment]
+    tokens_by_address: dict[str, CryptoOnChain]
     matched_addresses: frozenset[str] = frozenset()
 
     def with_matched_addresses(self, addresses: frozenset[str]) -> EvmWatchSet:
@@ -24,9 +24,7 @@ class EvmWatchSet:
         )
 
 
-EVM_CHAIN_CRYPTO_DEPLOYMENTS_CACHE_KEY_TEMPLATE = (
-    "evm:scanner:chain_crypto_deployments:{chain_id}"
-)
+EVM_CRYPTO_ON_CHAINS_CACHE_KEY_TEMPLATE = "evm:scanner:crypto_on_chains:{chain_id}"
 
 
 def load_watch_set(*, chain: Chain, refresh: bool = False) -> EvmWatchSet:
@@ -35,23 +33,23 @@ def load_watch_set(*, chain: Chain, refresh: bool = False) -> EvmWatchSet:
     观察地址不在扫描前全量加载，而是在每个日志窗口内按候选地址批量查询。
     """
 
-    chain_crypto_deployments_cache_key = _chain_crypto_deployments_cache_key(chain=chain)
-    tokens_by_address = cache.get(chain_crypto_deployments_cache_key)
+    crypto_on_chains_cache_key = _crypto_on_chains_cache_key(chain=chain)
+    tokens_by_address = cache.get(crypto_on_chains_cache_key)
     if refresh or tokens_by_address is None:
-        tokens_by_address = refresh_evm_chain_crypto_deployments(chain=chain)
+        tokens_by_address = refresh_evm_crypto_on_chains(chain=chain)
 
     return EvmWatchSet(tokens_by_address=tokens_by_address)
 
 
-def refresh_evm_chain_crypto_deployments(
+def refresh_evm_crypto_on_chains(
     *, chain: Chain
-) -> dict[str, ChainCryptoDeployment]:
+) -> dict[str, CryptoOnChain]:
     """重建指定 EVM 链的 ERC20 合约缓存。"""
 
-    tokens_by_address = _load_evm_chain_crypto_deployments_from_db(chain=chain)
-    # timeout=None 表示永不过期，依赖显式刷新（ChainCryptoDeployment 表为后台手动配置，几乎不变）。
+    tokens_by_address = _load_evm_crypto_on_chains_from_db(chain=chain)
+    # timeout=None 表示永不过期，依赖显式刷新（CryptoOnChain 表为后台手动配置，几乎不变）。
     cache.set(
-        _chain_crypto_deployments_cache_key(chain=chain),
+        _crypto_on_chains_cache_key(chain=chain),
         tokens_by_address,
         timeout=None,
     )
@@ -62,19 +60,19 @@ def clear_evm_watch_set_cache(*, chain: Chain | None = None) -> None:
     """清空 EVM 观察集缓存，主要用于测试和运维脚本。"""
 
     if chain is not None:
-        clear_evm_chain_crypto_deployments_cache(chain=chain)
+        clear_evm_crypto_on_chains_cache(chain=chain)
         return
     delete_pattern = getattr(cache, "delete_pattern", None)
     if callable(delete_pattern):
         delete_pattern(
-            EVM_CHAIN_CRYPTO_DEPLOYMENTS_CACHE_KEY_TEMPLATE.format(chain_id="*")
+            EVM_CRYPTO_ON_CHAINS_CACHE_KEY_TEMPLATE.format(chain_id="*")
         )
 
 
-def clear_evm_chain_crypto_deployments_cache(*, chain: Chain) -> None:
+def clear_evm_crypto_on_chains_cache(*, chain: Chain) -> None:
     """清空指定 EVM 链的 ERC20 合约缓存。"""
 
-    cache.delete(_chain_crypto_deployments_cache_key(chain=chain))
+    cache.delete(_crypto_on_chains_cache_key(chain=chain))
 
 
 def load_matched_addresses_for_candidates(
@@ -100,17 +98,17 @@ def load_matched_addresses_for_candidates(
     return frozenset(set(vault_slot_addresses) | differ_addresses)
 
 
-def _chain_crypto_deployments_cache_key(*, chain: Chain) -> str:
+def _crypto_on_chains_cache_key(*, chain: Chain) -> str:
     """构造按链区分的 ERC20 缓存 key。"""
-    return EVM_CHAIN_CRYPTO_DEPLOYMENTS_CACHE_KEY_TEMPLATE.format(chain_id=chain.pk)
+    return EVM_CRYPTO_ON_CHAINS_CACHE_KEY_TEMPLATE.format(chain_id=chain.pk)
 
 
-def _load_evm_chain_crypto_deployments_from_db(
+def _load_evm_crypto_on_chains_from_db(
     *, chain: Chain
-) -> dict[str, ChainCryptoDeployment]:
+) -> dict[str, CryptoOnChain]:
     """从 DB 拉取本链已激活 ERC20，按合约地址建立索引。"""
     token_rows = (
-        ChainCryptoDeployment.objects.select_related("crypto")
+        CryptoOnChain.objects.select_related("crypto")
         .filter(
             chain=chain,
             crypto__active=True,

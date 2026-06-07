@@ -6,7 +6,7 @@ from chains.capabilities import ChainProductCapabilityService
 from chains.constants import CHAIN_SPECS
 from chains.models import ChainType
 from chains.service import ChainService
-from currencies.models import ChainCryptoDeployment
+from currencies.models import CryptoOnChain
 from projects.models import InvoiceReceivingMode
 from projects.models import Project
 
@@ -34,7 +34,7 @@ class ProjectService:
         chain_codes = ChainService.codes_of_types({ChainType.EVM})
         if tron_vault_slot_runtime_ready():
             chain_codes |= set(
-                ChainCryptoDeployment.objects.filter(
+                CryptoOnChain.objects.filter(
                     chain__type=ChainType.TRON,
                     chain__active=True,
                     crypto__symbol="USDT",
@@ -70,7 +70,7 @@ class ProjectService:
                 active=True,
             ).values_list("chain_type", flat=True)
         )
-        tokens = ChainCryptoDeployment.objects.select_related("crypto", "chain").filter(
+        tokens = CryptoOnChain.objects.select_related("crypto", "chain").filter(
             crypto__active=True,
             chain__active=True,
             active=True,

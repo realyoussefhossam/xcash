@@ -37,8 +37,8 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotCollectSchedule
 from chains.models import VaultSlotUsage
 from chains.models import Wallet
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from currencies.models import Fiat
 from invoices.models import DifferRecipientAddress
 from projects.models import Customer
@@ -517,7 +517,7 @@ class TronTrc20ScannerTests(TestCase):
             active=True,
         )
         self.trx = self.chain.native_coin
-        self.usdt_mapping = ChainCryptoDeployment.objects.create(
+        self.usdt_mapping = CryptoOnChain.objects.create(
             chain=self.chain,
             crypto=self.usdt,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
@@ -980,7 +980,7 @@ class TronReceiptConfirmTaskTests(TestCase):
             prices={"USD": "1"},
             coingecko_id="tron-receipt-usdt",
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             chain=self.chain,
             crypto=self.usdt,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
@@ -1165,7 +1165,7 @@ class TronCollectScheduleExecuteTests(TestCase):
             prices={"USD": "1"},
             coingecko_id="tron-execute-usdt",
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             chain=self.chain,
             crypto=self.usdt,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",

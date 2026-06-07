@@ -21,8 +21,8 @@ from chains.models import Wallet
 from chains.tests_fixtures import make_evm_chain
 from common.internal_callback import CallbackEvent
 from common.internal_callback import InternalCallback
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
 from deposits.service import DepositService
@@ -359,7 +359,7 @@ def create_deposit_context(*, native: bool = False, confirmed: bool = True):
             symbol="DTT",
             coingecko_id="deposit-test-token",
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=crypto,
             chain=chain,
             address=Web3.to_checksum_address(
@@ -420,7 +420,7 @@ def create_tron_deposit_context():
         symbol="USDT",
         coingecko_id="tron-deposit-usdt",
     )
-    ChainCryptoDeployment.objects.create(
+    CryptoOnChain.objects.create(
         crypto=crypto,
         chain=chain,
         address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",

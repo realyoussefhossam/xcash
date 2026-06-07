@@ -23,8 +23,8 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
 from evm.scanner.logs import EvmLogScanner
@@ -128,7 +128,7 @@ class EvmErc20ScannerTests(TestCase):
             symbol="USDT-SCANNER",
             coingecko_id="tether-scanner",
         )
-        self.token_deployment = ChainCryptoDeployment.objects.create(
+        self.token_on_chain = CryptoOnChain.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -184,7 +184,7 @@ class EvmErc20ScannerTests(TestCase):
         block_number: int = 100,
     ) -> dict:
         return {
-            "address": self.token_deployment.address,
+            "address": self.token_on_chain.address,
             "topics": [
                 Web3.keccak(text="Transfer(address,address,uint256)"),
                 self._address_topic(from_address),
@@ -220,7 +220,7 @@ class EvmErc20ScannerTests(TestCase):
             sender=self.addr,
             chain=self.chain,
             nonce=0,
-            to=self.token_deployment.address,
+            to=self.token_on_chain.address,
             value=0,
             data=f"0xa9059cbb{encoded_args}",
             gas=120_000,
@@ -283,7 +283,7 @@ class EvmErc20ScannerTests(TestCase):
         # 命中的 ERC20 Transfer 应落到统一 Transfer 表；首扫会直接对齐链头附近窗口。
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_deployment.address}
+        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
         get_logs_mock.side_effect = [
             [],
             [
@@ -354,14 +354,14 @@ class EvmErc20ScannerTests(TestCase):
                     else []
                 ),
                 "get_transaction": lambda *_args, **_kwargs: {
-                    "to": self.token_deployment.address
+                    "to": self.token_on_chain.address
                 },
                 "get_block_timestamp": lambda *_args, **_kwargs: 1_700_000_000,
             },
         )()
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         created = EvmLogScanner.scan_range(
@@ -407,7 +407,7 @@ class EvmErc20ScannerTests(TestCase):
             ),
         ]
         rpc_client = Mock()
-        rpc_client.get_transaction.return_value = {"to": self.token_deployment.address}
+        rpc_client.get_transaction.return_value = {"to": self.token_on_chain.address}
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
 
         created = EvmLogScanner._process_logs(
@@ -416,7 +416,7 @@ class EvmErc20ScannerTests(TestCase):
             rpc_client=rpc_client,
             watch_set=EvmWatchSet(
                 tokens_by_address={
-                    self.token_deployment.address: self.token_deployment
+                    self.token_on_chain.address: self.token_on_chain
                 }
             ),
         )
@@ -458,14 +458,14 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction.return_value = {
             "hash": tx_hash,
             "from": self.addr.address,
-            "to": self.token_deployment.address,
+            "to": self.token_on_chain.address,
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = receipt
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address, wrong_recipient}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         with patch(
@@ -515,13 +515,13 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction.return_value = {
             "hash": tx_hash,
             "from": self.addr.address,
-            "to": self.token_deployment.address,
+            "to": self.token_on_chain.address,
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = receipt
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address, recipient}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         created = EvmLogScanner._process_logs(
@@ -550,7 +550,7 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction_receipt.return_value = {"status": 1}
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         result = EvmLogScanner._process_logs(
@@ -579,13 +579,13 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction.return_value = {
             "hash": tx_hash,
             "from": self.addr.address,
-            "to": self.token_deployment.address,
+            "to": self.token_on_chain.address,
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = None
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         result = EvmLogScanner._process_logs(
@@ -629,13 +629,13 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client.get_transaction.return_value = {
             "hash": tx_hash,
             "from": self.addr.address,
-            "to": self.token_deployment.address,
+            "to": self.token_on_chain.address,
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = receipt
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.addr.address, wrong_recipient}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         created = EvmLogScanner._process_logs(
@@ -668,7 +668,7 @@ class EvmErc20ScannerTests(TestCase):
         # 手动重扫同一区间会重复看到同一日志，但统一唯一键必须保证不会重复落库。
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_deployment.address}
+        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
         repeated_log = self._build_transfer_log(
             from_address=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000cc"
@@ -699,7 +699,7 @@ class EvmErc20ScannerTests(TestCase):
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_block_timestamp")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
-    def test_scan_chain_uses_chain_crypto_deployment_decimals_without_extra_lookup(
+    def test_scan_chain_uses_crypto_on_chain_decimals_without_extra_lookup(
         self,
         get_latest_block_number_mock,
         get_logs_mock,
@@ -709,12 +709,12 @@ class EvmErc20ScannerTests(TestCase):
         _mark_pending_confirm_mock,
         _crypto_get_decimals_mock,
     ):
-        # ERC20 扫描已持有 ChainCryptoDeployment 行数据，应直接复用链特定精度，避免逐条日志额外查库。
-        self.token_deployment.decimals = 6
-        self.token_deployment.save(update_fields=["decimals"])
+        # ERC20 扫描已持有 CryptoOnChain 行数据，应直接复用链特定精度，避免逐条日志额外查库。
+        self.token_on_chain.decimals = 6
+        self.token_on_chain.save(update_fields=["decimals"])
         get_latest_block_number_mock.return_value = 100
         get_block_timestamp_mock.return_value = 1_700_000_000
-        get_transaction_mock.return_value = {"to": self.token_deployment.address}
+        get_transaction_mock.return_value = {"to": self.token_on_chain.address}
         get_logs_mock.side_effect = [
             [],
             [
@@ -790,7 +790,7 @@ class EvmErc20ScannerTests(TestCase):
         get_logs_mock,
     ):
         # 即使链上尚未配置 ERC20 合约，统一日志扫描仍会扫描 Xcash 合约事件。
-        self.token_deployment.delete()
+        self.token_on_chain.delete()
         get_latest_block_number_mock.return_value = 100
 
         result = EvmLogScanner.scan_chain(chain=self.chain, batch_size=32)

@@ -13,7 +13,7 @@ def _reference_tables_ready(*, using: str) -> bool:
         "chains_chain",
         "currencies_crypto",
         "currencies_fiat",
-        "currencies_chaincryptodeployment",
+        "currencies_cryptoonchain",
     }.issubset(existing_tables)
 
 

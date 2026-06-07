@@ -34,8 +34,8 @@ from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from core.models import SystemSettings
 from core.models import SystemWallet
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from deposits.models import Deposit
 from evm.constants import XCASH_VAULT_SLOT_FACTORY_ADDRESS
 from evm.intents import DEFAULT_VAULT_SLOT_COLLECT_GAS
@@ -286,7 +286,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.token_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000e20"
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=self.token_address,
@@ -594,7 +594,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         native_crypto = self.chain.native_coin
         native_crypto.prices = {"USD": "2000"}
         native_crypto.save(update_fields=["prices"])
-        ChainCryptoDeployment.objects.update_or_create(
+        CryptoOnChain.objects.update_or_create(
             crypto=native_crypto,
             chain=self.chain,
             defaults={"address": "", "decimals": 18},
@@ -1221,7 +1221,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         native_crypto = self.chain.native_coin
         native_crypto.prices = {"USD": "2000"}
         native_crypto.save(update_fields=["prices"])
-        ChainCryptoDeployment.objects.update_or_create(
+        CryptoOnChain.objects.update_or_create(
             crypto=native_crypto,
             chain=self.chain,
             defaults={"address": "", "decimals": 18},

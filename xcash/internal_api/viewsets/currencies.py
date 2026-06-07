@@ -14,7 +14,7 @@ class InternalCryptoViewSet(ListModelMixin, GenericViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = InternalCryptoSerializer
     queryset = Crypto.objects.filter(active=True).prefetch_related(
-        "chain_crypto_deployments__chain"
+        "crypto_on_chains__chain"
     )
     pagination_class = None
 

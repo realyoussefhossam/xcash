@@ -19,7 +19,7 @@ from chains.models import ChainType
 from chains.models import VaultSlot
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
-from currencies.models import ChainCryptoDeployment
+from currencies.models import CryptoOnChain
 
 # 单轮扫描最多向前推进的块数；walletsolidity 返回的是 BFT 不可逆块，故无需 replay。
 # Tron 3 秒一块、beat tick 30 秒 ≈ 每轮净新增 ~10 块，32 块留够冗余且能消化短暂积压；
@@ -40,9 +40,9 @@ class ParsedTronTransferEvent:
 
 
 class TronTrc20Scanner:
-    """按链扫描本链全部 TRC20（ChainCryptoDeployment）的 Transfer 入账事件。
+    """按链扫描本链全部 TRC20（CryptoOnChain）的 Transfer 入账事件。
 
-    与 EVM 扫描器对齐：代币集合来自 ChainCryptoDeployment（不写死 USDT/地址），
+    与 EVM 扫描器对齐：代币集合来自 CryptoOnChain（不写死 USDT/地址），
     每条 Tron 链一个游标，逐块对每个代币合约拉取 Transfer 事件后统一匹配观察地址。
     """
 
@@ -53,7 +53,7 @@ class TronTrc20Scanner:
         if chain.type != ChainType.TRON:
             raise ValueError(f"仅支持 Tron 链扫描，当前链为 {chain.code}")
 
-        tokens_by_address = cls._load_chain_crypto_deployments(chain=chain)
+        tokens_by_address = cls._load_crypto_on_chains(chain=chain)
         cursor = cls._get_or_create_cursor(chain=chain)
         client = TronHttpClient(chain=chain)
         previous_latest_block = chain.latest_block_number
@@ -134,17 +134,17 @@ class TronTrc20Scanner:
         )
 
     @staticmethod
-    def _load_chain_crypto_deployments(
+    def _load_crypto_on_chains(
         *,
         chain: Chain,
-    ) -> dict[str, ChainCryptoDeployment]:
+    ) -> dict[str, CryptoOnChain]:
         """加载本链已激活的 TRC20 合约集合，按合约地址索引（对齐 EVM 扫描器）。
 
         只会配置一个 USDT 也照常走全量查询，避免把 symbol/地址写死，后续接入
         其它 TRC20 无需改扫描器。
         """
         token_rows = (
-            ChainCryptoDeployment.objects.select_related("crypto")
+            CryptoOnChain.objects.select_related("crypto")
             .filter(
                 chain=chain,
                 crypto__active=True,
@@ -204,7 +204,7 @@ class TronTrc20Scanner:
         client: TronHttpClient,
         chain: Chain,
         block_number: int,
-        tokens_by_address: dict[str, ChainCryptoDeployment],
+        tokens_by_address: dict[str, CryptoOnChain],
     ) -> list[ParsedTronTransferEvent]:
         candidates: list[ParsedTronTransferEvent] = []
         # block_hash 整块只取一次、跨代币复用；仅在本块确有事件时才发起这次 RPC，
@@ -240,7 +240,7 @@ class TronTrc20Scanner:
         client: TronHttpClient,
         chain: Chain,
         block_number: int,
-        token: ChainCryptoDeployment,
+        token: CryptoOnChain,
     ) -> list[dict]:
         """分页拉取单个 TRC20 合约在指定块的 Transfer 事件原始行。"""
         page_fingerprint: str | None = None
@@ -321,7 +321,7 @@ class TronTrc20Scanner:
         row: dict,
         expected_block_number: int,
         block_hash: str,
-        token: ChainCryptoDeployment,
+        token: CryptoOnChain,
     ) -> ParsedTronTransferEvent | None:
         if not isinstance(row, dict):
             return None

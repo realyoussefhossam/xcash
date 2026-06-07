@@ -30,8 +30,8 @@ from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from chains.tasks import process_transfer
 from chains.tests_fixtures import make_evm_chain
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from projects.models import Project
 
 
@@ -871,7 +871,7 @@ class VaultSlotReceivedFlagTests(TestCase):
             coingecko_id="vaultslot-received-flag",
         )
         self.chain = make_evm_chain(code=ChainCode.Ethereum)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             chain=self.chain,
             crypto=self.crypto,
             address=Web3.to_checksum_address("0x" + "34" * 20),

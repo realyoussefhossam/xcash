@@ -29,8 +29,8 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from currencies.models import Fiat
 from invoices.exceptions import InvoiceStatusError
 from invoices.models import DifferRecipientAddress
@@ -86,7 +86,7 @@ class InvoiceTestMixin:
         )
         self.chain = create_active_evm_test_chain(code=chain_name)
         Fiat.objects.get_or_create(code="USD")
-        self.chain_crypto_deployment = ChainCryptoDeployment.objects.create(
+        self.crypto_on_chain = CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -140,7 +140,7 @@ class InvoicePaymentSelectionTests(TestCase):
         )
         self.chain_a = create_active_evm_test_chain(code=ChainCode.Ethereum)
         self.chain_b = create_active_evm_test_chain(code=ChainCode.BSC)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain_a,
             address=Web3.to_checksum_address(
@@ -148,7 +148,7 @@ class InvoicePaymentSelectionTests(TestCase):
             ),
             decimals=6,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain_b,
             address=Web3.to_checksum_address(
@@ -515,13 +515,13 @@ class InvoiceFinalizeMethodsOrderingTests(TestCase):
         Chain.objects.bulk_create([eth_chain, bsc_chain])
         eth_chain.refresh_from_db()
         bsc_chain.refresh_from_db()
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=crypto,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000000001",
             decimals=6,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=crypto,
             chain=bsc_chain,
             address="0x0000000000000000000000000000000000000002",
@@ -552,7 +552,7 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
             coingecko_id="tether-invoice-concurrency",
         )
         self.chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -681,7 +681,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             coingecko_id="tether-evm-contract-only",
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000008802",
@@ -703,7 +703,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             coingecko_id="tether-evm-differ",
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000008812",
@@ -726,7 +726,7 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
         eth = eth_chain.native_coin
-        ChainCryptoDeployment.objects.update_or_create(
+        CryptoOnChain.objects.update_or_create(
             crypto=eth,
             chain=eth_chain,
             defaults={
@@ -762,19 +762,19 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             symbol="USDCSAASAM",
             coingecko_id="usdc-saas-allowed-methods",
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=usdt,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009911",
             decimals=6,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=usdt,
             chain=bsc_chain,
             address="0x0000000000000000000000000000000000009912",
             decimals=6,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=usdc,
             chain=eth_chain,
             address="0x0000000000000000000000000000000000009913",
@@ -824,13 +824,13 @@ class InvoiceContractBillingValidationTests(TestCase):
             tron_api_key="tron-key",
             active=True,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.usdt,
             chain=self.eth_chain,
             address="0x0000000000000000000000000000000000007802",
             decimals=6,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.usdt,
             chain=self.tron_chain,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
@@ -1114,7 +1114,7 @@ class InvoiceExpiredMatchTests(TestCase):
         )
         self.project.vault = self.recipient_address
         self.project.save(update_fields=["vault"])
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -1195,7 +1195,7 @@ class FallbackInvoiceExpiredTests(TestCase):
             "0x00000000000000000000000000000000000000F1"
         )
         self.project.save(update_fields=["vault"])
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -1264,7 +1264,7 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             "0x00000000000000000000000000000000000000A7"
         )
         self.project.save(update_fields=["vault"])
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=self.chain,
             address=Web3.to_checksum_address(
@@ -2228,7 +2228,7 @@ class InvoicePaymentUriTests(InvoiceTestMixin, TestCase):
         # Ethereum 链的原生币（ETH）在建链链路中已自动登记，复用之，
         # 避免与自动创建的 Crypto/部署撞 unique 约束。
         eth = self.chain.native_coin
-        ChainCryptoDeployment.objects.get_or_create(
+        CryptoOnChain.objects.get_or_create(
             crypto=eth,
             chain=self.chain,
             defaults={"address": "", "decimals": 18},
@@ -2245,9 +2245,9 @@ class InvoicePaymentUriTests(InvoiceTestMixin, TestCase):
         )
 
     def test_chain_id_comes_from_chain_not_hardcoded(self):
-        # 换到 BSC（chainId=56，decimals=18）验证 chainId 与精度均取自链上部署。
+        # 换到 BSC（chainId=56，decimals=18）验证 chainId 与精度均取自链上币种记录。
         bsc = create_active_evm_test_chain(code=ChainCode.BSC)
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=bsc,
             address=Web3.to_checksum_address(
@@ -2285,7 +2285,7 @@ class InvoicePaymentUriTests(InvoiceTestMixin, TestCase):
             tron_api_key="tron-key",
             active=True,
         )
-        ChainCryptoDeployment.objects.create(
+        CryptoOnChain.objects.create(
             crypto=self.crypto,
             chain=tron_chain,
             address="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",

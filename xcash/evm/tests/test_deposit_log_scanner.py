@@ -15,7 +15,7 @@ from chains.models import TxTaskType
 from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
-from currencies.models import ChainCryptoDeployment
+from currencies.models import CryptoOnChain
 from evm.models import EvmScanCursor
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
@@ -39,7 +39,7 @@ class EvmLogScannerTests(TestCase):
             native_coin=self.native,
         )
         self.token = make_crypto(symbol="LOG-USDT", name="Log USDT")
-        self.token_deployment = ChainCryptoDeployment.objects.create(
+        self.token_on_chain = CryptoOnChain.objects.create(
             crypto=self.token,
             chain=self.chain,
             address=Web3.to_checksum_address("0x" + "aa" * 20),
@@ -88,7 +88,7 @@ class EvmLogScannerTests(TestCase):
 
     def _erc20_log(self) -> dict:
         return {
-            "address": self.token_deployment.address,
+            "address": self.token_on_chain.address,
             "topics": [
                 Web3.keccak(text="Transfer(address,address,uint256)"),
                 self._address_topic(self.payer),
@@ -111,7 +111,7 @@ class EvmLogScannerTests(TestCase):
         rpc_client = Mock()
         watch_set = EvmWatchSet(
             matched_addresses=frozenset({self.slot.address}),
-            tokens_by_address={self.token_deployment.address: self.token_deployment},
+            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
         )
 
         result = EvmLogScanner._process_logs(
@@ -148,7 +148,7 @@ class EvmLogScannerTests(TestCase):
         get_block_timestamp_mock.return_value = 1_700_000_000
         get_transaction_mock.side_effect = lambda *, tx_hash: {
             "0x" + "12" * 32: {"to": self.slot.address},
-            "0x" + "23" * 32: {"to": self.token_deployment.address},
+            "0x" + "23" * 32: {"to": self.token_on_chain.address},
         }[tx_hash]
         get_logs_mock.side_effect = [[self._native_log()], [self._erc20_log()]]
 
@@ -175,7 +175,7 @@ class EvmLogScannerTests(TestCase):
             {
                 "from_block": 1,
                 "to_block": 32,
-                "addresses": [self.token_deployment.address],
+                "addresses": [self.token_on_chain.address],
                 "topic0": ERC20_TRANSFER_TOPIC0,
                 "summary": "获取 EVM ERC20 Transfer 日志失败",
             },
@@ -211,7 +211,7 @@ class EvmLogScannerTests(TestCase):
                 call(
                     from_block=1,
                     to_block=32,
-                    addresses=[self.token_deployment.address],
+                    addresses=[self.token_on_chain.address],
                     topic0=ERC20_TRANSFER_TOPIC0,
                     summary="获取 EVM ERC20 Transfer 日志失败",
                 ),
@@ -246,7 +246,7 @@ class EvmLogScannerTests(TestCase):
             rpc_client=rpc_client,
             watch_set=EvmWatchSet(
                 matched_addresses=frozenset(),
-                tokens_by_address={self.token_deployment.address: self.token_deployment},
+                tokens_by_address={self.token_on_chain.address: self.token_on_chain},
             ),
         )
 
@@ -276,7 +276,7 @@ class EvmLogScannerTests(TestCase):
             rpc_client=rpc_client,
             watch_set=EvmWatchSet(
                 matched_addresses=frozenset({self.slot.address}),
-                tokens_by_address={self.token_deployment.address: self.token_deployment},
+                tokens_by_address={self.token_on_chain.address: self.token_on_chain},
             ),
         )
 

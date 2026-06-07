@@ -175,7 +175,7 @@ class Chain(models.Model):
                 "name": symbol,
                 "coingecko_id": NATIVE_COIN_COINGECKO_IDS[symbol],
                 "active": True,
-                # 原生币精度落到 ChainCryptoDeployment（见 ensure_native_crypto_mapping_for_chain）；
+                # 原生币精度落到 CryptoOnChain（见 ensure_native_crypto_mapping_for_chain）；
                 # 这里仅在 Crypto 上标记原生币身份。
                 "is_native": True,
             },
@@ -218,7 +218,7 @@ class Chain(models.Model):
         """活跃 Tron 链在配置层即持有按链唯一的扫描游标，避免依赖首次 beat 扫描显式创建。
 
         游标只锚定区块进度、与具体 TRC20 合约解耦：扫描器每轮按本链全量
-        ChainCryptoDeployment 逐块拉取，新增/下架代币不影响游标，故这里无需
+        CryptoOnChain 逐块拉取，新增/下架代币不影响游标，故这里无需
         再依赖 USDT 是否已配置。
         """
         if self.type != ChainType.TRON or not self.active:

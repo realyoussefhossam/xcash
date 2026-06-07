@@ -269,16 +269,16 @@ class InvoiceService:
         if chain.type != ChainType.EVM or chain.chain_id is None:
             return None
 
-        # decimals 与合约地址同属一条部署记录，一次取出，避免高频 retrieve
+        # decimals 与合约地址同属一条链上币种记录，一次取出，避免高频 retrieve
         # 端点对同一行重复查询。lazy import 规避潜在循环依赖。
-        from currencies.models import ChainCryptoDeployment
+        from currencies.models import CryptoOnChain
 
         try:
-            deployment = ChainCryptoDeployment.objects.get(crypto=crypto, chain=chain)
-        except ChainCryptoDeployment.DoesNotExist:
+            crypto_on_chain = CryptoOnChain.objects.get(crypto=crypto, chain=chain)
+        except CryptoOnChain.DoesNotExist:
             return None
 
-        scaled = invoice.pay_amount * (Decimal(10) ** deployment.decimals)
+        scaled = invoice.pay_amount * (Decimal(10) ** crypto_on_chain.decimals)
         if scaled != scaled.to_integral_value():
             # 报价精度超过链上精度，无法精确编码，降级为地址二维码。
             return None
@@ -287,11 +287,11 @@ class InvoiceService:
         if crypto.is_native:
             return f"ethereum:{invoice.pay_address}@{chain.chain_id}?value={base_units}"
 
-        if not deployment.address:
+        if not crypto_on_chain.address:
             # 标记为非原生却查不到合约地址属配置异常，降级而非生成错误 URI。
             return None
         return (
-            f"ethereum:{deployment.address}@{chain.chain_id}"
+            f"ethereum:{crypto_on_chain.address}@{chain.chain_id}"
             f"/transfer?address={invoice.pay_address}&uint256={base_units}"
         )
 

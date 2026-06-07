@@ -9,8 +9,8 @@ from web3 import Web3
 from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Chain
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 from currencies.models import Fiat
 from evm.local_erc20 import LOCAL_EVM_ERC20_ABI
 from evm.local_erc20 import LOCAL_EVM_ERC20_BYTECODE
@@ -165,18 +165,18 @@ def ensure_production_currencies(*, using: str = "default", stdout=None) -> None
 def ensure_chain_native_mapping(
     *, using: str = "default", chain_name: str, crypto_symbol: str
 ) -> None:
-    """为链原生币补齐 ChainCryptoDeployment 映射，保持余额与支持判断可用。"""
+    """为链原生币补齐 CryptoOnChain 映射，保持余额与支持判断可用。"""
     chain_obj = Chain.objects.using(using).get(code=chain_name)
     crypto_obj = Crypto.objects.using(using).get(symbol=crypto_symbol)
-    ChainCryptoDeployment.objects.using(using).get_or_create(
+    CryptoOnChain.objects.using(using).get_or_create(
         crypto=crypto_obj,
         chain=chain_obj,
-        # 原生币精度以 ChainCryptoDeployment 为唯一真相，取自链的 ChainSpec。
+        # 原生币精度以 CryptoOnChain 为唯一真相，取自链的 ChainSpec。
         defaults={"address": "", "decimals": chain_obj.spec.native_coin_decimals},
     )
 
 
-def ensure_chain_crypto_deployment_mapping(
+def ensure_crypto_on_chain_mapping(
     *,
     using: str = "default",
     chain_name: str,
@@ -184,7 +184,7 @@ def ensure_chain_crypto_deployment_mapping(
     address: str,
     decimals: int,
 ) -> None:
-    """为链上 ERC20/同类合约资产补齐 ChainCryptoDeployment 映射。
+    """为链上 ERC20/同类合约资产补齐 CryptoOnChain 映射。
 
     decimals 为该币在本链上的精度，必填——它是精度的唯一真相。
     """
@@ -202,7 +202,7 @@ def ensure_chain_crypto_deployment_mapping(
         normalized_address = Web3.to_checksum_address(normalized_address)
 
     crypto_obj = Crypto.objects.using(using).get(symbol=crypto_symbol)
-    ChainCryptoDeployment.objects.using(using).update_or_create(
+    CryptoOnChain.objects.using(using).update_or_create(
         crypto=crypto_obj,
         chain=chain_obj,
         defaults={
@@ -229,7 +229,7 @@ def ensure_default_evm_token_mappings(
         address = env.str(token_config["env"], default="").strip()
         if not address:
             continue
-        ensure_chain_crypto_deployment_mapping(
+        ensure_crypto_on_chain_mapping(
             using=using,
             chain_name=chain_name,
             crypto_symbol=token_config["crypto_symbol"],
@@ -310,7 +310,7 @@ def ensure_local_evm_usdt_contract_address(
         return checksum_address
 
     existing_address = (
-        ChainCryptoDeployment.objects.using(using)
+        CryptoOnChain.objects.using(using)
         .filter(chain__code=chain_name, crypto__symbol="USDT")
         .values_list("address", flat=True)
         .first()
@@ -352,7 +352,7 @@ def ensure_public_chains(*, using: str = "default", stdout=None) -> None:
             crypto_symbol=chain_config["native_symbol"],
         )
     for token_mapping in PRODUCTION_MAINNET_TOKEN_MAPPINGS:
-        ensure_chain_crypto_deployment_mapping(using=using, **token_mapping)
+        ensure_crypto_on_chain_mapping(using=using, **token_mapping)
 
     if stdout is not None:
         stdout.write("✅ 生产主网初始化完成")
@@ -384,7 +384,7 @@ def ensure_testnet_chains(*, using: str = "default", stdout=None) -> None:
             crypto_symbol=chain_config["native_symbol"],
         )
     for token_mapping in TESTNET_TOKEN_MAPPINGS:
-        ensure_chain_crypto_deployment_mapping(using=using, **token_mapping)
+        ensure_crypto_on_chain_mapping(using=using, **token_mapping)
 
     if stdout is not None:
         stdout.write("✅ 测试网骨架初始化完成")
@@ -413,7 +413,7 @@ def ensure_local_chains(*, using: str = "default", stdout=None) -> None:
             chain_name=ChainCode.Anvil,
             crypto_symbol="ETH",
         )
-        ensure_chain_crypto_deployment_mapping(
+        ensure_crypto_on_chain_mapping(
             using=using,
             chain_name=ChainCode.Anvil,
             crypto_symbol="USDT",

@@ -1,20 +1,20 @@
 from rest_framework import serializers
 
 from chains.models import Chain
-from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 
 
-class ChainCryptoDeploymentSerializer(serializers.ModelSerializer):
+class CryptoOnChainSerializer(serializers.ModelSerializer):
     chain = serializers.SlugRelatedField(slug_field="chain", read_only=True)
 
     class Meta:
-        model = ChainCryptoDeployment
+        model = CryptoOnChain
         fields = ["chain", "address", "decimals"]
 
 
 class InternalCryptoSerializer(serializers.ModelSerializer):
-    chain_crypto_deployments = ChainCryptoDeploymentSerializer(many=True, read_only=True)
+    crypto_on_chains = CryptoOnChainSerializer(many=True, read_only=True)
 
     class Meta:
         model = Crypto
@@ -24,7 +24,7 @@ class InternalCryptoSerializer(serializers.ModelSerializer):
             "is_native",
             "prices",
             "active",
-            "chain_crypto_deployments",
+            "crypto_on_chains",
         ]
 
 
