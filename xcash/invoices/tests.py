@@ -1999,7 +1999,8 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             "0x0000000000000000000000000000000000000F15"
         )
         self.project.vault = vault_address
-        self.project.save(update_fields=["vault"])
+        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(update_fields=["vault", "invoice_receiving_mode"])
         invoice = self.create_test_invoice(
             out_no="contract-retry-reselect",
         )
@@ -2008,11 +2009,13 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
                 project=self.project,
                 chain=self.chain,
                 invoice_index=0,
+                crypto=self.crypto,
             )
             VaultSlot.ensure_invoice_address(
                 project=self.project,
                 chain=self.chain,
                 invoice_index=1,
+                crypto=self.crypto,
             )
         slot0 = VaultSlot.objects.get(
             project=self.project,

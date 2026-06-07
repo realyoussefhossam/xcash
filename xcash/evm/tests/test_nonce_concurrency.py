@@ -90,13 +90,6 @@ class EvmNonceConcurrencyTests(TransactionTestCase):
         self.assertEqual(len(results), self.THREAD_COUNT)
         self.assertEqual(sorted(results), list(range(self.THREAD_COUNT)))
 
-        from chains.models import AddressChainState
-
-        state = AddressChainState.objects.get(
-            address=self.address, chain=self.chain
-        )
-        self.assertEqual(state.address, self.address)
-        self.assertEqual(state.chain, self.chain)
         self.assertEqual(
             EvmTxTask.objects.filter(
                 sender=self.address, chain=self.chain
@@ -165,7 +158,7 @@ class EvmNonceConcurrencyTests(TransactionTestCase):
         """1000 个线程并发创建任务，验证 nonce 严格从 0 递增到 999。
 
         同时验证数据库触发器 trg_evm_tx_task_nonce_sequential
-        在高并发下与 AddressChainState 行锁协同工作，不会出现跳跃或重复。
+        在高并发下与 Address 行锁协同工作，不会出现跳跃或重复。
         """
         task_count = 1000
         # 保持真实竞争窗口，但不要让测试一次性占满本地 Postgres 连接上限。
@@ -224,14 +217,7 @@ class EvmNonceConcurrencyTests(TransactionTestCase):
         ).count()
         self.assertEqual(db_count, task_count)
 
-        # AddressChainState 只负责行锁，nonce 进度由 EvmTxTask 记录推导。
-        from chains.models import AddressChainState
-
-        state = AddressChainState.objects.get(
-            address=self.address, chain=self.chain
-        )
-        self.assertEqual(state.address, self.address)
-        self.assertEqual(state.chain, self.chain)
+        # Address 行锁只负责串行化，nonce 进度由 EvmTxTask 记录推导。
 
         # 数据库层面无空洞：max(nonce) == count - 1
         from django.db.models import Max

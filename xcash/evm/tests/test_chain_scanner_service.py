@@ -311,10 +311,10 @@ class EvmChainScannerServiceTests(TestCase):
         self.assertEqual(task.nonce, 6)
 
     @patch.object(EvmTxTask, "_next_nonce", return_value=0)
-    @patch("evm.models.AddressChainState.acquire_for_update")
-    def test_schedule_no_longer_reads_gas_price_before_acquiring_account_chain_state_lock(
+    @patch("evm.models.Address.acquire_for_update")
+    def test_schedule_no_longer_reads_gas_price_before_acquiring_address_lock(
         self,
-        acquire_state_mock,
+        acquire_address_mock,
         _next_nonce_mock,
     ):
         native = Crypto.objects.create(
@@ -347,7 +347,7 @@ class EvmChainScannerServiceTests(TestCase):
                 return 9
 
         chain.__dict__["w3"] = SimpleNamespace(eth=EthClient())
-        acquire_state_mock.side_effect = lambda **kwargs: (
+        acquire_address_mock.side_effect = lambda **kwargs: (
             order.append("lock"),
             SimpleNamespace(),
         )[1]

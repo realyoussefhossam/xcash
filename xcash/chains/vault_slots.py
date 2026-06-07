@@ -19,8 +19,7 @@ logger = structlog.get_logger()
 def should_predeploy_on_address_exposure(
     *,
     chain: Chain,
-    crypto=None,
-    expose_native: bool = False,
+    crypto,
 ) -> bool:
     """判断返回 VaultSlot 地址前是否必须部署合约。
 
@@ -29,10 +28,6 @@ def should_predeploy_on_address_exposure(
     """
     if chain.type != ChainType.EVM:
         return False
-    if expose_native:
-        return True
-    if crypto is None:
-        return False
     return getattr(crypto, "pk", None) == chain.native_coin.pk
 
 
@@ -40,15 +35,13 @@ def schedule_deploy_after_commit_if_needed(
     *,
     slot: VaultSlot,
     chain: Chain,
-    crypto=None,
-    expose_native: bool = False,
+    crypto,
 ) -> None:
     if slot.is_deployed:
         return
     if not should_predeploy_on_address_exposure(
         chain=chain,
         crypto=crypto,
-        expose_native=expose_native,
     ):
         return
     db_transaction.on_commit(lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk))
@@ -58,12 +51,10 @@ def ensure_deposit_address(
     *,
     chain: Chain,
     customer,
-    crypto=None,
-    expose_native: bool = False,
+    crypto,
 ) -> str:
     validate_supported_chain(chain)
     backend = get_backend(chain)
-    backend.validate_runtime(chain=chain)
 
     project = customer.project
     existing = VaultSlot.objects.filter(
@@ -77,7 +68,6 @@ def ensure_deposit_address(
             slot=existing,
             chain=chain,
             crypto=crypto,
-            expose_native=expose_native,
         )
         return existing.address
 
@@ -116,7 +106,6 @@ def ensure_deposit_address(
                 slot=slot,
                 chain=chain,
                 crypto=crypto,
-                expose_native=expose_native,
             )
     return slot.address
 
@@ -126,11 +115,10 @@ def ensure_invoice_address(
     project,
     chain: Chain,
     invoice_index: int,
-    crypto=None,
+    crypto,
 ) -> str:
     validate_supported_chain(chain)
     backend = get_backend(chain)
-    backend.validate_runtime(chain=chain)
 
     existing = VaultSlot.objects.filter(
         chain=chain,
@@ -205,7 +193,6 @@ def schedule_deploy(slot_pk: int) -> TxTask | None:
             return None
 
         backend = get_backend(slot.chain)
-        backend.validate_runtime(chain=slot.chain)
 
         deploy_task = None
         if slot.deploy_tx_task_id is not None:

@@ -44,6 +44,7 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
         uid = request.query_params.get("uid", "")
         chain_type = request.query_params.get("chain_type", "")
         chain_code = request.query_params.get("chain", "")
+        crypto_symbol = request.query_params.get("crypto", "")
 
         if not uid or not UID_PATTERN.match(uid):
             raise APIError(ErrorCode.INVALID_UID)
@@ -69,19 +70,31 @@ class InternalDepositViewSet(ListModelMixin, RetrieveModelMixin, GenericViewSet)
             raise APIError(ErrorCode.INVALID_CHAIN)
 
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
-        if chain.type == ChainType.TRON:
+        if crypto_symbol:
             try:
-                usdt = Crypto.objects.get(symbol="USDT", active=True)
+                crypto = Crypto.objects.get(symbol=crypto_symbol.upper(), active=True)
             except Crypto.DoesNotExist:
                 raise APIError(ErrorCode.INVALID_CRYPTO) from None
-            if not ChainProductCapabilityService.supports_deposit_address(
-                chain=chain,
-                crypto=usdt,
-            ):
-                raise APIError(ErrorCode.INVALID_CHAIN)
+        elif chain.type == ChainType.TRON:
+            try:
+                crypto = Crypto.objects.get(symbol="USDT", active=True)
+            except Crypto.DoesNotExist:
+                raise APIError(ErrorCode.INVALID_CRYPTO) from None
+        else:
+            crypto = chain.native_coin
+
+        if not crypto.active:
+            raise APIError(ErrorCode.INVALID_CRYPTO)
+        if not crypto.support_this_chain(chain=chain):
+            raise APIError(ErrorCode.CHAIN_CRYPTO_NOT_SUPPORT)
+        if not ChainProductCapabilityService.supports_deposit_address(
+            chain=chain,
+            crypto=crypto,
+        ):
+            raise APIError(ErrorCode.INVALID_CHAIN)
         deposit_address = VaultSlot.ensure_deposit_address(
             chain=chain,
             customer=customer,
-            expose_native=chain.type == ChainType.EVM,
+            crypto=crypto,
         )
         return Response({"deposit_address": deposit_address})

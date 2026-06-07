@@ -5,7 +5,6 @@ from web3 import Web3
 
 from chains.constants import ChainCode
 from chains.models import Address
-from chains.models import AddressChainState
 from chains.models import AddressUsage
 from chains.models import ChainType
 from chains.models import TxTask
@@ -81,17 +80,15 @@ class EvmTxTaskScheduleTests(TestCase):
         self.assertEqual(base_task.tx_type, intent.tx_type)
         self.assertEqual(base_task.status, TxTaskStatus.QUEUED)
 
-        state = AddressChainState.objects.get(address=self.address, chain=self.chain)
-        self.assertEqual(state.address, self.address)
-        self.assertEqual(state.chain, self.chain)
+        self.assertEqual(Address.objects.get(pk=self.address.pk), self.address)
 
     def test_schedule_runs_verify_fn_inside_lock_before_nonce_allocation(self):
         events = []
-        original_acquire = AddressChainState.acquire_for_update
+        original_acquire = Address.acquire_for_update
 
-        def acquire_for_update(*, address, chain):
+        def acquire_for_update(*, address):
             events.append("lock")
-            return original_acquire(address=address, chain=chain)
+            return original_acquire(address=address)
 
         def verify():
             events.append("verify")
@@ -104,7 +101,7 @@ class EvmTxTaskScheduleTests(TestCase):
 
         with (
             patch.object(
-                AddressChainState,
+                Address,
                 "acquire_for_update",
                 side_effect=acquire_for_update,
             ),
@@ -114,9 +111,7 @@ class EvmTxTaskScheduleTests(TestCase):
 
         self.assertEqual(events, ["lock", "verify", "nonce"])
         self.assertEqual(task.nonce, 0)
-        state = AddressChainState.objects.get(address=self.address, chain=self.chain)
-        self.assertEqual(state.address, self.address)
-        self.assertEqual(state.chain, self.chain)
+        self.assertEqual(Address.objects.get(pk=self.address.pk), self.address)
 
     def test_schedule_rolls_back_when_verify_fn_raises(self):
         def reject():
@@ -127,7 +122,6 @@ class EvmTxTaskScheduleTests(TestCase):
 
         self.assertEqual(TxTask.objects.count(), 0)
         self.assertEqual(EvmTxTask.objects.count(), 0)
-        self.assertEqual(AddressChainState.objects.count(), 0)
 
     def test_schedule_rejects_non_zero_value(self):
         with self.assertRaisesRegex(ValueError, "value must be 0"):
@@ -135,4 +129,3 @@ class EvmTxTaskScheduleTests(TestCase):
 
         self.assertEqual(TxTask.objects.count(), 0)
         self.assertEqual(EvmTxTask.objects.count(), 0)
-        self.assertEqual(AddressChainState.objects.count(), 0)

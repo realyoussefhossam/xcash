@@ -266,53 +266,6 @@ class Chain(models.Model):
         raise NotImplementedError(msg)
 
 
-class AddressChainState(models.Model):
-    """按 (address, chain) 维护串行化状态。"""
-
-    address = models.ForeignKey(
-        "Address",
-        on_delete=models.CASCADE,
-        related_name="chain_states",
-        verbose_name=_("地址"),
-    )
-    chain = models.ForeignKey(
-        "Chain",
-        on_delete=models.CASCADE,
-        related_name="address_states",
-        verbose_name=_("链"),
-    )
-    created_at = models.DateTimeField(_("创建时间"), auto_now_add=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("address", "chain"),
-                name="uniq_address_chain_state_address_chain",
-            ),
-        ]
-        verbose_name = _("地址链状态")
-        verbose_name_plural = verbose_name
-
-    def __str__(self) -> str:
-        return f"{self.address.address}:{self.chain.code}"
-
-    @classmethod
-    def acquire_for_update(
-        cls,
-        *,
-        address: Address,
-        chain: Chain,
-    ) -> AddressChainState:
-        try:
-            state, _created = cls.objects.get_or_create(address=address, chain=chain)
-        except IntegrityError:
-            # 并发首次创建撞唯一约束时：对方事务已写索引但尚未对本事务可见，
-            # 无锁 get() 会误判 DoesNotExist。用 select_for_update 加锁回查，
-            # 等对方事务提交后命中记录。调用方必须已在 atomic 事务中。
-            return cls.objects.select_for_update().get(address=address, chain=chain)
-        return cls.objects.select_for_update().get(pk=state.pk)
-
-
 # BIP44 account' 层级与业务用途的映射，直接用于派生路径 m/44'/coin'/account'/0/address_index。
 class AddressUsage(models.TextChoices):
     HotWallet = "hot_wallet", _("热钱包")
@@ -477,6 +430,11 @@ class Address(UndeletableModel):
 
     def __str__(self):
         return f"{self.address}"
+
+    @classmethod
+    def acquire_for_update(cls, *, address: Address) -> Address:
+        """锁定地址本行，用于串行化该地址发起的链上交易。"""
+        return cls.objects.select_for_update().get(pk=address.pk)
 
     def sign_evm_transaction(self, *, tx_dict: dict) -> EvmSignedPayload:
         """用本地址私钥对一笔 legacy EVM 交易签名，返回归一化签名结果。
@@ -965,8 +923,7 @@ class VaultSlot(models.Model):
         chain: Chain,
         customer,
         *,
-        crypto=None,
-        expose_native: bool = False,
+        crypto,
     ) -> str:
         from chains.vault_slots import ensure_deposit_address
 
@@ -974,7 +931,6 @@ class VaultSlot(models.Model):
             chain=chain,
             customer=customer,
             crypto=crypto,
-            expose_native=expose_native,
         )
 
     @staticmethod
@@ -983,7 +939,7 @@ class VaultSlot(models.Model):
         project,
         chain: Chain,
         invoice_index: int,
-        crypto=None,
+        crypto,
     ) -> str:
         from chains.vault_slots import ensure_invoice_address
 

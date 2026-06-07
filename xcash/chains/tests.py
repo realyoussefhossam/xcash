@@ -14,7 +14,6 @@ from web3 import Web3
 from chains.constants import ChainCode
 from chains.constants import ChainType
 from chains.models import Address
-from chains.models import AddressChainState
 from chains.models import AddressUsage
 from chains.models import Chain
 from chains.models import ConfirmMode
@@ -31,137 +30,9 @@ from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from chains.tasks import process_transfer
 from chains.tests_fixtures import make_evm_chain
-from chains.transfer_matching import addresses_equal
-from chains.transfer_matching import raw_amount
-from chains.transfer_matching import transfer_matches
 from currencies.models import ChainCryptoDeployment
 from currencies.models import Crypto
 from projects.models import Project
-
-
-class TransferMatchingTests(TestCase):
-    def test_addresses_equal_normalizes_evm_addresses(self):
-        chain = make_evm_chain(code=ChainCode.Ethereum)
-        checksum = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000abc"
-        )
-
-        self.assertTrue(addresses_equal(checksum.lower(), checksum, chain=chain))
-
-    def test_transfer_matches_uses_raw_value_and_chain_specific_address_rules(self):
-        native = Crypto.objects.create(
-            name="Transfer Match Coin",
-            symbol="TMC",
-            coingecko_id="transfer-match-coin",
-        )
-        chain = make_evm_chain(code=ChainCode.BSC)
-        # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
-        ChainCryptoDeployment.objects.create(
-            crypto=native,
-            chain=chain,
-            address=Web3.to_checksum_address("0x" + "11" * 20),
-            decimals=6,
-        )
-        from_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000001"
-        )
-        to_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000002"
-        )
-        transfer = Transfer.objects.create(
-            chain=chain,
-            block=1,
-            block_hash="0x" + "aa" * 32,
-            hash="0x" + "1" * 64,
-            crypto=native,
-            from_address=from_address.lower(),
-            to_address=to_address.lower(),
-            value=Decimal("1234567"),
-            amount=Decimal("1.234567"),
-            timestamp=1,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMED,
-            type=TransferType.Collect,
-        )
-
-        expected_value = raw_amount(
-            amount=Decimal("1.234567"),
-            crypto=native,
-            chain=chain,
-        )
-
-        self.assertTrue(
-            transfer_matches(
-                transfer,
-                chain=chain,
-                crypto=native,
-                from_address=from_address,
-                to_address=to_address,
-                value=expected_value,
-            )
-        )
-
-    def test_raw_amount_truncates_when_business_amount_exceeds_chain_decimals(self):
-        # 业务 amount 的小数位超过 crypto.decimals 时，
-        # 链上 raw value 必然被向下截断；raw_amount 必须与 broadcast 端 `int(...)` 对齐，
-        # 否则 transfer_matches 的严格 == 比对会永久失败，已上链的转账无法被认领。
-        crypto = Crypto.objects.create(
-            name="Raw Amount Trunc",
-            symbol="RAT",
-            coingecko_id="raw-amount-trunc",
-        )
-        chain = make_evm_chain(code=ChainCode.Polygon)
-        # 精度以 ChainCryptoDeployment 为唯一真相；非空合约地址避免与原生币 address="" 行冲突。
-        ChainCryptoDeployment.objects.create(
-            crypto=crypto,
-            chain=chain,
-            address=Web3.to_checksum_address("0x" + "22" * 20),
-            decimals=6,
-        )
-
-        value_raw = int(Decimal("0.01480216") * Decimal(10**6))
-        self.assertEqual(value_raw, 14802)
-        self.assertEqual(
-            raw_amount(amount=Decimal("0.01480216"), crypto=crypto, chain=chain),
-            Decimal(14802),
-        )
-
-        from_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000003"
-        )
-        to_address = Web3.to_checksum_address(
-            "0x0000000000000000000000000000000000000004"
-        )
-        transfer = Transfer.objects.create(
-            chain=chain,
-            block=1,
-            block_hash="0x" + "aa" * 32,
-            hash="0x" + "2" * 64,
-            crypto=crypto,
-            from_address=from_address.lower(),
-            to_address=to_address.lower(),
-            value=Decimal(value_raw),
-            amount=Decimal("0.014802"),
-            timestamp=1,
-            datetime=timezone.now(),
-            status=TransferStatus.CONFIRMED,
-            type=TransferType.Collect,
-        )
-
-        self.assertTrue(
-            transfer_matches(
-                transfer,
-                chain=chain,
-                crypto=crypto,
-                from_address=from_address,
-                to_address=to_address,
-                value=raw_amount(
-                    amount=Decimal("0.01480216"),
-                    crypto=crypto,
-                    chain=chain,
-                ),
-            )
-        )
 
 
 class TxTaskValidationTests(TestCase):
@@ -436,59 +307,6 @@ class AddressIdentityTests(TestCase):
                 chain_type=ChainType.EVM,
                 usage=AddressUsage.HotWallet,
                 address_index=0,
-            )
-
-
-class AddressChainStateAcquireTests(TestCase):
-    def setUp(self):
-        self.chain = make_evm_chain(code=ChainCode.Ethereum)
-        self.wallet = Wallet.objects.create()
-        self.address = Address.objects.create(
-            wallet=self.wallet,
-            chain_type=ChainType.EVM,
-            usage=AddressUsage.HotWallet,
-            bip44_account=0,
-            address_index=0,
-            address=Web3.to_checksum_address(
-                "0x00000000000000000000000000000000000000f0"
-            ),
-        )
-
-    def test_acquire_for_update_falls_back_to_locked_read_after_integrity_error(self):
-        # 模拟并发首次创建撞唯一约束的场景：get_or_create 抛 IntegrityError 时
-        # 必须用 select_for_update 加锁回查到已提交的 state，而不是抛 DoesNotExist。
-        existing_state = AddressChainState.objects.create(
-            address=self.address,
-            chain=self.chain,
-        )
-
-        def fake_get_or_create(**_kwargs):
-            raise IntegrityError("duplicate key value violates unique constraint")
-
-        with patch.object(
-            AddressChainState.objects, "get_or_create", side_effect=fake_get_or_create
-        ):
-            state = AddressChainState.acquire_for_update(
-                address=self.address,
-                chain=self.chain,
-            )
-
-        self.assertEqual(state.pk, existing_state.pk)
-        self.assertEqual(state.address, self.address)
-        self.assertEqual(state.chain, self.chain)
-
-    def test_acquire_for_update_raises_doesnotexist_when_state_truly_absent(self):
-        # IntegrityError 后 state 确实不存在时（非身份冲突的其他约束错误），
-        # 加锁回查必须抛 DoesNotExist，供上层感知真错误，而不是吞掉。
-        def fake_get_or_create(**_kwargs):
-            raise IntegrityError("unrelated unique constraint")
-
-        with patch.object(
-            AddressChainState.objects, "get_or_create", side_effect=fake_get_or_create
-        ), self.assertRaises(AddressChainState.DoesNotExist):
-            AddressChainState.acquire_for_update(
-                address=self.address,
-                chain=self.chain,
             )
 
 

@@ -12,7 +12,7 @@ from eth_utils import keccak  # noqa
 from web3 import Web3
 
 from chains.models import TERMINAL_TX_TASK_STATUSES
-from chains.models import AddressChainState
+from chains.models import Address
 from chains.models import TxHash
 from chains.models import TxTask
 from chains.models import TxTaskStatus
@@ -365,9 +365,9 @@ class EvmTxTask(UndeletableModel):
     def schedule(cls, intent: EvmTxIntent) -> EvmTxTask:
         """按 EvmTxIntent 原子创建待执行交易任务。
 
-        通过 AddressChainState 行锁对 (sender, chain) 串行化，杜绝并发 nonce
-        冲突。verify_fn 必须在行锁内、nonce 分配前执行；验证失败时整个事务
-        回滚，避免留下未通过业务二次校验的 TxTask 或 nonce 空洞。
+        通过 Address 行锁对同一发送地址串行化，杜绝并发 nonce 冲突。
+        verify_fn 必须在行锁内、nonce 分配前执行；验证失败时整个事务回滚，
+        避免留下未通过业务二次校验的 TxTask 或 nonce 空洞。
 
         首次签名和首个 tx_hash 生成延后到 broadcast()；内部稳定身份只依赖
         (sender, chain, nonce)。
@@ -376,9 +376,8 @@ class EvmTxTask(UndeletableModel):
             raise ValueError("EVM task value must be 0")
 
         with db_transaction.atomic():
-            AddressChainState.acquire_for_update(
+            Address.acquire_for_update(
                 address=intent.sender,
-                chain=intent.chain,
             )
 
             # 在行锁内执行调用方注入的验证回调（如余额二次确认）。
@@ -408,8 +407,8 @@ class EvmTxTask(UndeletableModel):
     def _next_nonce(address, chain) -> int:
         """为 (address, chain) 维度分配严格递增的下一个 nonce。
 
-        调用方必须已通过 AddressChainState.acquire_for_update() 持有行锁，
-        确保基于 EvmTxTask 推导 nonce 与创建任务处于同一串行化区间。
+        调用方必须已通过 Address.acquire_for_update() 持有行锁，确保基于
+        EvmTxTask 推导 nonce 与创建任务处于同一串行化区间。
         """
         latest_nonce = (
             EvmTxTask.objects.filter(sender=address, chain=chain)

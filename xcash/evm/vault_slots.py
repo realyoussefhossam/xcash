@@ -20,11 +20,6 @@ from evm.models import EvmTxTask
 logger = structlog.get_logger()
 
 
-def validate_runtime(*, chain: Chain) -> None:
-    if chain.type != ChainType.EVM:
-        raise ValueError("EVM VaultSlot 仅支持 EVM 链")
-
-
 def predict_address(*, vault: str, salt: bytes) -> str:
     return predict_xcash_vault_slot_address(vault=vault, salt=salt)
 

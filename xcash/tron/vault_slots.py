@@ -16,16 +16,6 @@ from chains.models import VaultSlot
 from core.models import SystemWallet
 
 
-def validate_runtime(*, chain: Chain) -> None:
-    if chain.type != ChainType.TRON:
-        raise ValueError("Tron VaultSlot 仅支持 Tron 链")
-    if (
-        not settings.TRON_VAULT_SLOT_FACTORY_ADDRESS
-        or not settings.TRON_VAULT_SLOT_TEMPLATE_ADDRESS
-    ):
-        raise RuntimeError("Tron VaultSlot factory/template 未配置")
-
-
 def predict_address(*, vault: str, salt: bytes) -> str:
     return predict_tron_vault_slot_address(
         vault=vault,
