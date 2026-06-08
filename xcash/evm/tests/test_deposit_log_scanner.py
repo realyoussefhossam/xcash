@@ -20,7 +20,6 @@ from evm.models import EvmScanCursor
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.logs import EvmLogScanner
-from evm.scanner.watchers import EvmWatchSet
 from evm.tests._fixtures import make_crypto
 from evm.tests._fixtures import make_evm_chain
 from evm.tests._fixtures import make_evm_system_address
@@ -109,16 +108,13 @@ class EvmLogScannerTests(TestCase):
         native_log = self._native_log()
         transfer_processor_mock.return_value = 0
         rpc_client = Mock()
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.slot.address}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         result = EvmLogScanner._process_logs(
             chain=self.chain,
             logs=[native_log],
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
         transfer_processor_mock.assert_called_once()
@@ -126,7 +122,10 @@ class EvmLogScannerTests(TestCase):
         self.assertEqual(processor_kwargs["chain"], self.chain)
         self.assertEqual(processor_kwargs["rpc_client"], rpc_client)
         self.assertEqual(processor_kwargs["raw_logs"], [native_log])
-        self.assertEqual(processor_kwargs["watch_set"], watch_set)
+        self.assertEqual(processor_kwargs["token_registry"], token_registry)
+        self.assertEqual(
+            processor_kwargs["owned_addresses"], frozenset({self.slot.address})
+        )
         self.assertIsNone(result)
 
     @patch("chains.service.TransferService.enqueue_processing")
@@ -242,14 +241,11 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             logs=[native_log, erc20_log, unknown_log],
             rpc_client=rpc_client,
-            watch_set=EvmWatchSet(
-                matched_addresses=frozenset(),
-                tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-            ),
+            token_registry={self.token_on_chain.address: self.token_on_chain},
         )
 
-        processor_watch_set = transfer_processor_mock.call_args.kwargs["watch_set"]
-        self.assertEqual(processor_watch_set.matched_addresses, {self.slot.address})
+        owned_addresses = transfer_processor_mock.call_args.kwargs["owned_addresses"]
+        self.assertEqual(owned_addresses, {self.slot.address})
 
     def test_scanner_skips_logs_from_known_internal_tx_hash(self):
         tx_hash = "0x" + "23" * 32
@@ -272,10 +268,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             logs=[self._erc20_log()],
             rpc_client=rpc_client,
-            watch_set=EvmWatchSet(
-                matched_addresses=frozenset({self.slot.address}),
-                tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-            ),
+            token_registry={self.token_on_chain.address: self.token_on_chain},
         )
 
         self.assertIsNone(result)

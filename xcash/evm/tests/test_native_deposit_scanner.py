@@ -14,7 +14,6 @@ from chains.models import VaultSlotUsage
 from core.models import SYSTEM_SETTINGS_CACHE_KEY
 from evm.models import EvmScanCursor
 from evm.scanner.logs import EvmLogScanner
-from evm.scanner.watchers import EvmWatchSet
 from evm.tests._fixtures import make_crypto
 from evm.tests._fixtures import make_evm_chain
 from evm.tests._fixtures import make_evm_system_address
@@ -74,9 +73,7 @@ class EvmLogScannerTests(TestCase):
             salt=b"\x01" * 32,
         )
         self.payer = Web3.to_checksum_address("0x" + "bb" * 20)
-        self.watch_set = EvmWatchSet(
-            tokens_by_address={},
-        )
+        self.token_registry: dict = {}
 
     def tearDown(self):
         cache.delete(SYSTEM_SETTINGS_CACHE_KEY)
@@ -127,7 +124,7 @@ class EvmLogScannerTests(TestCase):
         created = EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -174,7 +171,7 @@ class EvmLogScannerTests(TestCase):
         EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -205,7 +202,7 @@ class EvmLogScannerTests(TestCase):
         EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -235,7 +232,7 @@ class EvmLogScannerTests(TestCase):
         created = EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -275,7 +272,7 @@ class EvmLogScannerTests(TestCase):
         created = EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -308,7 +305,7 @@ class EvmLogScannerTests(TestCase):
         created = EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=self.watch_set,
+            token_registry=self.token_registry,
             from_block=120,
             to_block=120,
         )
@@ -316,21 +313,18 @@ class EvmLogScannerTests(TestCase):
         self.assertIsNone(created)
         create_observed_transfer_mock.assert_not_called()
 
-    @patch("evm.scanner.logs.load_watch_set")
+    @patch("evm.scanner.logs.load_token_registry")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
     def test_scan_chain_fetches_xcash_logs_without_cached_addresses(
         self,
         get_latest_block_number_mock,
         get_logs_mock,
-        load_watch_set_mock,
+        load_token_registry_mock,
     ):
         get_latest_block_number_mock.return_value = 200
         get_logs_mock.return_value = []
-        load_watch_set_mock.return_value = EvmWatchSet(
-            matched_addresses=frozenset(),
-            tokens_by_address={},
-        )
+        load_token_registry_mock.return_value = {}
 
         result = EvmLogScanner.scan_chain(chain=self.chain, batch_size=32)
 

@@ -9,7 +9,7 @@ from chains.constants import ChainType
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
 from evm.scanner.watchers import clear_evm_crypto_on_chains_cache
-from evm.scanner.watchers import load_watch_set
+from evm.scanner.watchers import load_token_registry
 
 
 def _refresh_evm_crypto_on_chains_on_commit(
@@ -19,7 +19,7 @@ def _refresh_evm_crypto_on_chains_on_commit(
     if chain.type != ChainType.EVM:
         return
     clear_evm_crypto_on_chains_cache(chain=chain)
-    transaction.on_commit(lambda: load_watch_set(chain=chain, refresh=True))
+    transaction.on_commit(lambda: load_token_registry(chain=chain, refresh=True))
 
 
 def _refresh_crypto_on_chains_for_crypto_on_commit(*, crypto: Crypto) -> None:
@@ -35,16 +35,16 @@ def _refresh_crypto_on_chains_for_crypto_on_commit(*, crypto: Crypto) -> None:
     for chain in chains:
         clear_evm_crypto_on_chains_cache(chain=chain)
 
-    def refresh_chain_watch_sets() -> None:
+    def refresh_chain_token_registries() -> None:
         for chain in chains:
-            load_watch_set(chain=chain, refresh=True)
+            load_token_registry(chain=chain, refresh=True)
 
-    transaction.on_commit(refresh_chain_watch_sets)
+    transaction.on_commit(refresh_chain_token_registries)
 
 
 @receiver(post_save, sender=CryptoOnChain)
 @receiver(post_delete, sender=CryptoOnChain)
-def refresh_watch_set_when_crypto_on_chain_changes(
+def refresh_token_registry_when_crypto_on_chain_changes(
     sender,
     instance: CryptoOnChain,
     **kwargs,
@@ -53,5 +53,5 @@ def refresh_watch_set_when_crypto_on_chain_changes(
 
 
 @receiver(post_save, sender=Crypto)
-def refresh_watch_set_when_crypto_changes(sender, instance: Crypto, **kwargs):
+def refresh_token_registry_when_crypto_changes(sender, instance: Crypto, **kwargs):
     _refresh_crypto_on_chains_for_crypto_on_commit(crypto=instance)

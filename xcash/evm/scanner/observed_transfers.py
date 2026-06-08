@@ -13,10 +13,10 @@ from chains.models import Chain
 from chains.models import TxHash
 from chains.service import ObservedTransferPayload
 from chains.service import TransferService
+from currencies.models import CryptoOnChain
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
 from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.rpc import EvmScannerRpcClient
-from evm.scanner.watchers import EvmWatchSet
 
 logger = structlog.get_logger()
 
@@ -45,7 +45,8 @@ class EvmObservedTransferProcessor:
         chain: Chain,
         rpc_client: EvmScannerRpcClient,
         raw_logs: list[dict[str, Any]],
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
+        owned_addresses: frozenset[str],
     ) -> None:
         """解析外部入账日志并幂等落库。"""
         candidate_logs = [
@@ -55,7 +56,8 @@ class EvmObservedTransferProcessor:
                 parsed := cls._parse_log(
                     log=log,
                     chain=chain,
-                    watch_set=watch_set,
+                    token_registry=token_registry,
+                    owned_addresses=owned_addresses,
                 )
             )
             is not None
@@ -96,7 +98,8 @@ class EvmObservedTransferProcessor:
         *,
         log: dict[str, Any],
         chain: Chain,
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
+        owned_addresses: frozenset[str],
     ) -> ParsedEvmTransferLog | None:
         """按 topic0 分派到原生币或 ERC20 解析；非入账日志返回 None。"""
         if log.get("removed"):
@@ -107,9 +110,16 @@ class EvmObservedTransferProcessor:
 
         topic0 = cls._normalize_hash(topics[0])
         if topic0 == XCASH_NATIVE_RECEIVED_TOPIC0.lower():
-            return cls._parse_native_log(log=log, chain=chain, watch_set=watch_set)
+            return cls._parse_native_log(
+                log=log, chain=chain, owned_addresses=owned_addresses
+            )
         if topic0 == ERC20_TRANSFER_TOPIC0.lower():
-            return cls._parse_erc20_log(log=log, chain=chain, watch_set=watch_set)
+            return cls._parse_erc20_log(
+                log=log,
+                chain=chain,
+                token_registry=token_registry,
+                owned_addresses=owned_addresses,
+            )
         return None
 
     @classmethod
@@ -118,7 +128,7 @@ class EvmObservedTransferProcessor:
         *,
         log: dict[str, Any],
         chain: Chain,
-        watch_set: EvmWatchSet,
+        owned_addresses: frozenset[str],
     ) -> ParsedEvmTransferLog | None:
         """解析 VaultSlot 上的原生币入账事件，并过滤掉不在观察集中的 slot。"""
         topics = list(log.get("topics") or [])
@@ -140,9 +150,9 @@ class EvmObservedTransferProcessor:
             )
             return None
 
-        if value <= 0 or slot_address not in watch_set.matched_addresses:
+        if value <= 0 or slot_address not in owned_addresses:
             return None
-        if payer in watch_set.matched_addresses:
+        if payer in owned_addresses:
             return None
 
         return ParsedEvmTransferLog(
@@ -162,7 +172,8 @@ class EvmObservedTransferProcessor:
         *,
         log: dict[str, Any],
         chain: Chain,
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
+        owned_addresses: frozenset[str],
     ) -> ParsedEvmTransferLog | None:
         """解析 ERC20 Transfer 日志，仅保留外部地址打入系统观察地址的入账。"""
         topics = list(log.get("topics") or [])
@@ -171,7 +182,7 @@ class EvmObservedTransferProcessor:
 
         try:
             token_address = Web3.to_checksum_address(str(log.get("address", "")))
-            token = watch_set.tokens_by_address.get(token_address)
+            token = token_registry.get(token_address)
             if token is None:
                 return None
 
@@ -179,9 +190,9 @@ class EvmObservedTransferProcessor:
             to_address = cls._topic_to_address(topics[2])
             # 只观察外部地址打入系统观察地址的入账事实；
             # 系统地址或 VaultSlot 发出的资产移动由 internal_tx receipt 路径收口。
-            if to_address not in watch_set.matched_addresses:
+            if to_address not in owned_addresses:
                 return None
-            if from_address in watch_set.matched_addresses:
+            if from_address in owned_addresses:
                 return None
 
             raw_hex = cls._to_hex(log.get("data", "0x0"))

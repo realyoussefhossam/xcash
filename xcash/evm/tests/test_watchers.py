@@ -12,9 +12,9 @@ from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
-from evm.scanner.watchers import clear_evm_watch_set_cache
-from evm.scanner.watchers import load_matched_addresses_for_candidates
-from evm.scanner.watchers import load_watch_set
+from evm.scanner.watchers import clear_evm_token_registry_cache
+from evm.scanner.watchers import load_owned_addresses_for_candidates
+from evm.scanner.watchers import load_token_registry
 from evm.tests._fixtures import make_evm_chain
 from invoices.models import DifferRecipientAddress
 from projects.models import Customer
@@ -23,13 +23,13 @@ from projects.models import Project
 WATCHER_TEST_CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "evm-watch-set-tests",
+        "LOCATION": "evm-token-registry-tests",
     }
 }
 
 
 @override_settings(CACHES=WATCHER_TEST_CACHES)
-class EvmWatchSetCacheTests(TestCase):
+class EvmTokenRegistryCacheTests(TestCase):
     def setUp(self):
         cache.clear()
         self.native = Crypto.objects.create(
@@ -81,15 +81,14 @@ class EvmWatchSetCacheTests(TestCase):
         )
 
     def tearDown(self):
-        clear_evm_watch_set_cache()
+        clear_evm_token_registry_cache()
         cache.clear()
 
-    def test_load_watch_set_only_loads_crypto_on_chains(self):
-        watch_set = load_watch_set(chain=self.chain, refresh=True)
+    def test_load_token_registry_returns_supported_tokens(self):
+        token_registry = load_token_registry(chain=self.chain, refresh=True)
 
-        self.assertEqual(watch_set.matched_addresses, frozenset())
         self.assertEqual(
-            watch_set.tokens_by_address,
+            token_registry,
             {self.token_on_chain.address: self.token_on_chain},
         )
 
@@ -98,13 +97,13 @@ class EvmWatchSetCacheTests(TestCase):
             "0x0000000000000000000000000000000000000d02"
         )
 
-        matched_addresses = load_matched_addresses_for_candidates(
+        owned_addresses = load_owned_addresses_for_candidates(
             chain=self.chain,
             addresses={self.vault_slot.address, unknown_address},
         )
 
         self.assertEqual(
-            matched_addresses,
+            owned_addresses,
             frozenset({self.vault_slot.address}),
         )
 
@@ -118,20 +117,20 @@ class EvmWatchSetCacheTests(TestCase):
             address=differ_address,
         )
 
-        matched_addresses = load_matched_addresses_for_candidates(
+        owned_addresses = load_owned_addresses_for_candidates(
             chain=self.chain,
             addresses={differ_address},
         )
 
-        self.assertEqual(matched_addresses, frozenset({differ_address}))
+        self.assertEqual(owned_addresses, frozenset({differ_address}))
 
     def test_candidate_lookup_excludes_non_candidate_addresses(self):
-        matched_addresses = load_matched_addresses_for_candidates(
+        owned_addresses = load_owned_addresses_for_candidates(
             chain=self.chain,
             addresses={self.address.address},
         )
 
-        self.assertEqual(matched_addresses, frozenset())
+        self.assertEqual(owned_addresses, frozenset())
 
     def test_candidate_lookup_scopes_vault_slots_to_chain(self):
         other_chain = make_evm_chain(
@@ -153,15 +152,15 @@ class EvmWatchSetCacheTests(TestCase):
             salt=b"\x03" * 32,
         )
 
-        matched_addresses = load_matched_addresses_for_candidates(
+        owned_addresses = load_owned_addresses_for_candidates(
             chain=self.chain,
             addresses={self.vault_slot.address, other_slot_address},
         )
 
-        self.assertEqual(matched_addresses, frozenset({self.vault_slot.address}))
+        self.assertEqual(owned_addresses, frozenset({self.vault_slot.address}))
 
     def test_crypto_on_chain_save_refreshes_cached_token_set_after_commit(self):
-        load_watch_set(chain=self.chain, refresh=True)
+        load_token_registry(chain=self.chain, refresh=True)
         new_token = Crypto.objects.create(
             name="Watcher Token Two",
             symbol="WTKN2",
@@ -179,33 +178,29 @@ class EvmWatchSetCacheTests(TestCase):
                 decimals=6,
             )
 
-        watch_set = load_watch_set(chain=self.chain)
-        self.assertIn(token_address, watch_set.tokens_by_address)
+        token_registry = load_token_registry(chain=self.chain)
+        self.assertIn(token_address, token_registry)
 
     def test_crypto_on_chain_delete_refreshes_cached_token_set_after_commit(self):
-        initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
-        self.assertIn(
-            self.token_on_chain.address, initial_watch_set.tokens_by_address
-        )
+        initial_registry = load_token_registry(chain=self.chain, refresh=True)
+        self.assertIn(self.token_on_chain.address, initial_registry)
 
         with self.captureOnCommitCallbacks(execute=True):
             self.token_on_chain.delete()
 
-        watch_set = load_watch_set(chain=self.chain)
-        self.assertNotIn(self.token_on_chain.address, watch_set.tokens_by_address)
+        token_registry = load_token_registry(chain=self.chain)
+        self.assertNotIn(self.token_on_chain.address, token_registry)
 
     def test_crypto_active_change_refreshes_cached_token_set_after_commit(self):
-        initial_watch_set = load_watch_set(chain=self.chain, refresh=True)
-        self.assertIn(
-            self.token_on_chain.address, initial_watch_set.tokens_by_address
-        )
+        initial_registry = load_token_registry(chain=self.chain, refresh=True)
+        self.assertIn(self.token_on_chain.address, initial_registry)
 
         with self.captureOnCommitCallbacks(execute=True):
             self.token.active = False
             self.token.save(update_fields=["active"])
 
-        watch_set = load_watch_set(chain=self.chain)
-        self.assertNotIn(self.token_on_chain.address, watch_set.tokens_by_address)
+        token_registry = load_token_registry(chain=self.chain)
+        self.assertNotIn(self.token_on_chain.address, token_registry)
 
     def _create_project(self) -> Project:
         suffix = Project.objects.count()

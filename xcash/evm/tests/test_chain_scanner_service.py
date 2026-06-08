@@ -25,7 +25,6 @@ from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
 from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.service import EvmScannerService
-from evm.scanner.watchers import EvmWatchSet
 from evm.tests._fixtures import make_evm_chain
 
 
@@ -88,17 +87,14 @@ class EvmChainScannerServiceTests(TestCase):
         scan_chain_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
         self.assertIsNone(result)
 
-    @patch("evm.scanner.service.load_watch_set")
+    @patch("evm.scanner.service.load_token_registry")
     @patch("evm.scanner.service.EvmLogScanner.scan_range")
     def test_reconcile_blocks_scans_native_and_erc20_ranges(
         self,
         scan_range_mock,
-        load_watch_set_mock,
+        load_token_registry_mock,
     ):
-        load_watch_set_mock.return_value = EvmWatchSet(
-            matched_addresses=frozenset(),
-            tokens_by_address={},
-        )
+        load_token_registry_mock.return_value = {}
         scan_range_mock.return_value = None
 
         result = EvmScannerService.reconcile_blocks(
@@ -109,7 +105,7 @@ class EvmChainScannerServiceTests(TestCase):
         scan_range_mock.assert_called_once_with(
             chain=self.chain,
             rpc_client=ANY,
-            watch_set=load_watch_set_mock.return_value,
+            token_registry=load_token_registry_mock.return_value,
             from_block=10,
             to_block=10,
         )

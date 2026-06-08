@@ -29,8 +29,7 @@ from evm.models import EvmScanCursor
 from evm.models import EvmTxTask
 from evm.scanner.logs import EvmLogScanner
 from evm.scanner.rpc import EvmScannerRpcError
-from evm.scanner.watchers import EvmWatchSet
-from evm.scanner.watchers import load_matched_addresses_for_candidates
+from evm.scanner.watchers import load_owned_addresses_for_candidates
 from evm.tasks import _scan_evm_chain
 from evm.tasks import scan_active_evm_chains
 from projects.models import Customer
@@ -355,15 +354,12 @@ class EvmErc20ScannerTests(TestCase):
                 "get_block_timestamp": lambda *_args, **_kwargs: 1_700_000_000,
             },
         )()
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         created = EvmLogScanner.scan_range(
             chain=self.chain,
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
             from_block=100,
             to_block=100,
         )
@@ -410,11 +406,7 @@ class EvmErc20ScannerTests(TestCase):
             chain=self.chain,
             logs=logs,
             rpc_client=rpc_client,
-            watch_set=EvmWatchSet(
-                tokens_by_address={
-                    self.token_on_chain.address: self.token_on_chain
-                }
-            ),
+            token_registry={self.token_on_chain.address: self.token_on_chain},
         )
 
         self.assertIsNone(created)
@@ -459,10 +451,7 @@ class EvmErc20ScannerTests(TestCase):
         }
         rpc_client.get_transaction_receipt.return_value = receipt
         rpc_client.get_block_timestamp.return_value = 1_700_000_000
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address, wrong_recipient}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         with patch(
             "evm.internal_tx.processor.process_internal_transaction"
@@ -471,7 +460,7 @@ class EvmErc20ScannerTests(TestCase):
                 chain=self.chain,
                 logs=[log],
                 rpc_client=rpc_client,
-                watch_set=watch_set,
+                token_registry=token_registry,
             )
 
         base_task.refresh_from_db()
@@ -515,16 +504,13 @@ class EvmErc20ScannerTests(TestCase):
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = receipt
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address, recipient}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         created = EvmLogScanner._process_logs(
             chain=self.chain,
             logs=[log],
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
         self.assertIsNone(created)
@@ -544,16 +530,13 @@ class EvmErc20ScannerTests(TestCase):
         rpc_client = Mock()
         rpc_client.get_transaction.return_value = None
         rpc_client.get_transaction_receipt.return_value = {"status": 1}
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         result = EvmLogScanner._process_logs(
             chain=self.chain,
             logs=[log],
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
         self.assertIsNone(result)
@@ -579,16 +562,13 @@ class EvmErc20ScannerTests(TestCase):
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = None
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         result = EvmLogScanner._process_logs(
             chain=self.chain,
             logs=[log],
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
         self.assertIsNone(result)
@@ -629,16 +609,13 @@ class EvmErc20ScannerTests(TestCase):
             "input": f"0xa9059cbb{encoded_args}",
         }
         rpc_client.get_transaction_receipt.return_value = receipt
-        watch_set = EvmWatchSet(
-            matched_addresses=frozenset({self.addr.address, wrong_recipient}),
-            tokens_by_address={self.token_on_chain.address: self.token_on_chain},
-        )
+        token_registry = {self.token_on_chain.address: self.token_on_chain}
 
         created = EvmLogScanner._process_logs(
             chain=self.chain,
             logs=[first_log, second_log],
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
         self.assertIsNone(created)
@@ -729,7 +706,7 @@ class EvmErc20ScannerTests(TestCase):
     @patch("chains.service.TransferService.create_observed_transfer")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_logs")
     @patch("evm.scanner.logs.EvmScannerRpcClient.get_latest_block_number")
-    def test_scan_chain_ignores_logs_outside_watch_set(
+    def test_scan_chain_ignores_logs_to_unowned_addresses(
         self,
         get_latest_block_number_mock,
         get_logs_mock,
@@ -901,13 +878,13 @@ class EvmErc20ScannerTests(TestCase):
 
     def test_candidate_lookup_includes_vault_slots_and_excludes_system_addresses(self):
         # scanner 只观察本轮日志候选中的 VaultSlot 等入账地址，热钱包 Address 不承接外部入账。
-        matched_addresses = load_matched_addresses_for_candidates(
+        owned_addresses = load_owned_addresses_for_candidates(
             chain=self.chain,
             addresses={self.vault_slot.address, self.addr.address},
         )
 
-        self.assertIn(self.vault_slot.address, matched_addresses)
-        self.assertNotIn(self.addr.address, matched_addresses)
+        self.assertIn(self.vault_slot.address, owned_addresses)
+        self.assertNotIn(self.addr.address, owned_addresses)
 
     def test_erc20_cursor_advance_never_rewinds_database_value(self):
         cursor = EvmScanCursor.objects.create(

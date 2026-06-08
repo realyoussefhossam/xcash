@@ -11,6 +11,7 @@ from web3 import Web3
 
 from chains.models import Chain
 from chains.models import ChainType
+from currencies.models import CryptoOnChain
 from evm.models import EvmScanCursor
 from evm.scanner.constants import DEFAULT_LOG_SCAN_BATCH_SIZE
 from evm.scanner.constants import ERC20_TRANSFER_TOPIC0
@@ -18,9 +19,8 @@ from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.observed_transfers import EvmObservedTransferProcessor
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.rpc import EvmScannerRpcError
-from evm.scanner.watchers import EvmWatchSet
-from evm.scanner.watchers import load_matched_addresses_for_candidates
-from evm.scanner.watchers import load_watch_set
+from evm.scanner.watchers import load_owned_addresses_for_candidates
+from evm.scanner.watchers import load_token_registry
 
 logger = structlog.get_logger()
 
@@ -53,7 +53,7 @@ class EvmLogScanner:
                 latest_block_number=Greatest(F("latest_block_number"), latest_block)
             )
 
-            watch_set = load_watch_set(chain=chain)
+            token_registry = load_token_registry(chain=chain)
             scan_window = cls._compute_scan_window(
                 cursor=cursor,
                 latest_block=latest_block,
@@ -67,7 +67,7 @@ class EvmLogScanner:
             cls.scan_range(
                 chain=chain,
                 rpc_client=rpc_client,
-                watch_set=watch_set,
+                token_registry=token_registry,
                 from_block=from_block,
                 to_block=to_block,
             )
@@ -83,14 +83,14 @@ class EvmLogScanner:
         *,
         chain: Chain,
         rpc_client: EvmScannerRpcClient,
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
         from_block: int,
         to_block: int,
     ) -> None:
         """对 [from_block, to_block] 区间拉取一次日志并按类型落库。"""
         logs = cls._fetch_logs(
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
             from_block=from_block,
             to_block=to_block,
         )
@@ -98,7 +98,7 @@ class EvmLogScanner:
             chain=chain,
             logs=logs,
             rpc_client=rpc_client,
-            watch_set=watch_set,
+            token_registry=token_registry,
         )
 
     @classmethod
@@ -108,20 +108,23 @@ class EvmLogScanner:
         chain: Chain,
         logs: list[dict[str, Any]],
         rpc_client: EvmScannerRpcClient,
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
     ) -> None:
-        """把外部入账日志交给 Transfer 落库。"""
-        matched_watch_set = watch_set.with_matched_addresses(
-            load_matched_addresses_for_candidates(
-                chain=chain,
-                addresses=cls._watched_address_candidates_from_logs(logs=logs),
-            )
+        """把外部入账日志交给 Transfer 落库。
+
+        代币表（token_registry）决定关注哪些代币与如何解码；本轮命中的系统自有
+        收款地址（owned_addresses）由本窗口日志候选地址即时匹配得出，二者各自传入。
+        """
+        owned_addresses = load_owned_addresses_for_candidates(
+            chain=chain,
+            addresses=cls._watched_address_candidates_from_logs(logs=logs),
         )
         EvmObservedTransferProcessor.process(
             chain=chain,
             rpc_client=rpc_client,
             raw_logs=logs,
-            watch_set=matched_watch_set,
+            token_registry=token_registry,
+            owned_addresses=owned_addresses,
         )
 
     @classmethod
@@ -129,7 +132,7 @@ class EvmLogScanner:
         cls,
         *,
         rpc_client: EvmScannerRpcClient,
-        watch_set: EvmWatchSet,
+        token_registry: dict[str, CryptoOnChain],
         from_block: int,
         to_block: int,
     ) -> list[dict[str, Any]]:
@@ -144,7 +147,7 @@ class EvmLogScanner:
                 summary="获取 EVM Xcash 原生币入账日志失败",
             )
         )
-        erc20_addresses = cls._erc20_log_filter_addresses(watch_set=watch_set)
+        erc20_addresses = cls._erc20_log_filter_addresses(token_registry=token_registry)
         if erc20_addresses:
             logs.extend(
                 rpc_client.get_logs(
@@ -158,9 +161,11 @@ class EvmLogScanner:
         return logs
 
     @staticmethod
-    def _erc20_log_filter_addresses(*, watch_set: EvmWatchSet) -> list[str]:
+    def _erc20_log_filter_addresses(
+        *, token_registry: dict[str, CryptoOnChain]
+    ) -> list[str]:
         """返回需要在 eth_getLogs 中作为合约地址过滤的 ERC20 列表。"""
-        return sorted(watch_set.tokens_by_address.keys())
+        return sorted(token_registry.keys())
 
     @classmethod
     def _watched_address_candidates_from_logs(
