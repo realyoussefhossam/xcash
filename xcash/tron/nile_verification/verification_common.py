@@ -25,6 +25,7 @@ def load_verification_env() -> None:
                 os.environ[key] = value
 
     os.environ.setdefault("TRON_VAULT_SLOT_FEE_LIMIT", "300000000")
+    os.environ.setdefault("TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT", "1500000000")
 
 
 def setup_django() -> None:
