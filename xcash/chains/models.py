@@ -1094,7 +1094,7 @@ class VaultSlotCollectSchedule(models.Model):
 
         from core.runtime_settings import get_vault_slot_collect_delay
 
-        due_at = timezone.now() + get_vault_slot_collect_delay()
+        due_at = timezone.now() + get_vault_slot_collect_delay(chain.type)
         try:
             return cls.objects.create(
                 chain=chain,
@@ -1139,8 +1139,6 @@ class VaultSlotCollectSchedule(models.Model):
                 .order_by("due_at", "pk")[:limit]
             )
             for schedule in schedules:
-                if not schedule.vault_slot.project.auto_collect_enabled:
-                    continue
                 if not can_create_collect_tx_task(
                     chain=schedule.chain,
                     crypto=schedule.crypto,

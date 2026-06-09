@@ -66,11 +66,26 @@ def get_webhook_event_timeout() -> timedelta:
     return timedelta(minutes=15)
 
 
-def get_vault_slot_collect_delay() -> timedelta:
+def get_vault_slot_collect_delay(chain_type: str) -> timedelta:
+    # 归集延迟按链类型取：EVM 短（gas 便宜、优先到账），Tron 长（成本高、批量摊薄）。
+    # 无 SystemSettings 记录时回退到与字段 default 一致的兜底值，避免漂移。
+    from chains.models import ChainType
+
+    field_by_type = {
+        ChainType.EVM: "evm_vault_slot_collect_delay_minutes",
+        ChainType.TRON: "tron_vault_slot_collect_delay_minutes",
+    }
+    fallback_minutes_by_type = {
+        ChainType.EVM: 2,
+        ChainType.TRON: 360,
+    }
+    if chain_type not in field_by_type:
+        raise ValueError(f"VaultSlot 归集不支持链类型: {chain_type}")
+
     system_settings = get_system_settings()
     if system_settings is not None:
-        return timedelta(minutes=system_settings.vault_slot_collect_delay_minutes)
-    return timedelta(hours=6)
+        return timedelta(minutes=getattr(system_settings, field_by_type[chain_type]))
+    return timedelta(minutes=fallback_minutes_by_type[chain_type])
 
 
 def get_aml_screening_enabled() -> bool:

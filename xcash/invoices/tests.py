@@ -131,7 +131,8 @@ class InvoicePaymentSelectionTests(TestCase):
             vault=Web3.to_checksum_address(
                 "0x00000000000000000000000000000000000000A1"
             ),
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.crypto = Crypto.objects.create(
             name="Tether USD",
@@ -190,8 +191,11 @@ class InvoicePaymentSelectionTests(TestCase):
         )
 
     def enable_differ_mode(self, *, address_suffix: str = "d01") -> str:
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
-        self.project.save(update_fields=["invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(
+            update_fields=["evm_invoice_receiving_mode", "tron_invoice_receiving_mode"]
+        )
         address = Web3.to_checksum_address(f"0x{int(address_suffix, 16):040x}")
         DifferRecipientAddress.objects.create(
             project=self.project,
@@ -387,7 +391,8 @@ class InvoiceFinalizeMethodsOrderingTests(TestCase):
     def test_requested_chain_codes_are_sorted_by_chain_sort_order(self):
         project = Project.objects.create(
             name="Method Order Project",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         crypto = Crypto.objects.create(
             name="Tether Ordered",
@@ -440,7 +445,8 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
         self.user = User.objects.create(username="merchant-concurrency")
         self.project = Project.objects.create(
             name="ConcurrencyProject",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.crypto = Crypto.objects.create(
             name="Tether USD Concurrency",
@@ -571,7 +577,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         project = Project.objects.create(
             name="Invoice Contract Only Project",
             vault="0x0000000000000000000000000000000000008801",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         usdt = Crypto.objects.create(
             name="Tether USD EVM",
@@ -593,7 +600,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_differ_available_methods_exposes_evm_without_vault(self):
         project = Project.objects.create(
             name="Invoice Differ EVM Project",
-            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.Differ,
         )
         usdt = Crypto.objects.create(
             name="Tether USD EVM Differ",
@@ -620,7 +628,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_differ_available_methods_excludes_native_coin(self):
         project = Project.objects.create(
             name="Invoice Differ Native Project",
-            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.Differ,
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
         eth = eth_chain.native_coin
@@ -647,7 +656,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
         # Tron 原生 TRX 在差额模式可用：逐块 TransferContract 扫描能观测 EOA 收原生。
         project = Project.objects.create(
             name="Invoice Differ Tron Native Project",
-            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.Differ,
         )
         tron_chain = Chain.objects.create(
             code=ChainCode.Tron,
@@ -670,7 +680,8 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
     def test_available_methods_ignores_cached_saas_chain_crypto_whitelist(self):
         project = Project.objects.create(
             name="Invoice SaaS All Methods Project",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         eth_chain = create_active_evm_test_chain(code=ChainCode.Ethereum)
         bsc_chain = create_active_evm_test_chain(code=ChainCode.BSC)
@@ -732,7 +743,8 @@ class InvoiceContractBillingValidationTests(TestCase):
         self.project = Project.objects.create(
             name="Invoice Mixed Billing Project",
             vault="0x0000000000000000000000000000000000007801",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.usdt = Crypto.objects.create(
             name="Tether USD",
@@ -797,8 +809,11 @@ class InvoiceContractBillingValidationTests(TestCase):
         self.assertEqual(ctx.exception.error_code, ErrorCode.NO_RECIPIENT_ADDRESS)
 
     def test_differ_methods_exposed_without_tron_vault_slot_runtime_gate(self):
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
-        self.project.save(update_fields=["invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(
+            update_fields=["evm_invoice_receiving_mode", "tron_invoice_receiving_mode"]
+        )
         DifferRecipientAddress.objects.create(
             project=self.project,
             chain_type=ChainType.EVM,
@@ -818,8 +833,11 @@ class InvoiceContractBillingValidationTests(TestCase):
         )
 
     def test_select_method_allocates_tron_differ_address(self):
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.Differ
-        self.project.save(update_fields=["invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.Differ
+        self.project.save(
+            update_fields=["evm_invoice_receiving_mode", "tron_invoice_receiving_mode"]
+        )
         differ_address = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8"
         DifferRecipientAddress.objects.create(
             project=self.project,
@@ -859,8 +877,11 @@ class InvoiceContractBillingValidationTests(TestCase):
         TRON_VAULT_SLOT_DEPLOY_FEE_LIMIT=300_000_000,
     )
     def test_tron_methods_exposed_only_after_runtime_gate(self):
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
-        self.project.save(update_fields=["invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(
+            update_fields=["evm_invoice_receiving_mode", "tron_invoice_receiving_mode"]
+        )
 
         methods = Invoice.available_methods(self.project)
 
@@ -879,8 +900,11 @@ class InvoiceContractBillingValidationTests(TestCase):
     def test_select_method_allocates_tron_vault_slot(self):
         from chains.models import VaultSlot
 
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
-        self.project.save(update_fields=["invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(
+            update_fields=["evm_invoice_receiving_mode", "tron_invoice_receiving_mode"]
+        )
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="tron-select-method",
@@ -1035,7 +1059,8 @@ class InvoiceExpiredMatchTests(TestCase):
         self.user = User.objects.create(username="merchant-expired-match")
         self.project = Project.objects.create(
             name="ExpiredMatchProject",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.crypto = Crypto.objects.create(
             name="Tether Expired",
@@ -1118,7 +1143,8 @@ class FallbackInvoiceExpiredTests(TestCase):
         self.user = User.objects.create(username="merchant-fallback")
         self.project = Project.objects.create(
             name="FallbackProject",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.crypto = Crypto.objects.create(
             name="Tether Fallback",
@@ -1204,7 +1230,8 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
         self.user = User.objects.create(username="merchant-atomic")
         self.project = Project.objects.create(
             name="AtomicProject",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.crypto = Crypto.objects.create(
             name="Tether Atomic",
@@ -1980,8 +2007,15 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             "0x0000000000000000000000000000000000000F15"
         )
         self.project.vault = vault_address
-        self.project.invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
-        self.project.save(update_fields=["vault", "invoice_receiving_mode"])
+        self.project.evm_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.tron_invoice_receiving_mode = InvoiceReceivingMode.VaultSlot
+        self.project.save(
+            update_fields=[
+                "vault",
+                "evm_invoice_receiving_mode",
+                "tron_invoice_receiving_mode",
+            ]
+        )
         invoice = self.create_test_invoice(
             out_no="contract-retry-reselect",
         )

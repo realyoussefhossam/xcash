@@ -338,8 +338,6 @@ def schedule_collect_for_slot(
     crypto,
     slot: VaultSlot,
 ) -> VaultSlotCollectSchedule | None:
-    if not slot.project.auto_collect_enabled:
-        return None
     # 原生币在 CryptoOnChain 里 address="" 是正常形态，不算「未部署」；只有非原生币
     # 缺合约地址才是真正的未配置，拒绝调度。原生币归集由 collect(address(0)) 承载。
     if not crypto.address(chain) and not crypto.is_native:

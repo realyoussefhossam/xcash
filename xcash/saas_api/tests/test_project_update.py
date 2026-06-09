@@ -82,7 +82,7 @@ class TestPatchFieldWhitelist:
         original_name = project.name
         original_active = project.active
         original_appid = project.appid
-        original_invoice_receiving_mode = project.invoice_receiving_mode
+        original_evm_invoice_receiving_mode = project.evm_invoice_receiving_mode
 
         response = client.patch(
             _url(project),
@@ -90,7 +90,7 @@ class TestPatchFieldWhitelist:
                 "name": "malicious-rename",
                 "active": False,
                 "appid": "XC-HACKED0",
-                "invoice_receiving_mode": InvoiceReceivingMode.Differ,
+                "evm_invoice_receiving_mode": InvoiceReceivingMode.Differ,
             },
             content_type="application/json",
             HTTP_AUTHORIZATION=AUTH_HEADER,
@@ -101,7 +101,7 @@ class TestPatchFieldWhitelist:
         assert project.name == original_name
         assert project.active == original_active
         assert project.appid == original_appid
-        assert project.invoice_receiving_mode == original_invoice_receiving_mode
+        assert project.evm_invoice_receiving_mode == original_evm_invoice_receiving_mode
 
     def test_happy_path_multiple_fields(self, client, project):
         """合法 PATCH：同时修改多个白名单字段，均正确入库。"""

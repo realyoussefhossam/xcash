@@ -347,7 +347,8 @@ class EpaySubmitServiceTests(TestCase):
     def setUp(self):
         self.project = Project.objects.create(
             name="EPay Submit Project",
-            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
         )
         self.merchant = EpayMerchant.objects.create(
             project=self.project,

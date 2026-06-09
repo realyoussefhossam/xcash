@@ -54,10 +54,16 @@ class ProjectService:
 
     @staticmethod
     def invoice_receiving_mode_for_chain(*, project: Project, chain) -> str:
-        """返回项目统一账单收款模式，并校验链类型属于账单支持范围。"""
-        if chain.type in {ChainType.EVM, ChainType.TRON}:
-            return project.invoice_receiving_mode
-        raise ValueError(f"unsupported invoice chain_type={chain.type}")
+        """返回项目在该链类型下的账单收款模式，并校验链类型属于账单支持范围。"""
+        # 显式按链类型取对应字段：新增链类型时此处会被强制改动，迫使为新链显式决策默认模式。
+        mode_by_type = {
+            ChainType.EVM: project.evm_invoice_receiving_mode,
+            ChainType.TRON: project.tron_invoice_receiving_mode,
+        }
+        try:
+            return mode_by_type[chain.type]
+        except KeyError:
+            raise ValueError(f"unsupported invoice chain_type={chain.type}") from None
 
     @staticmethod
     def invoice_receivable_methods(project: Project) -> dict[str, set[str]]:

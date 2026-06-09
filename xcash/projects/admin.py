@@ -39,7 +39,8 @@ class ProjectForm(forms.ModelForm):
             "fast_confirm_threshold",
             "hmac_key",
             "vault",
-            "invoice_receiving_mode",
+            "evm_invoice_receiving_mode",
+            "tron_invoice_receiving_mode",
             "active",
             "is_test",
         )
@@ -177,14 +178,12 @@ class ProjectAdmin(ModelAdmin):
         "webhook",
         "failed_count",
         "webhook_open",
-        "auto_collect_enabled",
         "active",
     )
     list_editable = ("active",)
     list_filter = (
         "active",
         "webhook_open",
-        "auto_collect_enabled",
         "is_test",
     )
     search_fields = ("name", "appid", "webhook")
@@ -264,8 +263,8 @@ class ProjectAdmin(ModelAdmin):
             {
                 "fields": (
                     "vault",
-                    "auto_collect_enabled",
-                    "invoice_receiving_mode",
+                    "evm_invoice_receiving_mode",
+                    "tron_invoice_receiving_mode",
                 ),
             },
         ),

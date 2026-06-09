@@ -55,12 +55,25 @@ class SystemSettings(models.Model):
         validators=[MinValueValidator(1)],
         help_text=_("待投递 Webhook 事件超过该时间仍未送达时，进入异常巡检。"),
     )
-    vault_slot_collect_delay_minutes = models.PositiveIntegerField(
-        _("VaultSlot 归集延迟(分钟)"),
+    # 归集延迟按链类型分开：EVM gas 便宜（连以太坊转 USDT 都廉价），短延迟优先让资金快速
+    # 到账金库、改善商户现金流；Tron 归集一次能量/带宽成本高，长延迟把同槽位多笔到账批量
+    # 摊薄成本。两者都只影响「确认后等多久再聚合归集」，不影响是否归集。
+    evm_vault_slot_collect_delay_minutes = models.PositiveIntegerField(
+        _("EVM VaultSlot 归集延迟(分钟)"),
+        default=2,
+        validators=[MinValueValidator(0)],
+        help_text=_(
+            "EVM 到账确认后等待该时间再聚合归集，期间同槽位同币种不重复创建归集计划。"
+            "EVM gas 便宜，默认短延迟优先快速到账。"
+        ),
+    )
+    tron_vault_slot_collect_delay_minutes = models.PositiveIntegerField(
+        _("Tron VaultSlot 归集延迟(分钟)"),
         default=360,
         validators=[MinValueValidator(0)],
         help_text=_(
-            "ERC20 到账确认后等待该时间再聚合归集，期间同槽位同币种不重复创建归集计划。"
+            "Tron 到账确认后等待该时间再聚合归集，期间同槽位同币种不重复创建归集计划。"
+            "Tron 归集成本高，默认长延迟批量摊薄。"
         ),
     )
     aml_screening_enabled = models.BooleanField(

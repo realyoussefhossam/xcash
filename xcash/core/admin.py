@@ -50,7 +50,12 @@ class SystemSettingsAdmin(ModelAdmin):
         ),
         (
             "VaultSlot",
-            {"fields": ("vault_slot_collect_delay_minutes",)},
+            {
+                "fields": (
+                    "evm_vault_slot_collect_delay_minutes",
+                    "tron_vault_slot_collect_delay_minutes",
+                )
+            },
         ),
         (
             "AML 筛查",

@@ -73,16 +73,25 @@ class Project(models.Model):
         ),
         unique=True,
     )
-    auto_collect_enabled = models.BooleanField(
-        _("自动归集"),
-        default=True,
-        help_text=_("开启后，VaultSlot 收到代币并确认后自动调度 collect 归集。"),
+    # 账单收款模式按链类型分开：EVM gas 便宜，默认 VaultSlot 合约归集（解锁原生币、并发更高）；
+    # Tron 归集成本高，默认差额收款（零归集成本，且能观测 EOA 收原生 TRX）。
+    evm_invoice_receiving_mode = models.CharField(
+        _("EVM 账单收款模式"),
+        choices=InvoiceReceivingMode,
+        default=InvoiceReceivingMode.VaultSlot,
+        help_text=_(
+            "EVM 链账单生成支付地址时使用 VaultSlot 合约归集还是差额收款地址。"
+            "EVM gas 便宜，默认 VaultSlot。"
+        ),
     )
-    invoice_receiving_mode = models.CharField(
-        _("账单收款模式"),
+    tron_invoice_receiving_mode = models.CharField(
+        _("Tron 账单收款模式"),
         choices=InvoiceReceivingMode,
         default=InvoiceReceivingMode.Differ,
-        help_text=_("全局控制账单生成支付地址时使用 VaultSlot 还是差额收款地址。"),
+        help_text=_(
+            "Tron 链账单生成支付地址时使用 VaultSlot 合约归集还是差额收款地址。"
+            "Tron 归集成本高，默认差额收款。"
+        ),
     )
 
     active = models.BooleanField(verbose_name=_("启用"), default=True)
