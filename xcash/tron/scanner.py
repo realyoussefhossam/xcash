@@ -39,8 +39,8 @@ class ParsedTronTransferEvent:
     observed: ObservedTransferPayload
 
 
-class TronTrc20Scanner:
-    """按链扫描本链 TRC20 与原生 TRX 的入账事件（名称暂留，已不止扫 TRC20）。
+class TronScanner:
+    """按链扫描本链 TRC20 与原生 TRX 的入账事件。
 
     与 EVM 扫描器对齐：代币集合来自 CryptoOnChain（不写死 USDT/地址），每条 Tron 链一个
     游标，逐块对每个代币合约拉取 Transfer 事件后统一匹配观察地址。原生 TRX 走

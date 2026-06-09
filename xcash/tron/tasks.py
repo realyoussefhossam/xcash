@@ -8,7 +8,7 @@ from tron.client import TronClientError
 from tron.models import TronTxTask
 from tron.saas_gas_billing import notify_vault_slot_collect_gas_fee
 from tron.saas_gas_billing import notify_vault_slot_deploy_gas_fee
-from tron.scanner import TronTrc20Scanner
+from tron.scanner import TronScanner
 
 from chains.adapters import AdapterFactory
 from chains.adapters import TxCheckResult
@@ -158,7 +158,7 @@ def scan_tron_chain(chain_pk: int) -> None:
 
     try:
         try:
-            summary = TronTrc20Scanner.scan_chain(chain=chain)
+            summary = TronScanner.scan_chain(chain=chain)
         except TronClientError:
             logger.warning("Tron TRC20 扫描 RPC 失败", chain=chain.code)
             return
