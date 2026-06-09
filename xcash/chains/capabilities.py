@@ -21,7 +21,10 @@ class ChainProductCapabilityService:
         if not crypto.is_payable():
             return False
         if chain.type == ChainType.TRON:
-            return crypto.symbol == "USDT"
+            # Tron 账单收款放行 USDT（主流 TRC20）与原生 TRX；原生 TRX 的入账扫描
+            # （逐块 TransferContract）与归集（ensureDeployedAndCollect→address(0)）已就绪。
+            # 其余 TRC20 暂不作为账单支付方式。
+            return crypto.symbol == "USDT" or crypto.is_native
         return True
 
     @classmethod

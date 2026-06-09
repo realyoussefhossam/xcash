@@ -56,6 +56,30 @@ class CustomTokenPricingTests(TestCase):
             )
         )
 
+    def test_tron_invoice_allows_usdt_and_native_trx_only(self):
+        # Tron 账单收款放行 USDT 与原生 TRX；其余有价 TRC20 仍不作为支付方式。
+        tron = Chain.objects.create(
+            code=ChainCode.Tron, rpc="", tron_api_key="", active=False
+        )
+        other_trc20 = Crypto.objects.create(
+            name="OtherTrc20", symbol="OTC", coingecko_id="other-trc20"
+        )
+        self.assertTrue(
+            ChainProductCapabilityService.supports_existing_invoice_method(
+                chain=tron, crypto=tron.native_coin
+            )
+        )
+        self.assertTrue(
+            ChainProductCapabilityService.supports_existing_invoice_method(
+                chain=tron, crypto=self.usdt
+            )
+        )
+        self.assertFalse(
+            ChainProductCapabilityService.supports_existing_invoice_method(
+                chain=tron, crypto=other_trc20
+            )
+        )
+
 
 class ChainNativeCryptoMappingTests(TestCase):
     def test_creating_chain_auto_creates_native_crypto_mapping(self):
