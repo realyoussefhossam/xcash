@@ -129,9 +129,13 @@ class ProjectService:
         token_address: str,
         differ_chain_types: set[str],
     ) -> bool:
-        # 现有 EVM scanner 不能观察普通 EOA 原生币入账；差额模式只开放合约币。
-        return (
-            chain_type in differ_chain_types
-            and not crypto.is_native
-            and bool(token_address)
-        )
+        if chain_type not in differ_chain_types:
+            return False
+        if crypto.is_native:
+            # 原生币差额收款仅在链能观测「EOA 收原生」时开放：Tron 逐块扫 TransferContract
+            # 可观测 EOA 收原生；EVM 靠合约事件、原生打到 EOA 零事件，不可观测。
+            return ChainProductCapabilityService.differ_supports_native(
+                chain_type=chain_type
+            )
+        # 合约币（ERC20/TRC20）差额匹配按金额，仍要求该币在链上有合约地址。
+        return bool(token_address)

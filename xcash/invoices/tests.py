@@ -643,6 +643,29 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
 
         self.assertNotIn(eth.symbol, methods)
 
+    def test_differ_available_methods_allows_tron_native_coin(self):
+        # Tron 原生 TRX 在差额模式可用：逐块 TransferContract 扫描能观测 EOA 收原生。
+        project = Project.objects.create(
+            name="Invoice Differ Tron Native Project",
+            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+        )
+        tron_chain = Chain.objects.create(
+            code=ChainCode.Tron,
+            rpc="",
+            tron_api_key="tron-key",
+            active=True,
+        )
+        trx = tron_chain.native_coin
+        DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.TRON,
+            address="TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+        )
+
+        methods = Invoice.available_methods(project)
+
+        self.assertEqual(methods.get(trx.symbol), [tron_chain.code])
+
     @override_settings(IS_SAAS=True, SAAS_API_TOKEN="xcash-saas-token")
     def test_available_methods_ignores_cached_saas_chain_crypto_whitelist(self):
         project = Project.objects.create(

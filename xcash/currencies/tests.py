@@ -80,6 +80,21 @@ class CustomTokenPricingTests(TestCase):
             )
         )
 
+    def test_differ_supports_native_only_on_tron(self):
+        # 差额模式：原生币仅 Tron 可观测（EOA 收原生靠逐块 TransferContract 扫描），EVM 不可。
+        from chains.models import ChainType
+
+        self.assertTrue(
+            ChainProductCapabilityService.differ_supports_native(
+                chain_type=ChainType.TRON
+            )
+        )
+        self.assertFalse(
+            ChainProductCapabilityService.differ_supports_native(
+                chain_type=ChainType.EVM
+            )
+        )
+
 
 class ChainNativeCryptoMappingTests(TestCase):
     def test_creating_chain_auto_creates_native_crypto_mapping(self):

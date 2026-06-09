@@ -353,9 +353,13 @@ class Invoice(models.Model):
         crypto_amount: Decimal,
     ) -> tuple[str, Decimal]:
         """差额账单：从项目链类型地址池中分配未被 WAITING 账单占用的金额组合。"""
-        if crypto.is_native:
+        from chains.capabilities import ChainProductCapabilityService
+
+        if crypto.is_native and not ChainProductCapabilityService.differ_supports_native(
+            chain_type=chain.type
+        ):
             raise self.InvoiceAllocationError(
-                f"project={self.project_id}, chain={chain.code} 差额账单不支持原生币"
+                f"project={self.project_id}, chain={chain.code} 差额账单不支持该链原生币"
             )
 
         base_amount = crypto_amount.quantize(self.DIFFER_AMOUNT_STEP, rounding=ROUND_UP)
