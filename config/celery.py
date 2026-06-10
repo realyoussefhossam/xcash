@@ -96,6 +96,10 @@ evm_tasks = {
         "task": "evm.tasks.scan_active_evm_chains",
         "schedule": SCAN_DISPATCH_SCHEDULE_SECONDS,
     },
+    "scan_stuck_queued_evm_tx_tasks": {
+        "task": "evm.tasks.scan_stuck_queued_evm_tx_tasks",
+        "schedule": OPERATIONAL_RISKS_SCHEDULE_SECONDS,
+    },
 }
 
 # ---------------------------

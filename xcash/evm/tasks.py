@@ -1,6 +1,8 @@
 import structlog
 from celery import shared_task
 from django.db import transaction as db_transaction
+from django.db.models import Exists
+from django.db.models import OuterRef
 from django.db.models import Q
 
 from chains.models import Chain
@@ -15,6 +17,8 @@ from evm.scanner.rpc import EvmScannerRpcError
 from evm.scanner.service import EvmScannerService
 
 logger = structlog.get_logger()
+
+EVM_QUEUED_STUCK_ALERT_AFTER_MINUTES = 30
 
 
 @shared_task(ignore_result=True)
@@ -102,6 +106,44 @@ def dispatch_evm_tx_tasks() -> None:
     for task in selected:
         task_pk = task.pk
         db_transaction.on_commit(lambda pk=task_pk: _broadcast_evm_task.delay(pk))
+
+
+@shared_task(ignore_result=True)
+@singleton_task(timeout=30)
+def scan_stuck_queued_evm_tx_tasks(limit: int = 32) -> int:
+    """告警长期卡在 QUEUED 队首的 EVM 任务，避免 nonce 队列无声停摆。"""
+    lower_queued = EvmTxTask.objects.filter(
+        sender_id=OuterRef("sender_id"),
+        chain_id=OuterRef("chain_id"),
+        nonce__lt=OuterRef("nonce"),
+        base_task__status=TxTaskStatus.QUEUED,
+    )
+    tasks = (
+        EvmTxTask.objects.select_related("base_task", "sender", "chain")
+        .annotate(has_lower_queued=Exists(lower_queued))
+        .filter(
+            base_task__status=TxTaskStatus.QUEUED,
+            created_at__lt=ago(minutes=EVM_QUEUED_STUCK_ALERT_AFTER_MINUTES),
+            has_lower_queued=False,
+        )
+        .order_by("created_at")[:limit]
+    )
+    alerted = 0
+    for task in tasks:
+        alerted += 1
+        logger.warning(
+            "EVM QUEUED 任务长期停留在 nonce 队首",
+            evm_task_id=task.pk,
+            tx_task_id=task.base_task_id,
+            chain=task.chain.code,
+            sender=task.sender.address,
+            nonce=task.nonce,
+            tx_type=task.base_task.tx_type,
+            tx_hash=task.base_task.tx_hash,
+            created_at=task.created_at,
+            last_attempt_at=task.last_attempt_at,
+        )
+    return alerted
 
 
 @shared_task(ignore_result=True)

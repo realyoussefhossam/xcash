@@ -1,6 +1,11 @@
 from django.contrib import admin
+from django.contrib import messages
+from django.contrib.auth import get_permission_codename
+from django.utils.translation import gettext_lazy as _
 from unfold.decorators import display
 
+from chains.models import TxTask
+from chains.models import TxTaskStatus
 from common.admin import ReadOnlyModelAdmin
 from common.admin_scan_cursor import SyncScanCursorToLatestActionMixin
 from evm.models import EvmScanCursor
@@ -9,8 +14,22 @@ from evm.models import EvmTxTask
 
 @admin.register(EvmTxTask)
 class EvmTxTaskAdmin(ReadOnlyModelAdmin):
+    actions = ("mark_queued_failed_after_nonce_handled",)
     ordering = ("-created_at",)
     exclude = ("signed_payload",)
+    readonly_fields = (
+        "base_task",
+        "sender",
+        "chain",
+        "nonce",
+        "to",
+        "value",
+        "data",
+        "gas",
+        "gas_price",
+        "formatted_last_attempt_at",
+        "created_at",
+    )
     list_display = (
         "display_sender",
         "display_chain",
@@ -26,11 +45,42 @@ class EvmTxTaskAdmin(ReadOnlyModelAdmin):
     list_select_related = ("base_task", "sender", "chain")
     search_fields = ("base_task__tx_hash", "sender__address", "to")
 
+    def has_change_permission(self, request, obj=None):
+        opts = self.opts
+        codename = get_permission_codename("change", opts)
+        return request.user.has_perm(f"{opts.app_label}.{codename}")
+
     @admin.display(ordering="last_attempt_at", description="执行时间")
     def formatted_last_attempt_at(self, obj: EvmTxTask):
         if obj.last_attempt_at:
             return obj.last_attempt_at.strftime("%-m月%-d日 %H:%M:%S")
         return None
+
+    @admin.action(description="确认 nonce 已处理后标记 QUEUED 任务失败")
+    def mark_queued_failed_after_nonce_handled(self, request, queryset):
+        updated_count = 0
+        skipped_count = 0
+        for task in queryset.select_related("base_task"):
+            if task.base_task.status != TxTaskStatus.QUEUED:
+                skipped_count += 1
+                continue
+            if TxTask.mark_finalized_failed(
+                task_id=task.base_task_id,
+                expected_status=TxTaskStatus.QUEUED,
+            ):
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+        level = messages.WARNING if skipped_count else messages.SUCCESS
+        self.message_user(
+            request,
+            _(
+                "已标记 %(updated)d 个 QUEUED 任务为失败，跳过 %(skipped)d 个非 QUEUED 任务。"
+            )
+            % {"updated": updated_count, "skipped": skipped_count},
+            level=level,
+        )
 
     @display(
         description="状态",

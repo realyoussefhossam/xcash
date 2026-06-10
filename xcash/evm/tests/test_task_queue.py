@@ -203,6 +203,38 @@ class EvmTaskQueueTests(TestCase):
             {due_queued.pk},
         )
 
+    @patch("evm.tasks.logger.warning")
+    def test_scan_stuck_queued_evm_tx_tasks_logs_only_nonce_head(self, warning_mock):
+        from evm.tasks import scan_stuck_queued_evm_tx_tasks
+
+        stuck_head = self._create_evm_task(
+            tx_hash="0x" + "8a" * 32,
+            status=TxTaskStatus.QUEUED,
+            nonce=0,
+        )
+        blocked_higher = self._create_evm_task(
+            tx_hash="0x" + "8b" * 32,
+            status=TxTaskStatus.QUEUED,
+            nonce=1,
+        )
+        fresh_head = self._create_evm_task(
+            tx_hash="0x" + "8c" * 32,
+            status=TxTaskStatus.QUEUED,
+            nonce=2,
+        )
+        old_time = timezone.now() - timedelta(minutes=31)
+        EvmTxTask.objects.filter(pk__in=[stuck_head.pk, blocked_higher.pk]).update(
+            created_at=old_time,
+            last_attempt_at=old_time,
+        )
+        EvmTxTask.objects.filter(pk=fresh_head.pk).update(created_at=timezone.now())
+
+        alerted = scan_stuck_queued_evm_tx_tasks.run()
+
+        self.assertEqual(alerted, 1)
+        warning_mock.assert_called_once()
+        self.assertEqual(warning_mock.call_args.kwargs["evm_task_id"], stuck_head.pk)
+
     @patch("evm.tasks.EvmTxTask.broadcast")
     def test_tx_task_skips_when_lower_queued_nonce_exists(
         self,
