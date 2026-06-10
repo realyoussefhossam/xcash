@@ -215,11 +215,7 @@ class EvmLogScannerTests(TestCase):
         self.assertEqual(observed.amount, Decimal("1"))
         self.assertEqual(observed.source, "evm-scan")
 
-    @patch("evm.scanner.observed_transfers.logger.warning")
-    def test_native_scanner_skips_tx_with_multiple_system_inbound_logs(
-        self,
-        warning_mock,
-    ):
+    def test_native_scanner_persists_multiple_system_inbound_logs_from_same_tx(self):
         logs = [
             self._build_native_log(log_index=7),
             self._build_native_log(log_index=8),
@@ -238,13 +234,12 @@ class EvmLogScannerTests(TestCase):
         )
 
         self.assertIsNone(created)
-        self.assertEqual(Transfer.objects.count(), 0)
-        warning_mock.assert_called_with(
-            "EVM scanner skipped tx with multiple observed inbound events",
-            chain=self.chain.code,
-            tx_hash="0x" + "cd" * 32,
-            log_count=2,
-        )
+        transfers = list(Transfer.objects.order_by("event_index"))
+        self.assertEqual(len(transfers), 2)
+        self.assertEqual([transfer.event_index for transfer in transfers], [7, 8])
+        self.assertEqual({transfer.to_address for transfer in transfers}, {self.slot.address})
+        self.assertEqual({transfer.hash for transfer in transfers}, {"0x" + "cd" * 32})
+        rpc_client.get_block_timestamp.assert_called_once_with(block_number=120)
 
     @patch("chains.service.TransferService.create_observed_transfer")
     def test_scan_range_skips_malformed_logs_without_blocking_batch(

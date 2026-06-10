@@ -238,21 +238,10 @@ class EvmObservedTransferProcessor:
         logs: list[ParsedEvmTransferLog],
         rpc_client: EvmScannerRpcClient,
     ) -> None:
-        """按 tx_hash 收敛外部入账事实并幂等落库。"""
+        """逐条外部入账事件幂等落库。"""
         timestamp_cache: dict[int, int] = {}
 
-        for tx_hash, tx_logs in cls._group_logs_by_tx_hash(logs=logs).items():
-            if len(tx_logs) != 1:
-                if len(tx_logs) > 1:
-                    logger.warning(
-                        "EVM scanner skipped tx with multiple observed inbound events",
-                        chain=chain.code,
-                        tx_hash=tx_hash,
-                        log_count=len(tx_logs),
-                    )
-                continue
-
-            log = tx_logs[0]
+        for log in logs:
             timestamp = timestamp_cache.get(log.block_number)
             if timestamp is None:
                 timestamp = rpc_client.get_block_timestamp(
@@ -280,16 +269,6 @@ class EvmObservedTransferProcessor:
                     source="evm-scan",
                 )
             )
-
-    @staticmethod
-    def _group_logs_by_tx_hash(
-        *,
-        logs: list[ParsedEvmTransferLog],
-    ) -> dict[str, list[ParsedEvmTransferLog]]:
-        grouped_logs: dict[str, list[ParsedEvmTransferLog]] = {}
-        for log in logs:
-            grouped_logs.setdefault(log.tx_hash, []).append(log)
-        return grouped_logs
 
     @staticmethod
     def _to_hex(value: Any) -> str:

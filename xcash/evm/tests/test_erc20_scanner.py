@@ -367,11 +367,7 @@ class EvmErc20ScannerTests(TestCase):
         self.assertIsNone(created)
         create_observed_transfer_mock.assert_not_called()
 
-    @patch("evm.scanner.observed_transfers.logger.warning")
-    def test_erc20_scanner_skips_tx_with_multiple_system_inbound_logs(
-        self,
-        warning_mock,
-    ):
+    def test_erc20_scanner_persists_multiple_system_inbound_logs_from_same_tx(self):
         second_customer = Customer.objects.create(
             project=self.project,
             uid="scanner-customer-2",
@@ -410,13 +406,15 @@ class EvmErc20ScannerTests(TestCase):
         )
 
         self.assertIsNone(created)
-        self.assertEqual(Transfer.objects.count(), 0)
-        warning_mock.assert_called_with(
-            "EVM scanner skipped tx with multiple observed inbound events",
-            chain=self.chain.code,
-            tx_hash="0x" + "ab" * 32,
-            log_count=2,
+        transfers = list(Transfer.objects.order_by("event_index"))
+        self.assertEqual(len(transfers), 2)
+        self.assertEqual([transfer.event_index for transfer in transfers], [5, 6])
+        self.assertEqual(
+            [transfer.to_address for transfer in transfers],
+            [self.vault_slot.address, second_slot.address],
         )
+        self.assertEqual({transfer.hash for transfer in transfers}, {"0x" + "ab" * 32})
+        rpc_client.get_block_timestamp.assert_called_once_with(block_number=100)
 
     def test_erc20_scanner_does_not_route_known_internal_hash_to_processor(self):
         tx_hash = "0x" + "51" * 32
