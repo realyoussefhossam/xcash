@@ -27,6 +27,7 @@ function StepDot({ active, done, number, disabled }) {
 }
 
 function PaymentMethodSelector({
+  invoice,
   availableMethods,
   selectedCrypto,
   selectedChain,
@@ -40,9 +41,30 @@ function PaymentMethodSelector({
   const { t } = useI18n()
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-3">
+      {/* Invoice summary */}
+      <Card>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold truncate">{invoice.title}</h2>
+              <p className="text-xs text-muted-foreground mt-1 font-mono">
+                {t("invoice.orderNumber")}: {invoice.out_no}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-lg font-bold tabular-nums">{invoice.amount}</div>
+              <div className="text-xs text-muted-foreground">{invoice.currency}</div>
+            </div>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t("invoice.systemNumber")}: <span className="font-mono">{invoice.sys_no}</span>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Title */}
-      <div className="mb-3">
+      <div>
         <h2 className="text-base font-semibold">{t("payment.selectMethod")}</h2>
         <p className="text-xs text-muted-foreground mt-0.5">{t("payment.selectMethodDesc")}</p>
       </div>

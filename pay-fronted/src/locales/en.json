@@ -33,8 +33,6 @@
     "sendLabel": "Send",
     "selectMethod": "Select Payment Method",
     "selectMethodDesc": "Please select the token and network you want to use",
-    "confirmAndSelectMethod": "Confirm & Select Payment Method →",
-    "confirmAndPay": "Confirm & Pay →",
     "step": "Step",
     "selectToken": "Select Token",
     "selectTokenDesc": "Choose the cryptocurrency you want to pay with",

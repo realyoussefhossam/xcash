@@ -33,8 +33,6 @@
     "sendLabel": "发送",
     "selectMethod": "选择账单收款方式",
     "selectMethodDesc": "请选择您要使用的代币和网络",
-    "confirmAndSelectMethod": "确认并选择账单收款方式 →",
-    "confirmAndPay": "确认账单收款 →",
     "step": "步骤",
     "selectToken": "选择代币",
     "selectTokenDesc": "选择账单收款使用的加密货币",

@@ -4,13 +4,13 @@ import { cn } from "@/lib/utils"
 import { useI18n } from "@/hooks/useI18n"
 
 const STEP_KEYS = {
-  4: ["invoice.stepLabel", "payment.stepLabel", "payment.sendLabel", "invoice.completedLabel"],
-  3: ["invoice.stepLabel", "payment.sendLabel", "invoice.completedLabel"],
+  3: ["payment.stepLabel", "payment.sendLabel", "invoice.completedLabel"],
+  2: ["payment.sendLabel", "invoice.completedLabel"],
 }
 
-function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 4 }) {
+function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3 }) {
   const { t } = useI18n()
-  const keys = STEP_KEYS[stepCount] ?? STEP_KEYS[4]
+  const keys = STEP_KEYS[stepCount] ?? STEP_KEYS[3]
   const nodes = Array.from({ length: stepCount }, (_, i) => i + 1)
 
   const isDone = (n) => n < naturalStep && n !== activeStep
