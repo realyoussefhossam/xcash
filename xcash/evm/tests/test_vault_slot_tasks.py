@@ -1370,6 +1370,92 @@ class VaultSlotAddressSchedulingTests(TestCase):
         second.refresh_from_db()
         self.assertIsNone(first.tx_task_id)
         self.assertIsNotNone(second.tx_task_id)
+        # 失败计划必须退避，否则恒占 execute_due 批次头部。
+        self.assertGreater(first.due_at, timezone.now())
+
+    def test_due_collect_schedule_failure_backoff_frees_followup_batches(self):
+        slot = self._create_vault_slot()
+        self._mark_vault_slot_deployed(slot)
+        deposit = self._create_deposit(slot=slot, tx_hash_suffix="1")
+        address_patch = self.patch_address_derivation()
+
+        with address_patch:
+            schedule = VaultSlot.schedule_collect_for_deposit(deposit.pk)
+        schedule.due_at = timezone.now() - timedelta(seconds=1)
+        schedule.save(update_fields=["due_at", "updated_at"])
+
+        with (
+            address_patch,
+            patch.object(
+                VaultSlotCollectSchedule,
+                "create_tx_task",
+                autospec=True,
+                side_effect=RuntimeError("token disabled"),
+            ) as create_tx_task_mock,
+            patch(
+                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+                return_value=SimpleNamespace(value=1),
+            ),
+        ):
+            self.assertEqual(VaultSlotCollectSchedule.execute_due(), 0)
+            self.assertEqual(create_tx_task_mock.call_count, 1)
+            # 退避期内的后续批次不应再捞到该计划，把名额让给其它计划。
+            self.assertEqual(VaultSlotCollectSchedule.execute_due(), 0)
+            self.assertEqual(create_tx_task_mock.call_count, 1)
+
+        schedule.refresh_from_db()
+        self.assertIsNone(schedule.tx_task_id)
+        self.assertGreater(schedule.due_at, timezone.now())
+
+    def test_due_collect_schedule_defers_when_balance_refresh_fails(self):
+        slot = self._create_vault_slot()
+        self._mark_vault_slot_deployed(slot)
+        deposit = self._create_deposit(slot=slot, tx_hash_suffix="1")
+        address_patch = self.patch_address_derivation()
+
+        with address_patch:
+            schedule = VaultSlot.schedule_collect_for_deposit(deposit.pk)
+        schedule.due_at = timezone.now() - timedelta(seconds=1)
+        schedule.save(update_fields=["due_at", "updated_at"])
+
+        with (
+            address_patch,
+            patch(
+                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+                return_value=None,
+            ),
+        ):
+            created_count = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created_count, 0)
+        schedule.refresh_from_db()
+        self.assertIsNone(schedule.tx_task_id)
+        self.assertGreater(schedule.due_at, timezone.now())
+
+    def test_due_collect_schedule_defers_when_collect_not_creatable(self):
+        slot = self._create_vault_slot()
+        self._mark_vault_slot_deployed(slot)
+        deposit = self._create_deposit(slot=slot, tx_hash_suffix="1")
+        address_patch = self.patch_address_derivation()
+
+        with address_patch:
+            schedule = VaultSlot.schedule_collect_for_deposit(deposit.pk)
+        schedule.due_at = timezone.now() - timedelta(seconds=1)
+        schedule.save(update_fields=["due_at", "updated_at"])
+
+        with (
+            address_patch,
+            patch(
+                "chains.vault_slots.can_create_collect_tx_task",
+                return_value=False,
+            ),
+        ):
+            created_count = VaultSlotCollectSchedule.execute_due()
+
+        self.assertEqual(created_count, 0)
+        schedule.refresh_from_db()
+        self.assertIsNone(schedule.tx_task_id)
+        self.assertGreater(schedule.due_at, timezone.now())
 
     def test_schedule_collect_for_deposit_skips_native_deposit(self):
         slot = self._create_vault_slot()

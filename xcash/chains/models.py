@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -1134,6 +1135,10 @@ class VaultSlotCollectSchedule(models.Model):
                 tx_task__isnull=True,
             )
 
+    # 暂不可执行/执行失败的计划退避间隔：归集本身是延迟容忍操作，10 分钟既给
+    # 暂时性故障（RPC 抖动、币种临时停用）留出恢复窗口，又不明显拖慢资金归集。
+    RETRY_BACKOFF = timedelta(minutes=10)
+
     def create_tx_task(self) -> TxTask:
         from chains.vault_slots import create_collect_tx_task_for_slot
 
@@ -1142,6 +1147,15 @@ class VaultSlotCollectSchedule(models.Model):
             crypto=self.crypto,
             slot=self.vault_slot,
         )
+
+    def defer_retry(self) -> None:
+        """把计划推迟到退避窗口后重试。
+
+        execute_due 按 due_at 升序取批（limit 封顶），失败计划若不推迟会恒占
+        批次头部；同因失败的计划一旦攒满 limit 个，所有链的归集调度都会被饿死。
+        """
+        self.due_at = timezone.now() + self.RETRY_BACKOFF
+        self.save(update_fields=["due_at", "updated_at"])
 
     @classmethod
     def execute_due(cls, *, limit: int = 32) -> int:
@@ -1168,6 +1182,7 @@ class VaultSlotCollectSchedule(models.Model):
                     crypto=schedule.crypto,
                     slot=schedule.vault_slot,
                 ):
+                    schedule.defer_retry()
                     continue
                 balance = refresh_vault_slot_balance_safely(
                     slot=schedule.vault_slot,
@@ -1175,6 +1190,7 @@ class VaultSlotCollectSchedule(models.Model):
                     reason="before_collect",
                 )
                 if balance is None:
+                    schedule.defer_retry()
                     continue
                 if balance.value <= 0:
                     schedule.delete()
@@ -1187,10 +1203,11 @@ class VaultSlotCollectSchedule(models.Model):
                         schedule.save(update_fields=["tx_task", "updated_at"])
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "VaultSlot 归集计划创建或绑定任务失败,跳过",
+                        "VaultSlot 归集计划创建或绑定任务失败,退避重试",
                         schedule_id=schedule.pk,
                         error=str(exc),
                     )
+                    schedule.defer_retry()
                     continue
                 created_count += 1
         return created_count
