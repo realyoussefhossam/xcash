@@ -39,6 +39,21 @@ from projects.models import Customer
 from projects.models import Project
 
 
+class ChainDerivedFieldsSaveTests(TestCase):
+    def test_partial_save_persists_derived_chain_fields(self):
+        chain = Chain.objects.create(code=ChainCode.Anvil, active=False)
+        Chain.objects.filter(pk=chain.pk).update(is_testnet=False, type="")
+        chain.refresh_from_db()
+
+        chain.rpc = "http://127.0.0.1:8545"
+        with patch.object(Chain, "clean", return_value=None):
+            chain.save(update_fields=["rpc"])
+
+        chain.refresh_from_db()
+        self.assertEqual(chain.type, ChainType.EVM)
+        self.assertTrue(chain.is_testnet)
+
+
 class TxTaskValidationTests(TestCase):
     def setUp(self):
         self.wallet = Wallet.objects.create()

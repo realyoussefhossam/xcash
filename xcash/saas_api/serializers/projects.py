@@ -1,5 +1,6 @@
 import ipaddress
 
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
@@ -19,6 +20,11 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
         model = Project
         fields = ["name", "webhook"]
         extra_kwargs = {"webhook": {"required": False}}
+
+    def create(self, validated_data):
+        if settings.DEBUG:
+            validated_data.setdefault("is_test", True)
+        return super().create(validated_data)
 
 
 class ProjectUpdateSerializer(serializers.ModelSerializer):

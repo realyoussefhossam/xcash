@@ -28,6 +28,7 @@ from stress.service import StressService
 from stress.service import _build_deposit_cases
 from stress.service import _build_stress_cases
 from stress.service import _require_stress_methods_ready
+from stress.service import _setup_differ_recipient_address
 from stress.service import _setup_wallet_for_vault
 from stress.tasks import _do_payment
 from stress.tasks import _execute
@@ -46,7 +47,9 @@ from chains.tests_fixtures import make_evm_chain
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
 from currencies.models import Fiat
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
+from projects.models import InvoiceReceivingMode
 from projects.models import Project
 
 
@@ -177,7 +180,7 @@ class StressServiceTests(SimpleTestCase):
         with (
             patch(
                 "stress.service.Project.objects.create", return_value=created_project
-            ),
+            ) as create_project_mock,
             # 账单压测需要触发钱包与 Vault 注资；本单元测试只关心生成的 case，
             # 故 mock 掉这些远端依赖。
             patch("stress.service._setup_wallet_for_vault"),
@@ -194,6 +197,11 @@ class StressServiceTests(SimpleTestCase):
         created_cases = bulk_create_mock.call_args.args[0]
         self.assertEqual(len(created_cases), 5)
         self.assertTrue(all(not hasattr(case, "scenario") for case in created_cases))
+        self.assertTrue(create_project_mock.call_args.kwargs["is_test"])
+        self.assertEqual(
+            create_project_mock.call_args.kwargs["evm_invoice_receiving_mode"],
+            InvoiceReceivingMode.VaultSlot,
+        )
 
     def test_build_stress_cases_creates_invoice_cases(self):
         stress = StressRun(id=23, count=100)
@@ -211,6 +219,7 @@ class StressServiceTests(SimpleTestCase):
         stress = StressRun(
             id=23,
             count=2,
+            invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
             status=StressRunStatus.PREPARING,
         )
         stress.save = Mock()
@@ -235,6 +244,39 @@ class StressServiceTests(SimpleTestCase):
         setup_wallet_mock.assert_called_once_with(created_project)
         fund_vault_mock.assert_called_once_with(created_project)
         self.assertEqual(len(bulk_create_mock.call_args.args[0]), 2)
+
+    def test_prepare_differ_invoice_sets_recipient_without_vault_funding(self):
+        stress = StressRun(
+            id=23,
+            count=2,
+            invoice_receiving_mode=InvoiceReceivingMode.Differ,
+            status=StressRunStatus.PREPARING,
+        )
+        stress.save = Mock()
+
+        created_project = Project(pk=99)
+
+        with (
+            patch(
+                "stress.service.Project.objects.create", return_value=created_project
+            ) as create_project_mock,
+            patch("stress.service._setup_differ_recipient_address") as setup_differ_mock,
+            patch("stress.service._setup_wallet_for_vault") as setup_vault_mock,
+            patch("stress.service._fund_vault_for_stress") as fund_vault_mock,
+            patch("stress.service.InvoiceStressCase.objects.bulk_create"),
+            patch("stress.service.random.random", return_value=0.1),
+            patch("stress.service.random.gauss", return_value=0.0),
+            patch("stress.service.random.shuffle"),
+        ):
+            StressService.prepare(stress)
+
+        self.assertEqual(
+            create_project_mock.call_args.kwargs["evm_invoice_receiving_mode"],
+            InvoiceReceivingMode.Differ,
+        )
+        setup_differ_mock.assert_called_once_with(created_project)
+        setup_vault_mock.assert_not_called()
+        fund_vault_mock.assert_not_called()
 
     def test_prepare_seeds_full_saas_permission_cache_for_created_project(self):
         stress = StressRun(
@@ -1353,8 +1395,8 @@ class HandleInvoiceWebhookTests(TestCase):
         trigger_mock.assert_not_called()
 
 
-class StressContractProvisioningTests(TestCase):
-    """压测合约账单 provisioning 的真实路径验证（不 mock available_methods / select_method）。
+class StressInvoiceReceivingProvisioningTests(TestCase):
+    """压测账单收款 provisioning 的真实路径验证（不 mock available_methods / select_method）。
 
     覆盖归集地址修复与链命名收敛后、stress 合约单的建单前置与收款分配：
     - _setup_wallet_for_vault 把系统钱包派生的项目专用 EVM 地址写入 project.evm_vault；
@@ -1385,10 +1427,18 @@ class StressContractProvisioningTests(TestCase):
         # _set_current_payment 计算 worth 时按 USD 取价，需有 USD 法币记录。
         Fiat.objects.get_or_create(code="USD")
 
-    def make_project(self, *, name, evm_vault=None):
+    def make_project(
+        self,
+        *,
+        name,
+        evm_vault=None,
+        mode=InvoiceReceivingMode.VaultSlot,
+    ):
         return Project.objects.create(
             name=name,
             evm_vault=evm_vault,
+            is_test=True,
+            evm_invoice_receiving_mode=mode,
         )
 
     def make_contract_invoice(self, project, *, out_no, methods):
@@ -1433,6 +1483,49 @@ class StressContractProvisioningTests(TestCase):
         self.assertEqual(next_project.evm_vault, next_project_vault_address)
         self.assertNotEqual(project.evm_vault, next_project.evm_vault)
 
+    def test_setup_differ_recipient_address_assigns_unique_system_address(self):
+        from core.models import SystemWallet
+
+        project = self.make_project(
+            name="stress-differ-wiring",
+            mode=InvoiceReceivingMode.Differ,
+        )
+        next_project = self.make_project(
+            name="stress-differ-wiring-next",
+            mode=InvoiceReceivingMode.Differ,
+        )
+
+        _setup_differ_recipient_address(project)
+        _setup_differ_recipient_address(next_project)
+
+        system_wallet = SystemWallet.get_current()
+        project_recipient = system_wallet.wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+            address_index=1_000_000 + project.pk,
+        ).address
+        next_project_recipient = system_wallet.wallet.get_address(
+            chain_type=ChainType.EVM,
+            usage=AddressUsage.HotWallet,
+            address_index=1_000_000 + next_project.pk,
+        ).address
+
+        self.assertTrue(
+            DifferRecipientAddress.objects.filter(
+                project=project,
+                chain_type=ChainType.EVM,
+                address=project_recipient,
+            ).exists()
+        )
+        self.assertTrue(
+            DifferRecipientAddress.objects.filter(
+                project=next_project,
+                chain_type=ChainType.EVM,
+                address=next_project_recipient,
+            ).exists()
+        )
+        self.assertNotEqual(project_recipient, next_project_recipient)
+
     def test_require_stress_methods_ready_passes_with_vault(self):
         project = self.make_project(
             name="stress-ready-vault",
@@ -1447,6 +1540,22 @@ class StressContractProvisioningTests(TestCase):
         project = self.make_project(name="stress-ready-no-vault")
         with self.assertRaisesMessage(RuntimeError, "收款地址未准备完整"):
             _require_stress_methods_ready(project)
+
+    def test_require_stress_methods_ready_passes_with_differ_recipient(self):
+        project = self.make_project(
+            name="stress-ready-differ",
+            mode=InvoiceReceivingMode.Differ,
+        )
+        DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000009101",
+        )
+
+        self.assertEqual(
+            _require_stress_methods_ready(project),
+            STRESS_FIXED_METHODS,
+        )
 
     def test_contract_select_method_allocates_vault_slot_with_vault(self):
         project = self.make_project(
@@ -1478,3 +1587,29 @@ class StressContractProvisioningTests(TestCase):
         )
         with self.assertRaises(Invoice.InvoiceAllocationError):
             invoice.select_method(self.usdt, self.anvil)
+
+    def test_differ_select_method_allocates_differ_recipient(self):
+        project = self.make_project(
+            name="stress-alloc-differ",
+            mode=InvoiceReceivingMode.Differ,
+        )
+        recipient = DifferRecipientAddress.objects.create(
+            project=project,
+            chain_type=ChainType.EVM,
+            address="0x0000000000000000000000000000000000009301",
+        )
+        invoice = self.make_contract_invoice(
+            project, out_no="alloc-differ", methods=STRESS_FIXED_METHODS
+        )
+
+        invoice.select_method(self.usdt, self.anvil)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.pay_address, recipient.address)
+        self.assertFalse(
+            VaultSlot.objects.filter(
+                project=project,
+                usage=VaultSlotUsage.INVOICE,
+                address=invoice.pay_address,
+            ).exists()
+        )

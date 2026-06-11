@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 from unfold.decorators import display
 
+from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import Chain
 from chains.models import ChainType
@@ -36,7 +37,7 @@ class ChainAdmin(ModelAdmin):
         "name_display",
         "code_display",
         "type",
-        "is_testnet",
+        "environment_display",
         "native_coin_display",
         "sort_order",
         "active",
@@ -63,6 +64,20 @@ class ChainAdmin(ModelAdmin):
     @display(description=_("原生币"))
     def native_coin_display(self, obj: Chain) -> str:
         return obj.spec.native_coin_symbol
+
+    @display(
+        ordering="is_testnet",
+        description=_("环境"),
+        label={
+            "主网": "success",
+            "测试网": "warning",
+            "本地": "info",
+        },
+    )
+    def environment_display(self, obj: Chain) -> str:
+        if obj.code == ChainCode.Anvil:
+            return "本地"
+        return "测试网" if obj.is_testnet else "主网"
 
     @display(description=_("区块确认数"))
     def confirm_block_count_display(self, obj: Chain) -> int:
@@ -219,7 +234,7 @@ class TxTaskAdmin(ReadOnlyModelAdmin):
         description=_("状态"),
         label={
             "待提交": "warning",
-            "已提交，待链上结果": "warning",
+            "已提交": "warning",
             "成功": "success",
             "失败": "danger",
         },

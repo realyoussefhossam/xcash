@@ -82,9 +82,10 @@ CHAIN_SPECS: dict[str, ChainSpec] = {
     ChainCode.Scroll: ChainSpec(
         ChainType.EVM, 534352, False, 20, "ETH", 18, 6, icon=_icon("scroll")
     ),
-    # Anvil 是本地联调链：作为本地"主网替身"供普通项目端到端测试，故保持
-    # is_testnet=False，避免被 Project.is_test 门控挡在普通项目之外。
-    ChainCode.Anvil: ChainSpec(ChainType.EVM, 31337, False, 8, "ETH", 18, 4),
+    # Anvil 是本地联调链，资产没有生产价值，必须归入测试资产域。
+    ChainCode.Anvil: ChainSpec(
+        ChainType.EVM, 31337, False, 8, "ETH", 18, 4, is_testnet=True
+    ),
     ChainCode.Tron: ChainSpec(
         ChainType.TRON, None, None, 16, "TRX", 6, 6, icon=_icon("tron")
     ),

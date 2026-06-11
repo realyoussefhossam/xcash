@@ -19,7 +19,9 @@ from common.consts import APPID_HEADER
 from common.consts import NONCE_HEADER
 from common.consts import SIGNATURE_HEADER
 from common.consts import TIMESTAMP_HEADER
+from invoices.models import DifferRecipientAddress
 from invoices.models import Invoice
+from projects.models import InvoiceReceivingMode
 from projects.models import Project
 
 from .models import DepositStressCase
@@ -54,8 +56,14 @@ class StressService:
             project = _create_stress_project(stress)
             cases = _build_stress_cases(stress)
 
-            # 充币和账单都需要 Wallet + EVM Vault。
-            if stress.deposit_count > 0 or stress.count > 0:
+            if stress.count > 0:
+                _setup_invoice_receiving(
+                    project=project,
+                    mode=stress.invoice_receiving_mode,
+                )
+
+            # 充值收款仍使用 VaultSlot deposit 地址，和账单收款模式相互独立。
+            if stress.deposit_count > 0:
                 _setup_wallet_for_vault(project)
 
             stress.project = project
@@ -72,8 +80,11 @@ class StressService:
             stress.status = StressRunStatus.READY
             stress.save(update_fields=["status"])
 
-        # Vault 注资在事务提交后执行，确保数据库记录已落库
-        if stress.deposit_count > 0 or stress.count > 0:
+        # Vault 注资在事务提交后执行，确保数据库记录已落库。Differ-only 账单不需要 vault。
+        if stress.deposit_count > 0 or (
+            stress.count > 0
+            and stress.invoice_receiving_mode == InvoiceReceivingMode.VaultSlot
+        ):
             _fund_vault_for_stress(stress.project)
 
         logger.info(
@@ -311,6 +322,8 @@ def _create_stress_project(stress: StressRun) -> Project:
         webhook=webhook_url,
         ip_white_list="*",
         active=True,
+        is_test=True,
+        evm_invoice_receiving_mode=stress.invoice_receiving_mode,
         # 设置极大阈值使所有 Invoice 都走 QUICK 确认模式，
         # 因为 Anvil 本地测试链不会自动产生新区块，FULL 模式无法完成确认。
         fast_confirm_threshold=Decimal("99999999"),
@@ -355,6 +368,38 @@ def _setup_wallet_for_vault(project: Project) -> None:
     ).address
     project.evm_vault = evm_vault_address
     project.save(update_fields=["evm_vault"])
+
+
+def _setup_differ_recipient_address(project: Project) -> None:
+    """为 Stress Project 分配独立 EVM 钱包直收地址。"""
+    from chains.models import AddressUsage
+    from chains.models import ChainType
+    from core.models import SystemWallet
+
+    system_wallet = SystemWallet.get_current()
+    if project.pk is None:
+        raise RuntimeError("Stress Project 必须先落库，才能按项目 ID 派生钱包直收地址")
+
+    recipient = system_wallet.wallet.get_address(
+        chain_type=ChainType.EVM,
+        usage=AddressUsage.HotWallet,
+        address_index=1_000_000 + project.pk,
+    )
+    DifferRecipientAddress.objects.get_or_create(
+        project=project,
+        chain_type=ChainType.EVM,
+        defaults={"address": recipient.address},
+    )
+
+
+def _setup_invoice_receiving(*, project: Project, mode: str) -> None:
+    if mode == InvoiceReceivingMode.VaultSlot:
+        _setup_wallet_for_vault(project)
+        return
+    if mode == InvoiceReceivingMode.Differ:
+        _setup_differ_recipient_address(project)
+        return
+    raise RuntimeError(f"不支持的账单收款压测模式: {mode}")
 
 
 def _build_stress_cases(stress: StressRun) -> list[InvoiceStressCase]:

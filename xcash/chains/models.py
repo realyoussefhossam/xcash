@@ -103,6 +103,9 @@ class Chain(models.Model):
             spec = CHAIN_SPECS[self.code]
             self.type = spec.type
             self.is_testnet = spec.is_testnet
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"type", "is_testnet"}
         self.full_clean()
         with db_transaction.atomic():
             result = super().save(*args, **kwargs)
@@ -504,7 +507,7 @@ class TransferType(models.TextChoices):
 
 class TxTaskStatus(models.TextChoices):
     QUEUED = "queued", _("待提交")
-    SUBMITTED = "submitted", _("已提交，待链上结果")
+    SUBMITTED = "submitted", _("已提交")
     SUCCEEDED = "succeeded", _("成功")
     FAILED = "failed", _("失败")
 
@@ -567,7 +570,7 @@ class TxTask(UndeletableModel):
     """跨链统一的链上任务锚点。
 
     设计原则：
-    - status 用单枚举描述上链生命周期：待提交 → 已提交，待链上结果 →（成功 | 失败）。
+    - status 用单枚举描述上链生命周期：待提交 → 已提交 →（成功 | 失败）。
       上链周期是固定的线性流程加末端成功/失败分叉，故无需把"阶段"与"结果"
       拆成两个字段再用跨字段约束维持一致；终局态由 TERMINAL_TX_TASK_STATUSES 判定。
     - 广播重试等实现细节继续留在各链子表，避免把"是否广播"污染到统一领域模型。
@@ -628,7 +631,9 @@ class TxTask(UndeletableModel):
         return self.get_status_display()
 
     @db_transaction.atomic
-    def append_tx_hash(self, tx_hash: str, *, expires_at_ms: int | None = None) -> TxHash:
+    def append_tx_hash(
+        self, tx_hash: str, *, expires_at_ms: int | None = None
+    ) -> TxHash:
         locked_task = TxTask.objects.select_for_update().get(pk=self.pk)
         # 并发广播可能产生相同 tx_hash（相同 nonce + gas_price 签名结果相同），
         # 若已存在则视为幂等，直接返回。
@@ -645,7 +650,9 @@ class TxTask(UndeletableModel):
                 updated_at=timezone.now(),
             )
             if expires_at_ms is not None and existing.expires_at_ms != expires_at_ms:
-                TxHash.objects.filter(pk=existing.pk).update(expires_at_ms=expires_at_ms)
+                TxHash.objects.filter(pk=existing.pk).update(
+                    expires_at_ms=expires_at_ms
+                )
                 existing.expires_at_ms = expires_at_ms
             self.tx_hash = tx_hash
             return existing
@@ -1050,7 +1057,9 @@ class VaultSlotBalance(models.Model):
     def clean(self) -> None:
         super().clean()
         if self.vault_slot_id and self.chain_id != self.vault_slot.chain_id:
-            raise ValidationError({"chain": _("余额所属链必须与 VaultSlot.chain 一致。")})
+            raise ValidationError(
+                {"chain": _("余额所属链必须与 VaultSlot.chain 一致。")}
+            )
 
 
 class VaultSlotCollectSchedule(models.Model):

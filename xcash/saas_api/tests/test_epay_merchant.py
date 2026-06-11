@@ -9,6 +9,7 @@
 
 
 import pytest
+from django.test import override_settings
 
 from invoices.models import EpayMerchant
 from projects.models import Project
@@ -212,6 +213,19 @@ class TestProjectCreateAutoProvisions:
         assert merchant.pid >= EpayMerchant.PID_BASELINE
         assert merchant.active is True
         assert len(merchant.secret_key) == EpayMerchant.SECRET_KEY_LENGTH
+
+    @override_settings(DEBUG=True)
+    def test_project_create_defaults_to_test_project_in_debug(self, client):
+        response = client.post(
+            "/saas/v1/projects",
+            data={"name": "debug-local-project"},
+            content_type="application/json",
+            HTTP_AUTHORIZATION=AUTH_HEADER,
+        )
+
+        assert response.status_code == 201
+        project = Project.objects.get(appid=response.json()["appid"])
+        assert project.is_test is True
 
 
 @pytest.mark.django_db

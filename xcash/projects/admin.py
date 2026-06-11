@@ -197,7 +197,7 @@ class ProjectAdmin(ModelAdmin):
         "name",
         "appid",
         "display_ready_status",
-        "is_test",
+        "display_environment",
         "webhook",
         "failed_count",
         "webhook_open",
@@ -329,6 +329,17 @@ class ProjectAdmin(ModelAdmin):
     def display_ready_status(self, instance: Project):
         ready, _ = instance.is_ready
         return "已就绪" if ready else "未就绪"
+
+    @display(
+        description=_("环境"),
+        ordering="is_test",
+        label={
+            "生产": "success",
+            "测试": "warning",
+        },
+    )
+    def display_environment(self, instance: Project):
+        return "测试" if instance.is_test else "生产"
 
     @display(description=_("项目状态"))
     def display_ready_detail(self, instance: Project):

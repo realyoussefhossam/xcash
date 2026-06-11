@@ -1,6 +1,8 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from projects.models import InvoiceReceivingMode
+
 
 class StressRunStatus(models.TextChoices):
     DRAFT = "draft", _("草稿")
@@ -37,6 +39,13 @@ class DepositStressCaseStatus(models.TextChoices):
 class StressRun(models.Model):
     name = models.CharField(_("名称"), max_length=128)
     count = models.PositiveIntegerField(_("账单收款模拟次数"), default=0)
+    invoice_receiving_mode = models.CharField(
+        _("账单收款模式"),
+        max_length=16,
+        choices=InvoiceReceivingMode,
+        default=InvoiceReceivingMode.VaultSlot,
+        help_text=_("本轮账单收款压测使用的钱包直收或智能合约模式。"),
+    )
     deposit_count = models.PositiveIntegerField(_("充值收款模拟次数"), default=0)
     deposit_customer_count = models.PositiveIntegerField(_("充值收款客户数"), default=0)
     status = models.CharField(
