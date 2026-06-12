@@ -6,7 +6,7 @@ from currencies.models import CryptoOnChain
 
 
 class CryptoOnChainSerializer(serializers.ModelSerializer):
-    chain = serializers.SlugRelatedField(slug_field="chain", read_only=True)
+    chain = serializers.SlugRelatedField(slug_field="code", read_only=True)
 
     class Meta:
         model = CryptoOnChain
@@ -15,12 +15,15 @@ class CryptoOnChainSerializer(serializers.ModelSerializer):
 
 class SaasCryptoSerializer(serializers.ModelSerializer):
     crypto_on_chains = CryptoOnChainSerializer(many=True, read_only=True)
+    # icon 是 Crypto 派生的只读 property，ModelSerializer 不会自动识别，显式声明。
+    icon = serializers.CharField(read_only=True)
 
     class Meta:
         model = Crypto
         fields = [
             "name",
             "symbol",
+            "icon",
             "is_native",
             "prices",
             "active",

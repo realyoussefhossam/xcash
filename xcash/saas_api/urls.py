@@ -8,6 +8,7 @@ from saas_api.viewsets.projects import ProjectViewSet
 router = SimpleRouter(trailing_slash=False)
 router.register("projects", ProjectViewSet)
 router.register("currencies", SaasCryptoViewSet, basename="saas-crypto")
+router.register("cryptos", SaasCryptoViewSet, basename="saas-crypto-alias")
 router.register("chains", SaasChainViewSet, basename="saas-chain")
 
 # 嵌套在 /projects/{appid}/ 下的业务端点

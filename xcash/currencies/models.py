@@ -159,13 +159,63 @@ class Crypto(models.Model):
             return ""
 
     @property
-    def icon(self):
+    def icon(self) -> str:
+        """代币图标 URL，供 SaaS 端展示网关支持的加密货币。"""
         icons = {
-            "ETH": "https://assets.coingecko.com/coins/images/279/standard/ethereum.png",
-            "BNB": "https://assets.coingecko.com/coins/images/825/standard/bnb-icon2_2x.png",
-            "USDC": "https://assets.coingecko.com/coins/images/6319/standard/usdc.png",
-            "USDT": "https://assets.coingecko.com/coins/images/325/standard/Tether.png",
-            "TRX": "https://assets.coingecko.com/coins/images/1094/standard/photo_2026-04-13_09-59-16.png?1776048311",
+            # 原生币 / 主链资产
+            "BTC": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400",
+            "ETH": "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png?1696501628",
+            "BNB": "https://coin-images.coingecko.com/coins/images/825/large/bnb-icon2_2x.png?1696501970",
+            "TRX": "https://coin-images.coingecko.com/coins/images/1094/large/photo_2026-04-13_09-59-16.png?1776048311",
+            "SOL": "https://coin-images.coingecko.com/coins/images/4128/large/solana.png?1718769756",
+            "ADA": "https://coin-images.coingecko.com/coins/images/975/large/cardano.png?1696502090",
+            "DOGE": "https://coin-images.coingecko.com/coins/images/5/large/dogecoin.png?1696501409",
+            "LTC": "https://coin-images.coingecko.com/coins/images/2/large/litecoin.png?1696501400",
+            "BCH": "https://coin-images.coingecko.com/coins/images/780/large/bitcoin-cash-circle.png?1696501932",
+            "NEAR": "https://coin-images.coingecko.com/coins/images/10365/large/near.jpg?1696510367",
+            "POL": "https://coin-images.coingecko.com/coins/images/4713/large/polygon.png?1698233745",
+            "AVAX": "https://coin-images.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png?1696512369",
+            "OP": "https://coin-images.coingecko.com/coins/images/25244/large/Token.png?1774456081",
+            "ARB": "https://coin-images.coingecko.com/coins/images/16547/large/arb.jpg?1721358242",
+            # 稳定币
+            "USDT": "https://coin-images.coingecko.com/coins/images/325/large/Tether.png?1696501661",
+            "USDC": "https://coin-images.coingecko.com/coins/images/6319/large/USDC.png?1769615602",
+            "USDC.E": "https://coin-images.coingecko.com/coins/images/33000/large/usdc_normal.png?1758615648",
+            "DAI": "https://coin-images.coingecko.com/coins/images/9956/large/Badge_Dai.png?1696509996",
+            "TUSD": "https://coin-images.coingecko.com/coins/images/3449/large/tusd.png?1696504140",
+            "FDUSD": "https://coin-images.coingecko.com/coins/images/31079/large/FDUSD_icon_black.png?1731097953",
+            "PYUSD": "https://coin-images.coingecko.com/coins/images/31212/large/PYUSD_Token_Logo_2x.png?1765987788",
+            "USDS": "https://coin-images.coingecko.com/coins/images/39926/large/usds.webp?1726666683",
+            "USDE": "https://coin-images.coingecko.com/coins/images/33613/large/usde.png?1733810059",
+            "USD1": "https://coin-images.coingecko.com/coins/images/54977/large/USD1_1000x1000_transparent.png?1749297002",
+            "USDB": "https://coin-images.coingecko.com/coins/images/35595/large/65c67f0ebf2f6a1bd0feb13c_usdb-icon-yellow.png?1709255427",
+            # 包装资产 / LST / BTC 类资产
+            "WETH": "https://coin-images.coingecko.com/coins/images/2518/large/weth.png?1696503332",
+            "STETH": "https://coin-images.coingecko.com/coins/images/13442/large/steth_logo.png?1696513206",
+            "WSTETH": "https://coin-images.coingecko.com/coins/images/18834/large/wstETH.png?1696518295",
+            "RETH": "https://coin-images.coingecko.com/coins/images/20764/large/reth.png?1696520159",
+            "WBTC": "https://coin-images.coingecko.com/coins/images/7598/large/WBTCLOGO.png?1764496367",
+            "CBBTC": "https://coin-images.coingecko.com/coins/images/40143/large/cbbtc.webp?1726136727",
+            "BTCB": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400",
+            "BTC.B": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400",
+            "WBNB": "https://coin-images.coingecko.com/coins/images/825/large/bnb-icon2_2x.png?1696501970",
+            "WAVAX": "https://coin-images.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png?1696512369",
+            "WMATIC": "https://coin-images.coingecko.com/coins/images/4713/large/polygon.png?1698233745",
+            # DeFi / 生态主流代币
+            "LINK": "https://coin-images.coingecko.com/coins/images/877/large/Chainlink_Logo_500.png?1760023405",
+            "UNI": "https://coin-images.coingecko.com/coins/images/12504/large/uniswap-logo.png?1720676669",
+            "AAVE": "https://coin-images.coingecko.com/coins/images/12645/large/aave-token-round.png?1720472354",
+            "GRT": "https://coin-images.coingecko.com/coins/images/13397/large/Graph_Token.png?1696513159",
+            "ENS": "https://coin-images.coingecko.com/coins/images/19785/large/ENS.jpg?1727872989",
+            "SHIB": "https://coin-images.coingecko.com/coins/images/11939/large/shiba.png?1696511800",
+            "PEPE": "https://coin-images.coingecko.com/coins/images/29850/large/pepe-token.jpeg?1696528776",
+            "FLOKI": "https://coin-images.coingecko.com/coins/images/16746/large/PNG_image.png?1696516318",
+            "APE": "https://coin-images.coingecko.com/coins/images/24383/large/APECOIN.png?1756551529",
+            "CRV": "https://coin-images.coingecko.com/coins/images/12124/large/Curve.png?1696511967",
+            "CAKE": "https://coin-images.coingecko.com/coins/images/12632/large/pancakeswap-cake-logo_%281%29.png?1696512440",
+            "GMX": "https://coin-images.coingecko.com/coins/images/18323/large/arbit.png?1696517814",
+            "MAGIC": "https://coin-images.coingecko.com/coins/images/18623/large/magic.png?1696518095",
+            "WLD": "https://coin-images.coingecko.com/coins/images/31069/large/worldcoin.jpeg?1696529903",
         }
         return icons.get(self.symbol, "")
 

@@ -56,6 +56,32 @@ class CustomTokenPricingTests(TestCase):
             )
         )
 
+    def test_mainstream_crypto_icons_are_available(self):
+        for symbol in (
+            "ETH",
+            "BNB",
+            "TRX",
+            "USDT",
+            "USDC",
+            "DAI",
+            "WETH",
+            "WBTC",
+            "CBBTC",
+            "LINK",
+            "UNI",
+            "AAVE",
+            "ARB",
+            "OP",
+            "USDC.E",
+        ):
+            with self.subTest(symbol=symbol):
+                crypto = Crypto(symbol=symbol)
+                self.assertTrue(crypto.icon.startswith("https://"))
+
+    def test_unknown_crypto_icon_is_empty(self):
+        crypto = Crypto(symbol="PROJECT")
+        self.assertEqual(crypto.icon, "")
+
     def test_tron_invoice_allows_usdt_and_native_trx_only(self):
         # Tron 账单收款放行 USDT 与原生 TRX；其余有价 TRC20 仍不作为支付方式。
         tron = Chain.objects.create(

@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db.models import Prefetch
 from django.db.models import Q
 from rest_framework.mixins import ListModelMixin
 from rest_framework.permissions import IsAuthenticated
@@ -10,16 +11,42 @@ from saas_api.serializers.currencies import SaasCryptoSerializer
 from chains.constants import ChainCode
 from chains.models import Chain
 from currencies.models import Crypto
+from currencies.models import CryptoOnChain
 
 
 class SaasCryptoViewSet(ListModelMixin, GenericViewSet):
     authentication_classes = [SaasTokenAuthentication]
     permission_classes = [IsAuthenticated]
     serializer_class = SaasCryptoSerializer
-    queryset = Crypto.objects.filter(active=True).prefetch_related(
-        "crypto_on_chains__chain"
-    )
+    queryset = Crypto.objects.none()
     pagination_class = None
+
+    def get_queryset(self):
+        chain_filters = Q(chain__is_testnet=False)
+        crypto_filters = Q(crypto_on_chains__chain__is_testnet=False)
+        if settings.DEBUG:
+            chain_filters |= Q(chain__code=ChainCode.Anvil)
+            crypto_filters |= Q(crypto_on_chains__chain__code=ChainCode.Anvil)
+
+        crypto_on_chains = (
+            CryptoOnChain.objects.select_related("chain")
+            .filter(active=True, chain__active=True)
+            .filter(chain_filters)
+            .order_by("chain__sort_order", "chain__code")
+        )
+        return (
+            Crypto.objects.filter(
+                active=True,
+                crypto_on_chains__active=True,
+                crypto_on_chains__chain__active=True,
+            )
+            .filter(crypto_filters)
+            .distinct()
+            .order_by("symbol")
+            .prefetch_related(
+                Prefetch("crypto_on_chains", queryset=crypto_on_chains)
+            )
+        )
 
 
 class SaasChainViewSet(ListModelMixin, GenericViewSet):
