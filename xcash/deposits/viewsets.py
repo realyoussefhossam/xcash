@@ -20,6 +20,7 @@ from common.consts import APPID_HEADER
 from common.error_codes import ErrorCode
 from common.exceptions import APIError
 from common.permission_check import check_saas_permission
+from common.permission_check import get_saas_deposit_customer_limit
 from common.throttles import VaultSlotThrottle
 from currencies.service import CryptoService
 from projects.models import Customer
@@ -100,6 +101,14 @@ class DepositViewSet(viewsets.GenericViewSet):
             crypto=crypto,
         ):
             raise APIError(ErrorCode.INVALID_CHAIN)
+        customer_exists = Customer.objects.filter(project=project, uid=uid).exists()
+        if not customer_exists:
+            customer_limit = get_saas_deposit_customer_limit(appid=appid)
+            if (
+                customer_limit is not None
+                and Customer.objects.filter(project=project).count() >= customer_limit
+            ):
+                raise APIError(ErrorCode.DEPOSIT_CUSTOMER_LIMIT_REACHED)
         customer, _ = Customer.objects.get_or_create(project=project, uid=uid)
 
         deposit_address = VaultSlot.ensure_deposit_address(

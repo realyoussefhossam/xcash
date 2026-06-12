@@ -74,7 +74,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         # 多事务争夺同一 Project tuple 的 MultiXact 锁元数据导致死锁。
         # IntegrityError（重复 out_no）在 autocommit 模式下仍可正常捕获。
 
-        # SaaS 模式：Invoice 收款不属于充币功能锁；这里只校验账号状态。
+        # SaaS 模式：Invoice 收款这里只校验账号状态。
         check_saas_permission(
             appid=request.headers.get(APPID_HEADER),
             action="invoice",

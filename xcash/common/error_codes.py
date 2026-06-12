@@ -47,6 +47,9 @@ class ErrorCode(Enum):
     RECIPIENT_NOT_CONFIGURED = ErrorInfo(
         "4001", _("项目未配置该链的归集收款地址"), 400
     )
+    DEPOSIT_CUSTOMER_LIMIT_REACHED = ErrorInfo(
+        "4002", _("充值用户数已达到当前套餐上限"), 403
+    )
 
     # Invoice
     INVALID_INVOICE_CURRENCY = ErrorInfo("5000", _("账单收款类型错误"), 400)
@@ -65,7 +68,6 @@ class ErrorCode(Enum):
     # SaaS API
     INVALID_SAAS_TOKEN = ErrorInfo("6000", _("SaaS API 令牌无效"), 401)
     PROJECT_NOT_FOUND = ErrorInfo("6002", _("项目不存在"), 404)
-    FEATURE_NOT_ENABLED = ErrorInfo("6003", _("该功能未开放"), 403)
     ACCOUNT_FROZEN = ErrorInfo("6004", _("账户已冻结"), 403)
 
     def __init__(self, info: ErrorInfo):

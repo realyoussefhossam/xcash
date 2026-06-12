@@ -42,7 +42,7 @@ class CheckSaasPermissionTest(TestCase):
 
         cache.set(
             "saas:permission:XC-a",
-            {"frozen": False, "enable_deposit": True, "_fetched_at": time.time()},
+            {"frozen": False, "_fetched_at": time.time()},
             None,
         )
 
@@ -55,7 +55,7 @@ class CheckSaasPermissionTest(TestCase):
 
         cache.set(
             "saas:permission:XC-a",
-            {"frozen": False, "enable_deposit": True, "_fetched_at": time.time() - 120},
+            {"frozen": False, "_fetched_at": time.time() - 120},
             None,
         )
 
@@ -87,7 +87,7 @@ class CheckSaasPermissionTest(TestCase):
 
         cache.set(
             "saas:permission:XC-frozen",
-            {"frozen": True, "enable_deposit": True, "_fetched_at": time.time()},
+            {"frozen": True, "_fetched_at": time.time()},
             None,
         )
 
@@ -95,31 +95,27 @@ class CheckSaasPermissionTest(TestCase):
             check_saas_permission(appid="XC-frozen", action="deposit")
         self.assertEqual(ctx.exception.error_code, ErrorCode.ACCOUNT_FROZEN)
 
-    def test_disabled_deposit_feature_denies_deposit_action(self):
-        """缓存里 enable_deposit=False → deposit 拒绝。"""
+    def test_deposit_action_does_not_require_legacy_feature_flag(self):
+        """旧充值权限字段已移除；缓存缺该字段时 deposit 也只看 frozen。"""
 
         cache.set(
             "saas:permission:XC-d",
             {
                 "frozen": False,
-                "enable_deposit": False,
                 "_fetched_at": time.time(),
             },
             None,
         )
 
-        with self.assertRaises(APIError) as deposit_ctx:
-            check_saas_permission(appid="XC-d", action="deposit")
-        self.assertEqual(deposit_ctx.exception.error_code, ErrorCode.FEATURE_NOT_ENABLED)
+        check_saas_permission(appid="XC-d", action="deposit")
 
-    def test_invoice_action_ignores_deposit_feature_flag(self):
-        """Invoice 收款只校验账号状态，不读取 deposit 功能锁和链币白名单字段。"""
+    def test_invoice_action_ignores_legacy_permission_fields(self):
+        """Invoice 收款只校验账号状态，不读取旧权限字段和链币白名单字段。"""
 
         cache.set(
             "saas:permission:XC-invoice",
             {
                 "frozen": False,
-                "enable_deposit": False,
                 "allowed_chain_codes": ["ethereum-mainnet"],
                 "allowed_crypto_symbols": ["USDT"],
                 "_fetched_at": time.time(),
@@ -129,14 +125,13 @@ class CheckSaasPermissionTest(TestCase):
 
         check_saas_permission(appid="XC-invoice", action="invoice")
 
-    def test_deposit_action_ignores_chain_and_crypto_whitelist_fields(self):
+    def test_deposit_action_ignores_legacy_whitelist_fields(self):
         """项目默认可使用所有链和币种，SaaS 链币白名单字段不再限制 deposit。"""
 
         cache.set(
             "saas:permission:XC-deposit-all-methods",
             {
                 "frozen": False,
-                "enable_deposit": True,
                 "allowed_chain_codes": ["ethereum-mainnet"],
                 "allowed_crypto_symbols": ["USDT"],
                 "_fetched_at": time.time(),
@@ -145,21 +140,6 @@ class CheckSaasPermissionTest(TestCase):
         )
 
         check_saas_permission(appid="XC-deposit-all-methods", action="deposit")
-
-    def test_single_feature_flag_allows_deposit(self):
-        """deposit 读取 enable_deposit，不再要求独立开关。"""
-
-        cache.set(
-            "saas:permission:XC-single-flag",
-            {
-                "frozen": False,
-                "enable_deposit": True,
-                "_fetched_at": time.time(),
-            },
-            None,
-        )
-
-        check_saas_permission(appid="XC-single-flag", action="deposit")
 
     @override_settings(IS_SAAS=False)
     @patch("common.permission_check._refresh_saas_permission.delay")
@@ -203,7 +183,6 @@ class RefreshSaasPermissionTaskTest(TestCase):
         mock_resp.json.return_value = {
             "appid": "XC-r",
             "frozen": False,
-            "enable_deposit": True,
         }
         mock_resp.raise_for_status.return_value = None
         mock_client_cls.return_value.__enter__.return_value.post.return_value = mock_resp
@@ -214,7 +193,6 @@ class RefreshSaasPermissionTaskTest(TestCase):
 
         cached = cache.get("saas:permission:XC-r")
         self.assertIsNotNone(cached)
-        self.assertTrue(cached["enable_deposit"])
         self.assertIn("_fetched_at", cached)
         self.assertGreaterEqual(cached["_fetched_at"], before)
         self.assertLessEqual(cached["_fetched_at"], after)
@@ -223,7 +201,7 @@ class RefreshSaasPermissionTaskTest(TestCase):
     def test_task_failure_keeps_old_cache(self, mock_client_cls):
         """任务调 SaaS 失败 → 旧缓存原封不动，方便后续主调用继续兜底。"""
 
-        old = {"frozen": False, "enable_deposit": True, "_fetched_at": time.time() - 100}
+        old = {"frozen": False, "_fetched_at": time.time() - 100}
         cache.set("saas:permission:XC-keep", old, None)
 
         mock_client_cls.return_value.__enter__.return_value.post.side_effect = httpx.ConnectError("boom")
@@ -235,7 +213,7 @@ class RefreshSaasPermissionTaskTest(TestCase):
     def test_task_4xx_treated_as_failure(self, mock_client_cls):
         """SaaS 返回 4xx（如 token 错误）→ 同样视作失败，不破坏旧缓存。"""
 
-        old = {"frozen": False, "enable_deposit": True, "_fetched_at": time.time() - 100}
+        old = {"frozen": False, "_fetched_at": time.time() - 100}
         cache.set("saas:permission:XC-4xx", old, None)
 
         mock_resp = Mock()

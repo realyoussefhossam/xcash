@@ -1,11 +1,15 @@
 from decimal import Decimal
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.db.models.deletion import ProtectedError
+from django.test import override_settings
 from django.test import SimpleTestCase
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory
 from web3 import Web3
 
 from chains.constants import ChainCode
@@ -20,6 +24,8 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from chains.models import Wallet
 from chains.tests_fixtures import make_evm_chain
+from common.consts import APPID_HEADER
+from common.error_codes import ErrorCode
 from common.saas_callback import CallbackEvent
 from common.saas_callback import SaasCallback
 from currencies.models import Crypto
@@ -509,3 +515,85 @@ class DepositAddressTestnetGateTests(TestCase):
 
         self.assertEqual(response.status_code, ErrorCode.INVALID_CHAIN.status)
         self.assertEqual(response.data["code"], ErrorCode.INVALID_CHAIN.code)
+
+
+@override_settings(IS_SAAS=True)
+class DepositCustomerLimitTests(TestCase):
+    def setUp(self):
+        from common.permission_check import _cache_key
+
+        self.cache_key = _cache_key
+        self.project = Project.objects.create(name="Deposit Customer Limit")
+        self.chain = make_evm_chain(code=ChainCode.Ethereum)
+        self.crypto = self.chain.native_coin
+        self.factory = APIRequestFactory()
+        self.header_key = "HTTP_" + APPID_HEADER.upper().replace("-", "_")
+
+    def tearDown(self):
+        cache.clear()
+
+    def set_permission(self, payload):
+        payload.setdefault("frozen", False)
+        payload.setdefault("_fetched_at", time.time())
+        cache.set(self.cache_key(self.project.appid), payload, None)
+
+    def call_address(self, uid):
+        from rest_framework.permissions import AllowAny
+
+        from deposits.viewsets import DepositViewSet
+
+        request = self.factory.get(
+            "/deposit/address",
+            {
+                "uid": uid,
+                "chain": self.chain.code,
+                "crypto": self.crypto.symbol,
+            },
+            **{self.header_key: self.project.appid},
+        )
+        with (
+            patch.object(DepositViewSet, "permission_classes", [AllowAny]),
+            patch(
+                "deposits.viewsets.ChainProductCapabilityService.supports_deposit_address",
+                return_value=True,
+            ),
+            patch(
+                "deposits.viewsets.VaultSlot.ensure_deposit_address",
+                return_value="0x000000000000000000000000000000000000dEaD",
+            ),
+        ):
+            return DepositViewSet.as_view({"get": "address"})(request)
+
+    def test_allows_new_customer_below_limit(self):
+        self.set_permission({"max_deposit_customers": 1})
+
+        response = self.call_address("new-user")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Customer.objects.filter(project=self.project, uid="new-user").exists())
+
+    def test_rejects_new_customer_at_limit(self):
+        Customer.objects.create(project=self.project, uid="existing")
+        self.set_permission({"max_deposit_customers": 1})
+
+        response = self.call_address("new-user")
+
+        self.assertEqual(response.status_code, ErrorCode.DEPOSIT_CUSTOMER_LIMIT_REACHED.status)
+        self.assertEqual(response.data["code"], ErrorCode.DEPOSIT_CUSTOMER_LIMIT_REACHED.code)
+
+    def test_allows_existing_customer_at_limit(self):
+        Customer.objects.create(project=self.project, uid="existing")
+        self.set_permission({"max_deposit_customers": 1})
+
+        response = self.call_address("existing")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_missing_limit_key_means_unlimited(self):
+        Customer.objects.create(project=self.project, uid="existing")
+        self.set_permission({})
+
+        response = self.call_address("new-user")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Customer.objects.filter(project=self.project, uid="new-user").exists())

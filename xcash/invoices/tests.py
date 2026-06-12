@@ -719,7 +719,6 @@ class InvoiceAllowedMethodsCapabilityTests(TestCase):
             f"saas:permission:{project.appid}",
             {
                 "frozen": False,
-                "enable_deposit": True,
                 "allowed_chain_codes": [eth_chain.code],
                 "allowed_crypto_symbols": [usdt.symbol],
             },
@@ -1341,7 +1340,7 @@ class InvoiceCreatePermissionCheckTests(TestCase):
 
     @patch("invoices.viewsets.check_saas_permission")
     def test_create_calls_permission_check_with_correct_args(self, mock_check):
-        """账单创建时只校验 invoice 账号状态，不占用 deposit 功能锁。"""
+        """账单创建时只校验 invoice 账号状态。"""
         serializer_stub = self._make_serializer_stub()
 
         with (
@@ -1488,45 +1487,6 @@ class InvoiceCreatePermissionCheckTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], ErrorCode.INVALID_INVOICE_STATUS.code)
         mock_check.assert_not_called()
-
-    @patch("invoices.viewsets.check_saas_permission")
-    def test_create_does_not_use_deposit_feature_gate(self, mock_check):
-        """创建 Invoice 时不应触发 deposit 功能锁，否则低套餐会被错误拒绝。"""
-
-        def reject_deposit_action(*, action, **kwargs):
-            if action == "deposit":
-                raise APIError(ErrorCode.FEATURE_NOT_ENABLED, detail="deposit")
-
-        mock_check.side_effect = reject_deposit_action
-
-        serializer_stub = self._make_serializer_stub()
-
-        with (
-            patch.object(
-                InvoiceViewSet, "get_serializer", return_value=serializer_stub
-            ),
-            patch(
-                "invoices.viewsets.Invoice.objects.create",
-                return_value=Mock(
-                    sys_no="inv-0003",
-                    out_no="perm-inv-order",
-                    project=self.project,
-                    status="waiting",
-                ),
-            ),
-            patch("invoices.viewsets.InvoiceService.initialize_invoice"),
-            patch(
-                "invoices.viewsets.InvoiceDisplaySerializer",
-                return_value=Mock(data={}),
-            ),
-        ):
-            response = InvoiceViewSet.as_view({"post": "create"})(self._make_request())
-
-        self.assertEqual(response.status_code, 201)
-        self.assertNotIn(
-            "deposit",
-            [call.kwargs.get("action") for call in mock_check.call_args_list],
-        )
 
     @patch("invoices.viewsets.check_saas_permission")
     def test_create_blocked_when_account_frozen(self, mock_check):

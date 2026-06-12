@@ -32,8 +32,6 @@ _SAAS_PERMISSION_PATH = "/callbacks/xcash/permission"
 REFRESH_AFTER = 60
 
 _TIMEOUT = httpx.Timeout(connect=2.0, read=3.0, write=3.0, pool=5.0)
-_DEPOSIT_ACTIONS = {"deposit"}
-
 
 def _cache_key(appid: str) -> str:
     return f"saas:permission:{appid}"
@@ -81,11 +79,10 @@ def check_saas_permission(
 
     Args:
         appid: xcash Project appid
-        action: 'deposit' 会读取 SaaS 返回的 enable_deposit；
-            'invoice' 不读取该功能锁，只用于账号冻结。
+        action: 调用方业务动作名；当前仅用于日志/调用语义区分，权限判定只看冻结态。
 
     Raises:
-        APIError: 该 tier 未开放该功能 / 用户已 frozen / appid 缺失
+        APIError: 用户已 frozen / appid 缺失
 
     Returns:
         None — 不抛异常即放行
@@ -105,11 +102,24 @@ def check_saas_permission(
     if perm.get("frozen"):
         raise APIError(ErrorCode.ACCOUNT_FROZEN)
 
-    if (
-        action in _DEPOSIT_ACTIONS
-        and not perm.get("enable_deposit", False)
-    ):
-        raise APIError(ErrorCode.FEATURE_NOT_ENABLED, detail=action)
+
+def get_saas_deposit_customer_limit(*, appid: str) -> int | None:
+    """读取 SaaS 下发的充值 Customer 软限额。
+
+    None 表示无限：包括自托管、冷缓存、老缓存缺 key、SaaS 下发 null/0 或非法值。
+    """
+    perm = _read_saas_perm(appid)
+    if perm is None:
+        return None
+
+    raw_limit = perm.get("max_deposit_customers")
+    if raw_limit in (None, ""):
+        return None
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
 
 
 @shared_task(

@@ -290,7 +290,6 @@ class StressServiceTests(SimpleTestCase):
         expected_perm = {
             "appid": "XC-STRESS",
             "frozen": False,
-            "enable_deposit": True,
         }
 
         with (
