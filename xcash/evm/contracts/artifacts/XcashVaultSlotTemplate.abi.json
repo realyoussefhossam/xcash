@@ -84,11 +84,6 @@
   },
   {
     "type": "error",
-    "name": "ZeroAmount",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ZeroVault",
     "inputs": []
   }

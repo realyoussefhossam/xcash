@@ -128,6 +128,30 @@ contract XcashVaultSlotFactoryTest is Test {
         assertEq(deployed.balance, 0);
     }
 
+    function test_collect_native_noop_after_receive_sweeps_preexisting_balance() public {
+        // 对应部署后系统已排 collect(address(0))，但付款先到并由 receive() 抢先全额扫走。
+        bytes32 salt = keccak256("receive-race-native");
+        address payable predicted = payable(_predict(vault, salt));
+        vm.deal(predicted, 0.4 ether);
+        address payer = address(0xA11CE);
+        vm.deal(payer, 0.6 ether);
+
+        address deployed = factory.deployVaultSlot(vault, salt);
+
+        vm.prank(payer);
+        (bool ok,) = predicted.call{value: 0.6 ether}("");
+        assertTrue(ok);
+        assertEq(vault.balance, 1 ether);
+        assertEq(deployed.balance, 0);
+
+        vm.recordLogs();
+        XcashVaultSlotTemplate(payable(deployed)).collect(address(0));
+
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(vault.balance, 1 ether);
+        assertEq(deployed.balance, 0);
+    }
+
     function test_duplicate_salt_reverts() public {
         bytes32 salt = keccak256("duplicate");
         factory.deployVaultSlot(vault, salt);

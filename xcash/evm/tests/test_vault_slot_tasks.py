@@ -689,6 +689,56 @@ class VaultSlotAddressSchedulingTests(TestCase):
         notify_gas_fee.assert_called_once()
         self.assertEqual(notify_gas_fee.call_args.kwargs["tx_task"].pk, task.pk)
 
+    @patch("evm.internal_tx.processor.notify_vault_slot_collect_gas_fee")
+    @patch("evm.internal_tx.processor.refresh_vault_slot_balance_for_collect_task")
+    def test_successful_empty_native_collect_finalizes_task_without_balance_refresh(
+        self,
+        refresh_balance,
+        notify_gas_fee,
+    ):
+        from evm.poller import EvmTaskPoller
+
+        slot = self._create_vault_slot()
+        tx_hash = "0x" + "af" * 32
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+        self._mark_vault_slot_deployed(slot)
+
+        with self.patch_address_derivation():
+            task = create_collect_tx_task_for_slot(
+                chain=self.chain,
+                crypto=self.chain.native_coin,
+                slot=slot,
+            )
+        VaultSlotCollectSchedule.objects.create(
+            chain=self.chain,
+            vault_slot=slot,
+            crypto=self.chain.native_coin,
+            due_at=timezone.now(),
+            tx_task=task,
+        )
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
+
+        evm_task = task.evm_task
+        with patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock:
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            processed = EvmTaskPoller.process_succeeded_receipt(
+                evm_task=evm_task,
+                tx_hash=tx_hash,
+                receipt={"status": 1, "blockNumber": 1, "logs": []},
+            )
+
+        self.assertTrue(processed)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.SUCCEEDED)
+        refresh_balance.assert_not_called()
+        notify_gas_fee.assert_called_once()
+        self.assertEqual(notify_gas_fee.call_args.kwargs["tx_task"].pk, task.pk)
+
     @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
     def test_failed_deploy_marks_deployed_when_slot_has_external_code(
         self,

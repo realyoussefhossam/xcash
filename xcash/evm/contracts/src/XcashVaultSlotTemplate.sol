@@ -8,7 +8,6 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 contract XcashVaultSlotTemplate {
     error ZeroVault();
     error InvalidVaultArgs();
-    error ZeroAmount();
     error ForwardFailed();
     error ERC20TransferFailed();
 
@@ -16,7 +15,7 @@ contract XcashVaultSlotTemplate {
     event XcashCollected(address indexed token, uint256 amount);
 
     receive() external payable {
-        if (msg.value == 0) revert ZeroAmount();
+        if (msg.value == 0) return;
         emit XcashNativeReceived(msg.sender, msg.value);
 
         uint256 amount = address(this).balance;
@@ -29,7 +28,7 @@ contract XcashVaultSlotTemplate {
     function collect(address token) external {
         if (token == address(0)) {
             uint256 amount = address(this).balance;
-            if (amount == 0) revert ZeroAmount();
+            if (amount == 0) return;
             emit XcashCollected(address(0), amount);
             (bool ok,) = vault().call{value: amount}("");
             if (!ok) revert ForwardFailed();

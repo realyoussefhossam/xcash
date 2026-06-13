@@ -63,13 +63,17 @@ contract XcashVaultSlotTest is Test {
         assertEq(address(slot).balance, 0);
     }
 
-    function test_reverts_when_amount_is_zero() public {
+    function test_receive_noop_when_amount_is_zero() public {
         XcashVaultSlotTemplate slot = _deployVaultSlot("zero-amount");
 
+        vm.recordLogs();
         (bool ok, bytes memory data) = address(slot).call{value: 0}("");
 
-        assertFalse(ok);
-        assertEq(data, abi.encodeWithSelector(XcashVaultSlotTemplate.ZeroAmount.selector));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(vault.balance, 0);
+        assertEq(address(slot).balance, 0);
     }
 
     function test_reverts_when_vault_rejects_native_coin() public {
@@ -113,11 +117,15 @@ contract XcashVaultSlotTest is Test {
         assertEq(address(slot).balance, 0);
     }
 
-    function test_collect_native_reverts_when_balance_is_zero() public {
+    function test_collect_native_noop_when_balance_is_zero() public {
         XcashVaultSlotTemplate slot = _deployVaultSlot("collect-native-zero");
 
-        vm.expectRevert(XcashVaultSlotTemplate.ZeroAmount.selector);
+        vm.recordLogs();
         slot.collect(address(0));
+
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(vault.balance, 0);
+        assertEq(address(slot).balance, 0);
     }
 
     function test_collect_native_reverts_when_vault_rejects() public {
