@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { getInvoice } from "@/lib/api"
+import { getRemainingMs } from "@/lib/dateTime"
 import { isPaymentConfirming } from "@/lib/invoiceStatus"
 import en from "@/locales/en.json"
 import zh from "@/locales/zh.json"
@@ -39,6 +40,8 @@ export function useInvoice(sysNo) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [consecutiveErrors, setConsecutiveErrors] = useState(0)
+  const invoiceStatus = invoice?.status
+  const invoiceExpiresAt = invoice?.expires_at
 
   // 获取账单详情
   const fetchInvoice = useCallback(async () => {
@@ -86,6 +89,20 @@ export function useInvoice(sysNo) {
     const timer = setInterval(fetchInvoice, interval)
     return () => clearInterval(timer)
   }, [invoice, fetchInvoice, consecutiveErrors])
+
+  // 无论用户停在哪一步，只要未支付账单到达后端给出的 expires_at，就刷新一次状态。
+  // expires_at 解析统一走 dateTime 工具：带 Z/offset 按原时区解析；无时区按 UTC 兜底。
+  useEffect(() => {
+    if (invoiceStatus !== "waiting" || !invoiceExpiresAt) {
+      return
+    }
+
+    const remainingMs = getRemainingMs(invoiceExpiresAt)
+    if (remainingMs === null) return
+
+    const timer = setTimeout(fetchInvoice, remainingMs)
+    return () => clearTimeout(timer)
+  }, [invoiceStatus, invoiceExpiresAt, fetchInvoice])
 
   return {
     invoice,

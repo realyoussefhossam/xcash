@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react"
 import { Loader2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
+import { getRemainingMs } from "@/lib/dateTime"
 import { cn } from "@/lib/utils"
 import { useI18n } from "@/hooks/useI18n"
 
@@ -25,16 +26,6 @@ const formatRemainingTime = (remainingMs, t) => {
   }
 
   return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
-}
-
-/**
- * 获取剩余时间(毫秒)
- */
-const getRemainingMs = (expiresAt) => {
-  if (!expiresAt) return null
-  const expireTimestamp = new Date(expiresAt).getTime()
-  if (Number.isNaN(expireTimestamp)) return null
-  return Math.max(0, expireTimestamp - Date.now())
 }
 
 /**
