@@ -14,7 +14,9 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
   const nodes = Array.from({ length: stepCount }, (_, i) => i + 1)
   const gridStyle = { gridTemplateColumns: `repeat(${stepCount}, minmax(0, 1fr))` }
 
+  const isFlowComplete = lockBack && naturalStep >= stepCount
   const isDone = (n) => n < naturalStep && n !== activeStep
+  const isSuccess = (n) => isDone(n) || (isFlowComplete && n <= naturalStep)
   const isClickable = (n) => !lockBack && n < naturalStep && n !== activeStep
 
   return (
@@ -28,20 +30,22 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
               disabled={!isClickable(n)}
               className={cn(
                 "relative z-10 size-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 transition-colors outline-none",
-                n <= activeStep || isDone(n)
-                  ? "bg-primary text-primary-foreground"
+                isSuccess(n)
+                  ? "bg-success text-success-foreground"
+                  : n <= activeStep
+                  ? "bg-info text-white"
                   : "bg-muted text-muted-foreground border",
                 isClickable(n) && "cursor-pointer hover:opacity-90"
               )}
               aria-label={`${t("payment.step")} ${n}: ${t(keys[i])}`}
             >
-              {isDone(n) ? <Check className="size-3.5" /> : n}
+              {isSuccess(n) ? <Check className="size-3.5" /> : n}
             </button>
             {n < stepCount && (
               <div
                 className={cn(
                   "absolute top-1/2 left-[calc(50%+1rem)] right-[calc(-50%+1rem)] h-px -translate-y-1/2",
-                  n < naturalStep ? "bg-primary" : "bg-border"
+                  n < naturalStep ? "bg-success" : "bg-border"
                 )}
               />
             )}
@@ -57,9 +61,11 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
             className={cn(
               "min-w-0 px-1 text-center text-[10px] leading-tight whitespace-nowrap",
               n === activeStep
-                ? "text-foreground font-medium"
-                : isDone(n)
-                  ? "text-foreground"
+                ? isSuccess(n)
+                  ? "text-success font-medium"
+                  : "text-info font-medium"
+                : isSuccess(n)
+                  ? "text-success"
                   : "text-muted-foreground"
             )}
           >

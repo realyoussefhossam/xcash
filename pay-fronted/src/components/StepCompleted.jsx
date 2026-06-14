@@ -12,6 +12,7 @@ function StepCompleted({ invoice }) {
   const progress = confirmingProgress.progress || 0
   const hasConfirmedCount = confirmingProgress.has_confirmed_count || 0
   const needConfirmedCount = confirmingProgress.need_confirmed_count || 0
+  const progressTone = progress >= 100 ? "text-success" : "text-info"
   const invoiceAmount = [invoice?.amount, invoice?.currency].filter(Boolean).join(" ")
   const invoiceRows = [
     invoice?.title && { label: t("invoice.subject"), value: invoice.title },
@@ -26,7 +27,7 @@ function StepCompleted({ invoice }) {
         <CardContent className="flex flex-col gap-4">
           {/* Success header */}
           <div className="text-center flex flex-col items-center gap-3">
-            <div className="size-16 bg-muted rounded-full flex items-center justify-center animate-in zoom-in-50 duration-500">
+            <div className="size-16 bg-success-soft text-success rounded-full flex items-center justify-center animate-in zoom-in-50 duration-500">
               <CheckCircle2 className="size-8" />
             </div>
             <div>
@@ -62,12 +63,14 @@ function StepCompleted({ invoice }) {
           )}
 
           {/* Block confirmation progress */}
-          <div className="bg-muted rounded-lg p-4 flex flex-col gap-2">
+          <div className="bg-success-soft rounded-lg p-4 flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium">
                 {t("confirmation.blockConfirmation") || "区块确认"}
               </span>
-              <span className="text-sm font-bold font-mono tabular-nums">{progress}%</span>
+              <span className={`text-sm font-bold font-mono tabular-nums ${progressTone}`}>
+                {progress}%
+              </span>
             </div>
             <Progress value={progress} />
             <div className="flex justify-between text-xs text-muted-foreground">

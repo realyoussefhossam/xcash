@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button"
 import { useI18n } from "@/hooks/useI18n"
 import { getInvoiceDisplayStatus } from "@/lib/invoiceStatus"
 
-// 状态 → 原生 Badge variant 映射；不引入自定义颜色，仅用 shadcn 语义变体。
+// 状态 → Badge 语义变体。只改变用户可见状态色，不影响后端状态值。
 const STATUS_VARIANT = {
-  waiting: "secondary",
-  confirming: "secondary",
-  finalizing: "secondary",
-  completed: "default",
-  expired: "outline",
+  waiting: "warning",
+  confirming: "info",
+  finalizing: "success",
+  completed: "success",
+  expired: "destructive",
 }
 
 // 进行中的状态展示一个脉冲点（继承 badge 文字色，非自定义颜色）。
