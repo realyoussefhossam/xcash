@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { getCryptoIconUrl, getChainIconUrl, getChainDisplayName } from "@/lib/cryptoIcons"
 import { getConfirmationProgress, isPaymentConfirming } from "@/lib/invoiceStatus"
-import { cn } from "@/lib/utils"
 import { useI18n } from "@/hooks/useI18n"
 
 // 复制按钮：copied 命中当前字段时切换为对勾。提到组件外，避免在 render 期间创建组件。
@@ -34,8 +33,6 @@ function PaymentAddress({ invoice, onReset }) {
   // 后端 invoice.status 切到 completed 还要 worker 跑 RPC 二次校验，存在时延，
   // 这段窗口内把标题/描述切到「最终化中」，让用户知道在等什么，避免误以为卡住。
   const isFinalizing = isConfirming && progress >= 100
-  const progressTone = progress >= 100 ? "text-success" : "text-info"
-  const progressPanelTone = progress >= 100 ? "bg-success-soft" : "bg-info-soft"
 
   useEffect(() => {
     if (!invoice?.pay_address) {
@@ -98,7 +95,7 @@ function PaymentAddress({ invoice, onReset }) {
               {t("confirmation.awaitingFinalization")}
             </span>
           ) : isConfirming ? (
-            <span className="flex items-center gap-1.5 text-info">
+            <span className="flex items-center gap-1.5">
               <Clock className="size-3.5" />
               {t("confirmation.waitingConfirmation")}
             </span>
@@ -118,12 +115,12 @@ function PaymentAddress({ invoice, onReset }) {
         {/* Confirmation progress */}
         {hasPayment && (isConfirming || isCompleted) && (
           <div className="flex flex-col gap-3">
-            <div className={cn("rounded-lg p-5 flex flex-col gap-3", progressPanelTone)}>
+            <div className="rounded-lg bg-success-soft p-5 flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">
                   {t("confirmation.blockConfirmation")}
                 </span>
-                <span className={cn("text-lg font-bold font-mono tabular-nums", progressTone)}>
+                <span className="text-lg font-bold font-mono tabular-nums text-success">
                   {progress}%
                 </span>
               </div>

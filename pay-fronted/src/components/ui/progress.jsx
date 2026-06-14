@@ -12,19 +12,18 @@ function Progress({
   ...props
 }) {
   const progress = Math.max(0, Math.min(100, Number(value) || 0))
-  const indicatorTone = progress >= 100 ? "bg-success" : "bg-info"
 
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
       className={cn(
-        "relative h-2 w-full overflow-hidden rounded-full bg-info-soft",
+        "relative h-2 w-full overflow-hidden rounded-full bg-success-soft",
         className
       )}
       {...props}>
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className={cn("h-full w-full flex-1 transition-all", indicatorTone, indicatorClassName)}
+        className={cn("h-full w-full flex-1 bg-success transition-all", indicatorClassName)}
         style={{ transform: `translateX(-${100 - progress}%)` }} />
     </ProgressPrimitive.Root>
   );

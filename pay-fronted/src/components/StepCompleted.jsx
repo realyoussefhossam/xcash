@@ -12,7 +12,6 @@ function StepCompleted({ invoice }) {
   const progress = confirmingProgress.progress || 0
   const hasConfirmedCount = confirmingProgress.has_confirmed_count || 0
   const needConfirmedCount = confirmingProgress.need_confirmed_count || 0
-  const progressTone = progress >= 100 ? "text-success" : "text-info"
   const invoiceAmount = [invoice?.amount, invoice?.currency].filter(Boolean).join(" ")
   const invoiceRows = [
     invoice?.title && { label: t("invoice.subject"), value: invoice.title },
@@ -68,7 +67,7 @@ function StepCompleted({ invoice }) {
               <span className="text-xs font-medium">
                 {t("confirmation.blockConfirmation") || "区块确认"}
               </span>
-              <span className={`text-sm font-bold font-mono tabular-nums ${progressTone}`}>
+              <span className="text-sm font-bold font-mono tabular-nums text-success">
                 {progress}%
               </span>
             </div>
