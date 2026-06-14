@@ -3,7 +3,6 @@ name: xcash
 volumes:
   redis_data: {}
   db_data: {}
-  django_staticfiles: {}
 
 # 同机 SaaS 等可信服务通过加入 xcash_public 按 DNS 别名互通（如 http://xcash-caddy）。
 # xcash 自己总是创建该网络；即便没有外部服务加入也不影响本项目正常运行。
@@ -55,6 +54,7 @@ services:
     build:
       context: .
       dockerfile: ./compose/production/django/Dockerfile
+      target: python-run-stage
     container_name: xcash_django
     restart: unless-stopped
     depends_on:
@@ -67,8 +67,6 @@ services:
     # django/worker/beat 都需要按 DNS 别名解析 saas 侧 Caddy：
     # django 同步校验 SaaS permission，worker 推送内部回调，beat 调度刷新任务。
     networks: [default, xcash_public]
-    volumes:
-      - django_staticfiles:/app/staticfiles
     command: /start
 
   worker:
@@ -85,7 +83,10 @@ services:
     command: /start-beat
 
   caddy:
-    image: caddy:2.11.2-alpine
+    build:
+      context: .
+      dockerfile: ./compose/production/django/Dockerfile
+      target: caddy-run-stage
     container_name: xcash_caddy
     restart: unless-stopped
     depends_on:
@@ -98,6 +99,3 @@ services:
       xcash_public:
         aliases:
           - xcash-caddy
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - django_staticfiles:/srv/staticfiles:ro

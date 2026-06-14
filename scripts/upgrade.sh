@@ -379,7 +379,6 @@ run_main_manage db migrate --noinput 2>&1 \
 PRODUCTION_MIGRATE_COMPLETED=true
 
 log "run production post-migration setup"
-run_main_manage db collectstatic --noinput
 run_main_manage db ensure_default_superuser
 
 log "start application services"
