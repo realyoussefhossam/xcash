@@ -42,7 +42,10 @@ from invoices.serializers import InvoiceCreateSerializer
 from invoices.service import InvoiceService
 from invoices.tasks import check_expired
 from invoices.tasks import fallback_invoice_expired
+from invoices.viewsets import INVOICE_PUBLIC_NON_WAITING_CACHE_TTL
+from invoices.viewsets import INVOICE_PUBLIC_WAITING_CACHE_TTL
 from invoices.viewsets import InvoiceViewSet
+from invoices.viewsets import invoice_public_cache_key
 from projects.models import InvoiceReceivingMode
 from projects.models import Project
 from users.models import User
@@ -569,6 +572,96 @@ class InvoiceDuplicateOutNoTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], ErrorCode.DUPLICATE_OUT_NO.code)
+
+
+class InvoicePublicRetrieveCacheTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.project = Project.objects.create(name="PublicCacheProject")
+
+    def create_invoice(self, *, status_value: str, out_no: str) -> Invoice:
+        return Invoice.objects.create(
+            project=self.project,
+            out_no=out_no,
+            title="Public cache invoice",
+            currency="USD",
+            amount=Decimal("10"),
+            methods={},
+            status=status_value,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+    def retrieve_response(self, sys_no: str):
+        request = self.factory.get(f"/v1/invoice/{sys_no}")
+        return InvoiceViewSet.as_view({"get": "retrieve"})(request, sys_no=sys_no)
+
+    def test_retrieve_returns_cached_public_invoice_without_database_lookup(self):
+        cached_data = {"sys_no": "INV-CACHED", "status": InvoiceStatus.COMPLETED}
+
+        with (
+            patch("invoices.viewsets.cache") as cache_mock,
+            patch.object(
+                InvoiceViewSet,
+                "get_object",
+                side_effect=AssertionError("cache hit should not load invoice"),
+            ),
+        ):
+            cache_mock.get.return_value = cached_data
+
+            response = self.retrieve_response("INV-CACHED")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, cached_data)
+        cache_mock.get.assert_called_once_with(invoice_public_cache_key("INV-CACHED"))
+        cache_mock.set.assert_not_called()
+
+    def test_retrieve_caches_waiting_invoice_for_two_seconds(self):
+        invoice = self.create_invoice(
+            status_value=InvoiceStatus.WAITING,
+            out_no="public-cache-waiting",
+        )
+
+        with patch("invoices.viewsets.cache") as cache_mock:
+            cache_mock.get.return_value = None
+
+            response = self.retrieve_response(invoice.sys_no)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], InvoiceStatus.WAITING)
+        cache_mock.set.assert_called_once()
+        self.assertEqual(
+            cache_mock.set.call_args.args[0],
+            invoice_public_cache_key(invoice.sys_no),
+        )
+        self.assertEqual(
+            cache_mock.set.call_args.kwargs["timeout"],
+            INVOICE_PUBLIC_WAITING_CACHE_TTL,
+        )
+
+    def test_retrieve_caches_non_waiting_invoice_for_one_hour(self):
+        for status_value in (InvoiceStatus.COMPLETED, InvoiceStatus.EXPIRED):
+            with self.subTest(status=status_value):
+                invoice = self.create_invoice(
+                    status_value=status_value,
+                    out_no=f"public-cache-{status_value}",
+                )
+
+                with patch("invoices.viewsets.cache") as cache_mock:
+                    cache_mock.get.return_value = None
+
+                    response = self.retrieve_response(invoice.sys_no)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["status"], status_value)
+                cache_mock.set.assert_called_once()
+                self.assertEqual(
+                    cache_mock.set.call_args.args[0],
+                    invoice_public_cache_key(invoice.sys_no),
+                )
+                self.assertEqual(
+                    cache_mock.set.call_args.kwargs["timeout"],
+                    INVOICE_PUBLIC_NON_WAITING_CACHE_TTL,
+                )
 
 
 class InvoiceAllowedMethodsCapabilityTests(TestCase):
@@ -1408,6 +1501,7 @@ class InvoiceCreatePermissionCheckTests(TestCase):
     def test_select_method_checks_invoice_account_status(self, mock_check):
         """支付页选择支付方式时只复检 invoice 账号状态。"""
         invoice = Mock(
+            sys_no="inv-0002",
             status=InvoiceStatus.WAITING,
             transfer_id=None,
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -1433,6 +1527,7 @@ class InvoiceCreatePermissionCheckTests(TestCase):
                 "invoices.viewsets.InvoiceDisplaySerializer",
                 return_value=Mock(data={}),
             ),
+            patch("invoices.viewsets.cache") as cache_mock,
         ):
             InvoiceViewSet.as_view({"post": "select_method"})(
                 APIRequestFactory().post(
@@ -1448,11 +1543,15 @@ class InvoiceCreatePermissionCheckTests(TestCase):
             appid=self.project.appid,
             action="invoice",
         )
+        cache_mock.delete.assert_called_once_with(
+            invoice_public_cache_key(invoice.sys_no)
+        )
 
     @patch("invoices.viewsets.check_saas_permission")
     def test_select_method_rejects_observed_invoice(self, mock_check):
         """Transfer 已绑定后账单仍是 WAITING,但不再允许重选支付方式。"""
         invoice = Mock(
+            sys_no="inv-0002",
             status=InvoiceStatus.WAITING,
             transfer_id=123,
             expires_at=timezone.now() + timedelta(minutes=10),

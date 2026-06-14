@@ -184,7 +184,7 @@ SIDEBAR_UNFOLD = {
             },
             {
                 "title": _("区块链"),
-                "collapsible": True,
+                "collapsible": False,
                 "items": [
                     {
                         "title": _("公链"),
@@ -215,7 +215,7 @@ SIDEBAR_UNFOLD = {
             },
             {
                 "title": _("任务"),
-                "collapsible": True,
+                "collapsible": False,
                 "items": [
                     {
                         "title": _("任务日志"),

@@ -1,6 +1,8 @@
+from collections.abc import Mapping
 from datetime import timedelta
 
 import structlog
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError
 from django.utils import timezone
@@ -30,6 +32,28 @@ from .serializers import InvoiceSetCryptoChainSerializer
 from .service import InvoiceService
 
 logger = structlog.get_logger()
+
+INVOICE_PUBLIC_CACHE_KEY_PREFIX = "invoice:public:v1"
+INVOICE_PUBLIC_WAITING_CACHE_TTL = 2
+INVOICE_PUBLIC_NON_WAITING_CACHE_TTL = 60 * 60
+
+
+def invoice_public_cache_key(sys_no: str) -> str:
+    return f"{INVOICE_PUBLIC_CACHE_KEY_PREFIX}:{sys_no}"
+
+
+def invoice_public_cache_ttl(status_value: str) -> int:
+    if status_value == InvoiceStatus.WAITING:
+        return INVOICE_PUBLIC_WAITING_CACHE_TTL
+    return INVOICE_PUBLIC_NON_WAITING_CACHE_TTL
+
+
+def plain_cache_data(value):
+    if isinstance(value, Mapping):
+        return {key: plain_cache_data(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [plain_cache_data(item) for item in value]
+    return value
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
@@ -67,6 +91,22 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if self.action == "select_method":
             return [InvoiceSelectMethodThrottle()]
         return super().get_throttles()
+
+    def retrieve(self, request, *args, **kwargs):
+        sys_no = kwargs[self.lookup_url_kwarg or self.lookup_field]
+        cache_key = invoice_public_cache_key(sys_no)
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+
+        invoice: Invoice = self.get_object()
+        data = plain_cache_data(self.get_serializer(invoice).data)
+        cache.set(
+            cache_key,
+            data,
+            timeout=invoice_public_cache_ttl(invoice.status),
+        )
+        return Response(data)
 
     def create(self, request, *args, **kwargs):
         # 不使用 @db_transaction.atomic：让 Invoice INSERT 立即提交，
@@ -170,6 +210,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             raise APIError(
                 ErrorCode.PARAMETER_ERROR, detail="price unavailable"
             ) from exc
+
+        cache.delete(invoice_public_cache_key(invoice.sys_no))
 
         return Response(
             InvoiceDisplaySerializer(
