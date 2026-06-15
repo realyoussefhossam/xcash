@@ -7,10 +7,10 @@
     "confirm": "确认",
     "copy": "复制",
     "copied": "已复制",
-    "tagline": "安全、快捷的数字货币账单收款体验"
+    "tagline": "安全、快捷的数字货币支付体验"
   },
   "invoice": {
-    "title": "账单收款详情",
+    "title": "账单详情",
     "stepLabel": "账单",
     "completedLabel": "完成",
     "basicInfo": "账单信息",
@@ -18,9 +18,9 @@
     "orderNumber": "订单号",
     "systemNumber": "系统单号",
     "amountDue": "应付金额",
-    "paymentToken": "账单收款加密货币",
+    "paymentToken": "支付加密货币",
     "blockchainNetwork": "区块链网络",
-    "paymentIrreversible": "请仔细核对金额与订单信息，账单收款完成后无法撤销",
+    "paymentIrreversible": "请仔细核对金额与订单信息，支付完成后无法撤销",
     "status": {
       "waiting": "待支付",
       "confirming": "确认中",
@@ -31,29 +31,28 @@
     }
   },
   "payment": {
-    "stepLabel": "账单收款方式",
+    "stepLabel": "支付方式",
     "sendLabel": "发送",
-    "selectMethod": "选择账单收款方式",
+    "selectMethod": "选择支付方式",
     "selectMethodDesc": "请选择您要使用的加密货币和网络",
     "step": "步骤",
     "selectToken": "选择加密货币",
-    "selectTokenDesc": "选择用于账单收款的加密货币",
+    "selectTokenDesc": "选择要支付的加密货币",
     "selectNetwork": "选择网络",
     "selectNetworkDesc": "选择您钱包中可用的区块链网络",
-    "gettingPaymentInfo": "正在获取账单收款信息...",
-    "paymentInfo": "账单收款信息",
-    "paymentCompleted": "账单收款已完成",
-    "paymentConfirming": "账单收款确认中",
+    "gettingPaymentInfo": "正在获取支付信息...",
+    "paymentInfo": "支付信息",
+    "paymentCompleted": "支付已完成",
+    "paymentConfirming": "支付确认中",
     "paymentFinalizing": "最终化中",
-    "paymentAmount": "账单收款金额",
+    "paymentAmount": "支付金额",
     "network": "网络",
-    "paymentAddress": "账单收款地址",
+    "paymentAddress": "转账地址",
     "contractAddress": "合约地址",
     "transactionHash": "交易哈希",
-    "scanQRCode": "使用钱包扫码完成账单收款",
-    "transferTo": "请向以下地址转账",
-    "toAddress": "到以下地址",
-    "reselectMethod": "重新选择账单收款方式",
+    "scanQRCode": "使用钱包扫码完成支付",
+    "transferInstruction": "请向以下地址转账 {{amount}} {{crypto}}",
+    "reselectMethod": "重新选择支付方式",
     "returnToMerchant": "返回商户"
   },
   "confirmation": {
@@ -73,20 +72,20 @@
     "days": "天"
   },
   "expired": {
-    "title": "账单收款已超时",
+    "title": "订单已超时",
     "orderExpired": "订单已过期",
     "contactMerchant": "请联系商家重新创建订单",
     "refreshPage": "刷新页面"
   },
   "error": {
     "title": "出错了",
-    "invoiceNotFound": "未找到账单收款,请检查账单收款号是否正确",
-    "missingInvoiceNumber": "缺少账单收款号参数 (sys_no)",
-    "fetchFailed": "获取账单收款信息失败"
+    "invoiceNotFound": "未找到账单,请检查账单号是否正确",
+    "missingInvoiceNumber": "缺少账单号参数 (sys_no)",
+    "fetchFailed": "获取账单信息失败"
   },
   "selector": {
     "noTokens": "暂无可用加密货币",
-    "selectToken": "选择账单收款加密货币",
+    "selectToken": "选择支付加密货币",
     "networks": "个网络",
     "selectNetwork": "选择区块链网络",
     "selectTokenFirst": "请先选择加密货币",

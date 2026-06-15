@@ -101,11 +101,10 @@ function PaymentAddress({ invoice, onReset }) {
             </span>
           ) : (
             <span>
-              {t("payment.transferTo")}{" "}
-              <span className="font-mono font-medium text-foreground">
-                {invoice.pay_amount} {invoice.crypto}
-              </span>{" "}
-              {t("payment.toAddress")}
+              {t("payment.transferInstruction", {
+                amount: invoice.pay_amount,
+                crypto: invoice.crypto,
+              })}
             </span>
           )}
         </CardDescription>
