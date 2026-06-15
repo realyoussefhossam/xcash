@@ -104,7 +104,7 @@ class InvoiceTestMixin:
             "project": self.project,
             "out_no": out_no,
             "title": "Test invoice",
-            "currency": self.crypto.symbol,
+            "currency_id": "USD",
             "amount": Decimal("10"),
             "methods": {self.crypto.symbol: [self.chain.code]},
             "expires_at": timezone.now() + timedelta(minutes=10),
@@ -169,7 +169,7 @@ class InvoicePaymentSelectionTests(TestCase):
             "project": self.project,
             "out_no": out_no,
             "title": "Slot invoice",
-            "currency": "USDT",
+            "currency_id": "USD",
             "amount": Decimal("10"),
             "methods": {"USDT": [ChainCode.Ethereum, ChainCode.BSC]},
             "expires_at": timezone.now() + timedelta(minutes=10),
@@ -478,7 +478,7 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
             project=self.project,
             out_no="con-1",
             title="Concurrent 1",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTC": [ChainCode.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -487,7 +487,7 @@ class InvoicePaymentSelectionConcurrencyTests(TransactionTestCase):
             project=self.project,
             out_no="con-2",
             title="Concurrent 2",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTC": [ChainCode.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -578,13 +578,14 @@ class InvoicePublicRetrieveCacheTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.project = Project.objects.create(name="PublicCacheProject")
+        Fiat.objects.get_or_create(code="USD")
 
     def create_invoice(self, *, status_value: str, out_no: str) -> Invoice:
         return Invoice.objects.create(
             project=self.project,
             out_no=out_no,
             title="Public cache invoice",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={},
             status=status_value,
@@ -876,20 +877,25 @@ class InvoiceContractBillingValidationTests(TestCase):
         data = {
             "out_no": "contract-order",
             "title": "contract",
-            "currency": self.usdt.symbol,
+            "currency": "USD",
             "amount": "10",
             "methods": methods,
         }
         return InvoiceCreateSerializer(data=data, context={"request": request})
 
     def test_default_methods_filters_out_tron(self):
-        # 不传 methods：全局智能合约模式下，Tron 未通过运行时门控时不暴露 Tron。
+        # 不传 methods：默认暴露全部可用收款方式（ETH 原生 + USDT）；计价货币恒为法币，
+        # 不再把 methods 收敛到单一币种。但全局智能合约模式下 Tron 未通过运行时门控，
+        # 故仍不出现在结果里。
         serializer = self.build_serializer(methods={})
 
         self.assertTrue(serializer.is_valid(raise_exception=True))
         self.assertEqual(
             serializer.validated_data["methods"],
-            {self.usdt.symbol: [self.eth_chain.code]},
+            {
+                self.eth_chain.native_coin.symbol: [self.eth_chain.code],
+                self.usdt.symbol: [self.eth_chain.code],
+            },
         )
 
     def test_explicit_tron_rejected(self):
@@ -942,7 +948,7 @@ class InvoiceContractBillingValidationTests(TestCase):
             project=self.project,
             out_no="tron-differ-select-method",
             title="tron",
-            currency=self.usdt.symbol,
+            currency_id="USD",
             amount=Decimal("10"),
             methods={self.usdt.symbol: [self.tron_chain.code]},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -999,7 +1005,7 @@ class InvoiceContractBillingValidationTests(TestCase):
             project=self.project,
             out_no="tron-select-method",
             title="tron",
-            currency=self.usdt.symbol,
+            currency_id="USD",
             amount=Decimal("10"),
             methods={self.usdt.symbol: [self.tron_chain.code]},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -1037,6 +1043,7 @@ class InvoiceConfirmStatusTests(TestCase):
         self.project = Project.objects.create(
             name="StatusProject",
         )
+        Fiat.objects.get_or_create(code="USD")
         self.crypto = Crypto.objects.create(
             name="Status USDT",
             symbol="STATUS-USDT",
@@ -1050,7 +1057,7 @@ class InvoiceConfirmStatusTests(TestCase):
             project=self.project,
             out_no=f"status-{status}",
             title="Status test",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={},
             status=status,
@@ -1078,7 +1085,7 @@ class InvoiceConfirmStatusTests(TestCase):
             project=self.project,
             out_no="status-native-notify",
             title="Status native notify",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={},
             status=InvoiceStatus.WAITING,
@@ -1127,6 +1134,7 @@ class InvoiceWebhookPayloadTests(TestCase):
         self.project = Project.objects.create(
             name="ContentProject",
         )
+        Fiat.objects.get_or_create(code="USD")
 
     def test_payload_with_crypto_none(self):
         # 未选支付方式的账单，payload 应安全返回 None 字段而非抛异常。
@@ -1134,7 +1142,7 @@ class InvoiceWebhookPayloadTests(TestCase):
             project=self.project,
             out_no="content-none",
             title="Content test",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -1190,7 +1198,7 @@ class InvoiceExpiredMatchTests(TestCase):
             project=self.project,
             out_no="expired-match-order",
             title="Expired match",
-            currency="USDTE",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTE": [ChainCode.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -1272,7 +1280,7 @@ class FallbackInvoiceExpiredTests(TestCase):
             project=self.project,
             out_no="fallback-order",
             title="Fallback test",
-            currency="USDTF",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTF": [ChainCode.Ethereum]},
             # 设置过去的过期时间
@@ -1291,7 +1299,7 @@ class FallbackInvoiceExpiredTests(TestCase):
             project=self.project,
             out_no="fallback-observed",
             title="Fallback observed",
-            currency="USDTF",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTF": [ChainCode.Ethereum]},
             expires_at=timezone.now() - timedelta(minutes=1),
@@ -1360,7 +1368,7 @@ class CheckExpiredAtomicityTests(TransactionTestCase):
             project=self.project,
             out_no="atomic-order",
             title="Atomic test",
-            currency="USDTA",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={"USDTA": [ChainCode.Ethereum]},
             expires_at=timezone.now() + timedelta(minutes=10),

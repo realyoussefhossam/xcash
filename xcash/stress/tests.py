@@ -1445,7 +1445,7 @@ class StressInvoiceReceivingProvisioningTests(TestCase):
             project=project,
             out_no=out_no,
             title="stress contract",
-            currency="USDT",
+            currency_id="USD",
             amount=Decimal("10"),
             methods=methods,
             expires_at=timezone.now() + timedelta(minutes=10),

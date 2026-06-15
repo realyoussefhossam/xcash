@@ -37,6 +37,7 @@ from core.models import SystemSettings
 from core.models import SystemWallet
 from currencies.models import Crypto
 from currencies.models import CryptoOnChain
+from currencies.models import Fiat
 from deposits.models import Deposit
 from evm.constants import XCASH_VAULT_SLOT_FACTORY_ADDRESS
 from evm.intents import DEFAULT_VAULT_SLOT_COLLECT_GAS
@@ -223,6 +224,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
             "0x0000000000000000000000000000000000000f01"
         )
         self.project.save(update_fields=["evm_vault"])
+        Fiat.objects.get_or_create(code="USD")
         self.customer = Customer.objects.create(
             project=self.project,
             uid="vault-slot-customer",
@@ -1232,7 +1234,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
             project=self.project,
             out_no="invoice-slot-collect",
             title="Invoice slot collect",
-            currency=self.token.symbol,
+            currency_id="USD",
             amount="10.00000000",
             methods={self.token.symbol: [self.chain.code]},
             crypto=self.token,
@@ -1266,7 +1268,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
             project=self.project,
             out_no="invoice-slot-native-collect",
             title="Invoice slot native collect",
-            currency=self.chain.native_coin.symbol,
+            currency_id="USD",
             amount="10.00000000",
             methods={self.chain.native_coin.symbol: [self.chain.code]},
             crypto=self.chain.native_coin,

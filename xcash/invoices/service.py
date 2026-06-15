@@ -48,13 +48,12 @@ class InvoiceService:
         *,
         project,
         requested,
-        currency: str | None = None,
     ) -> dict[str, list[str]]:
         """生成/收敛账单最终 methods。
 
         Invoice.available_methods(project) 是真正可付款的 crypto -> chain 集合；
-        调用方未指定 methods 时直接采用全集，指定时必须是全集子集。计价货币本身
-        是加密货币时，最终 methods 还会收敛到该单一币种。
+        调用方未指定 methods 时直接采用全集，指定时必须是全集子集。计价货币恒为
+        法币，只决定 amount 的计价单位，不参与收款币种的收敛。
         """
         available = Invoice.available_methods(project)
         if not available:
@@ -114,12 +113,6 @@ class InvoiceService:
             if not finalized:
                 raise APIError(ErrorCode.NO_RECIPIENT_ADDRESS)
 
-        if currency and CryptoService.exists(currency):
-            chains = finalized.get(currency, [])
-            if not chains:
-                raise APIError(ErrorCode.NO_AVAILABLE_METHOD)
-            return {currency: InvoiceService.sort_chain_codes(chains)}
-
         return {
             crypto_symbol: InvoiceService.sort_chain_codes(chain_codes)
             for crypto_symbol, chain_codes in finalized.items()
@@ -150,12 +143,9 @@ class InvoiceService:
 
         if invoice.crypto and invoice.pay_amount:
             worth = invoice.crypto.to_fiat(fiat=usd, amount=invoice.pay_amount)
-        elif invoice.is_crypto_fixed:
-            crypto = CryptoService.get_by_symbol(invoice.currency)
-            worth = crypto.to_fiat(fiat=usd, amount=invoice.amount)
         else:
-            fiat = FiatService.get_by_code(invoice.currency)
-            worth = invoice.amount * fiat.fiat_price(usd)
+            # currency 已是 Fiat 实例：尚未选定支付币种时，按计价法币直接折算 USD 价值。
+            worth = invoice.amount * invoice.currency.fiat_price(usd)
 
         # worth 只更新自身字段，直接 update 可避免把整行实例再次写回。
         Invoice.objects.filter(pk=invoice.pk).update(

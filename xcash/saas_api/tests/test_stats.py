@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from currencies.models import Fiat
 from invoices.models import Invoice
 from invoices.models import InvoiceStatus
 from projects.models import Project
@@ -57,6 +58,7 @@ _out_no_counter = itertools.count(1)
 def _make_invoice(project, *, worth, status, started_at, updated_at):
     """创建一张账单并覆盖 auto 字段。Invoice.started_at 是 auto_now_add，
     updated_at 是 auto_now，需要用 QuerySet.update() 绕过才能控制测试时间。"""
+    Fiat.objects.get_or_create(code="USD")
     inv = Invoice.objects.create(
         project=project,
         worth=Decimal(worth),
@@ -64,7 +66,7 @@ def _make_invoice(project, *, worth, status, started_at, updated_at):
         expires_at=started_at,  # 字段 non-null，给个占位值
         out_no=f"TEST-{next(_out_no_counter)}",
         title="Test Invoice",
-        currency="USD",
+        currency_id="USD",
         amount=Decimal(worth),
     )
     Invoice.objects.filter(pk=inv.pk).update(

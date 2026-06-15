@@ -42,6 +42,7 @@ from core.monitoring import OperationalRiskService
 from core.runtime_settings import get_webhook_delivery_max_backoff_seconds
 from core.runtime_settings import get_webhook_delivery_max_retries
 from currencies.models import CryptoOnChain
+from currencies.models import Fiat
 from evm.local_erc20 import LOCAL_EVM_ERC20_ABI
 from evm.local_erc20 import LOCAL_EVM_ERC20_BYTECODE
 from evm.models import EvmTxTask
@@ -239,6 +240,9 @@ class EnvironmentBadgeResourceRiskTests(TestCase):
 
 
 class DashboardMetricsTests(TestCase):
+    def setUp(self):
+        Fiat.objects.get_or_create(code="USD")
+
     def make_invoice(
         self,
         *,
@@ -253,7 +257,7 @@ class DashboardMetricsTests(TestCase):
             project=project,
             out_no=out_no,
             title="Dashboard metric test",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal(worth),
             worth=Decimal(worth),
             status=status,

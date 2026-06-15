@@ -98,13 +98,15 @@ class EpayModelTests(TestCase):
         self.project = Project.objects.create(
             name="EPay Project",
         )
+        Fiat.objects.get_or_create(code="USD")
+        Fiat.objects.get_or_create(code="CNY")
 
     def test_invoice_defaults_to_native_protocol(self):
         invoice = Invoice.objects.create(
             project=self.project,
             out_no="native-1",
             title="Native",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10.00"),
             methods={},
             expires_at=timezone.now() + timedelta(minutes=10),
@@ -122,7 +124,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1001",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -184,7 +186,7 @@ class EpayModelTests(TestCase):
             project=other_project,
             out_no="ORDER1003",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -215,7 +217,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1004",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -246,7 +248,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1005",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -256,7 +258,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1005-DUP",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -299,7 +301,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1006",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -309,7 +311,7 @@ class EpayModelTests(TestCase):
             project=self.project,
             out_no="ORDER1006-ALT",
             title="VIP",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("18.50"),
             methods={},
             protocol=InvoiceProtocol.EPAY_V1,
@@ -406,7 +408,7 @@ class EpaySubmitServiceTests(TestCase):
         self.assertEqual(invoice.project, self.project)
         self.assertEqual(invoice.out_no, "EPAY-SUBMIT-1001")
         self.assertEqual(invoice.title, "VIP Package")
-        self.assertEqual(invoice.currency, "CNY")
+        self.assertEqual(invoice.currency_id, "CNY")
         self.assertEqual(invoice.amount, Decimal("18.50"))
         self.assertEqual(invoice.protocol, InvoiceProtocol.EPAY_V1)
         self.assertEqual(invoice.notify_url, "https://merchant.example.com/notify")
@@ -434,7 +436,7 @@ class EpaySubmitServiceTests(TestCase):
         invoice = EpaySubmitService.submit(self._signed_params(currency="CNY"))
 
         invoice.refresh_from_db()
-        self.assertEqual(invoice.currency, "CNY")
+        self.assertEqual(invoice.currency_id, "CNY")
         mock_check.assert_called_once()
 
     @patch("invoices.epay.service.InvoiceService.initialize_invoice")
@@ -454,7 +456,7 @@ class EpaySubmitServiceTests(TestCase):
         invoice = EpaySubmitService.submit(params)
 
         invoice.refresh_from_db()
-        self.assertEqual(invoice.currency, "CNY")
+        self.assertEqual(invoice.currency_id, "CNY")
 
     def test_submit_rejects_currency_not_in_fiat_table(self):
         # JPY 不在 setUp 注入的 Fiat 中，应触发 Fiat 校验失败。
@@ -478,7 +480,7 @@ class EpaySubmitServiceTests(TestCase):
         invoice = EpaySubmitService.submit(params)
 
         invoice.refresh_from_db()
-        self.assertEqual(invoice.currency, "CNY")
+        self.assertEqual(invoice.currency_id, "CNY")
 
     @patch("invoices.epay.service.InvoiceService.initialize_invoice")
     @patch("invoices.epay.service.check_saas_permission")
@@ -726,7 +728,7 @@ class EpaySubmitServiceTests(TestCase):
             project=self.project,
             out_no=params["out_trade_no"],
             title=params["name"],
-            currency=params["currency"],
+            currency_id=params["currency"],
             amount=params["money"],
             methods=Invoice.available_methods(self.project),
             notify_url=params["notify_url"],
@@ -1171,7 +1173,7 @@ class EpayNotifyTests(TestCase):
             project=self.project,
             out_no="NATIVE-RETURN-1",
             title="Native",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("10.00"),
             methods={},
             protocol=InvoiceProtocol.NATIVE,
@@ -1267,7 +1269,7 @@ class EpayNotifyTests(TestCase):
             project=self.project,
             out_no="NATIVE-1001",
             title="Native Order",
-            currency="CNY",
+            currency_id="CNY",
             amount=Decimal("10.00"),
             methods={},
             protocol=InvoiceProtocol.NATIVE,

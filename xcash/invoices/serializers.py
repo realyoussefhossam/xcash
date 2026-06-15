@@ -93,7 +93,8 @@ class InvoiceCreateSerializer(Serializer):
         return self._project
 
     def validate_currency(self, value):  # noqa
-        if not (CryptoService.exists(value) or FiatService.exists(value)):
+        # 计价货币恒为法币：收款加密货币改由 methods 表达，二者职责彻底分离。
+        if not FiatService.exists(value):
             raise APIError(ErrorCode.INVALID_INVOICE_CURRENCY)
         return value
 
@@ -117,7 +118,6 @@ class InvoiceCreateSerializer(Serializer):
         attrs["methods"] = InvoiceService.finalize_methods(
             project=project,
             requested=attrs.get("methods") or {},
-            currency=attrs["currency"],
         )
 
         return attrs
@@ -129,6 +129,8 @@ class InvoicePublicSerializer(serializers.ModelSerializer):
     仅暴露买家付款所需的最小字段集，不包含 appid、out_no 等商户内部信息。
     """
 
+    # currency FK 的 PK 即法币 code，直接取 currency_id 输出字符串，省一次 join。
+    currency = serializers.CharField(source="currency_id", read_only=True)
     crypto = serializers.CharField(
         source="crypto.symbol", read_only=True, allow_null=True
     )
@@ -200,6 +202,8 @@ class InvoiceDisplaySerializer(serializers.ModelSerializer):
     appid = serializers.CharField(
         source="project.appid", read_only=True, allow_null=True
     )
+    # currency FK 的 PK 即法币 code，直接取 currency_id 输出字符串，省一次 join。
+    currency = serializers.CharField(source="currency_id", read_only=True)
     crypto = serializers.CharField(
         source="crypto.symbol", read_only=True, allow_null=True
     )

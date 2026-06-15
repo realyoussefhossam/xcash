@@ -179,7 +179,7 @@ const signature = crypto
 |------|------|------|------|
 | `out_no` | string | 是 | 商户订单号，最长 32 位，同一项目内唯一 |
 | `title` | string | 是 | 账单收款标题，最长 32 位 |
-| `currency` | string | 是 | 计价币种，可为法币（如 `USD`、`CNY`）或已启用的加密货币（如 `USDT`） |
+| `currency` | string | 是 | 计价法币代码（如 `USD`、`CNY`），必须是系统支持的法币；收款加密货币由 `methods` 指定 |
 | `amount` | string | 是 | 计价金额，范围 `0.00000001` 到 `1000000` |
 | `duration` | integer | 否 | 有效期分钟数，范围 `10` 到 `30`，默认 `10` |
 | `methods` | object | 否 | 限定账单收款方式，格式 `{"币种": ["链码"]}` |
@@ -192,7 +192,7 @@ const signature = crypto
 
 - 不传 `methods`：系统按项目配置生成全部可用组合。
 - 传入 `methods`：必须是系统生成组合的子集，否则返回无可用账单收款方式。
-- 当 `currency` 本身是加密货币时，最终 `methods` 会自动收敛到该币种。
+- `currency` 仅决定 `amount` 的计价单位（法币），与买家实际支付的加密货币解耦——后者完全由 `methods` 决定。若想固定收某种稳定币（如 `USDT`），用 `currency: "USD"` 计价并在 `methods` 中限定 `USDT` 即可（稳定币对 USD 按 1:1 锚定）。
 - `crypto` symbol 使用大写，`chain` code 使用上方表格中的小写 code。
 
 ### 智能合约收款
@@ -221,13 +221,13 @@ const signature = crypto
 }
 ```
 
-指定加密货币计价示例：
+固定只收某种稳定币示例（USD 计价 + `methods` 限定 USDT，稳定币 1:1 锚定 USD，等价于「精确收 100 USDT」）：
 
 ```json
 {
   "out_no": "order-20260602-002",
   "title": "Contract Invoice",
-  "currency": "USDT",
+  "currency": "USD",
   "amount": "100",
   "duration": 15,
   "methods": {

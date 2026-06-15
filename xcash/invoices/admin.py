@@ -212,7 +212,8 @@ class InvoiceAdmin(ReadOnlyModelAdmin):
     )
     def currency_amount_display(self, instance: Invoice):
         # 后台金额展示统一去掉末尾无意义的 0，避免高精度 Decimal 显得冗长。
-        return f"{format_decimal_stripped(instance.amount)} {instance.currency}"
+        # currency 为 Fiat FK，取 currency_id 直接拿法币 code，避免 __str__ 带上 icon。
+        return f"{format_decimal_stripped(instance.amount)} {instance.currency_id}"
 
     @display(
         description=_("加密货币数量"),  # noqa

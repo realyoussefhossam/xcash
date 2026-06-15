@@ -124,7 +124,7 @@ class EpaySubmitService:
             invoice.project_id != order.merchant.project_id
             or invoice.out_no != params["out_trade_no"]
             or invoice.title != params["name"]
-            or invoice.currency != params["currency"]
+            or invoice.currency_id != params["currency"]
             or invoice.amount != params["money"]
             or invoice.notify_url != params["notify_url"]
             or invoice.return_url != params["return_url"]
@@ -151,7 +151,6 @@ class EpaySubmitService:
             methods = InvoiceService.finalize_methods(
                 project=project,
                 requested={},
-                currency=params["currency"],
             )
         except APIError as exc:
             raise EpaySubmitError("no available payment methods") from exc
@@ -165,7 +164,7 @@ class EpaySubmitService:
                     project=project,
                     out_no=params["out_trade_no"],
                     title=params["name"],
-                    currency=params["currency"],
+                    currency_id=params["currency"],
                     amount=params["money"],
                     methods=methods,
                     notify_url=params["notify_url"],

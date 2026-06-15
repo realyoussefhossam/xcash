@@ -24,7 +24,6 @@ from chains.models import VaultSlot
 from chains.models import VaultSlotUsage
 from common.fields import AddressField
 from common.fields import SysNoField
-from currencies.service import CryptoService
 from currencies.service import FiatService
 from projects.models import InvoiceReceivingMode
 from projects.models import Project
@@ -127,7 +126,12 @@ class Invoice(models.Model):
         db_index=True,
     )
     title = models.CharField(_("标题"))
-    currency = models.CharField(_("计价货币"))
+    # 计价货币恒为法币：FK 到 Fiat 在 DB 层强约束合法币种；收款加密货币由 methods 决定，计价与结算彻底解耦。
+    currency = models.ForeignKey(
+        "currencies.Fiat",
+        on_delete=models.PROTECT,
+        verbose_name=_("计价货币"),
+    )
     amount = models.DecimalField(
         verbose_name=_("金额"),
         max_digits=32,
@@ -234,11 +238,6 @@ class Invoice(models.Model):
 
     def __str__(self):
         return f"{self.sys_no}"
-
-    @property
-    def is_crypto_fixed(self):
-        """是否为固定加密货币模式"""
-        return CryptoService.exists(self.currency)
 
     @classmethod
     def available_methods(
@@ -425,13 +424,10 @@ class Invoice(models.Model):
         ):
             return True
 
-        if self.is_crypto_fixed:
-            crypto_amount = self.amount
-        else:
-            fiat = FiatService.get_by_code(self.currency)
-            crypto_amount = FiatService.to_crypto(
-                fiat=fiat, crypto=crypto, amount=self.amount
-            )
+        # currency 已是 Fiat 实例，直接按当前汇率把计价金额换算成目标加密货币数量。
+        crypto_amount = FiatService.to_crypto(
+            fiat=self.currency, crypto=crypto, amount=self.amount
+        )
 
         detail = (
             f"project={self.project_id}, crypto={crypto.symbol}, chain={chain.code}"

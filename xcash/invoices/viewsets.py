@@ -132,7 +132,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 project=Project.retrieve(appid=request.headers.get(APPID_HEADER)),
                 out_no=validated_data["out_no"],
                 title=validated_data["title"],
-                currency=validated_data["currency"],
+                currency_id=validated_data["currency"],
                 amount=validated_data["amount"],
                 methods=validated_data["methods"],
                 notify_url=validated_data.get("notify_url", ""),

@@ -6,6 +6,8 @@ from invoices.models import Invoice
 
 class SaasInvoiceDetailSerializer(serializers.ModelSerializer):
     tx = TransferSerializer(source="transfer", read_only=True)
+    # currency FK 的 PK 即法币 code，直接取 currency_id 输出字符串，省一次 join。
+    currency = serializers.CharField(source="currency_id", read_only=True)
     crypto = serializers.SlugRelatedField(slug_field="symbol", read_only=True)
     chain = serializers.SlugRelatedField(slug_field="code", read_only=True)
 

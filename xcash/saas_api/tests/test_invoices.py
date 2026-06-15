@@ -24,7 +24,7 @@ class SaasInvoiceDetailSerializerTests(SimpleTestCase):
             sys_no="INV-test",
             out_no="saas-detail-order",
             title="SaaS detail",
-            currency="USD",
+            currency_id="USD",
             amount=Decimal("10"),
             methods={},
             expires_at=timezone.now(),
