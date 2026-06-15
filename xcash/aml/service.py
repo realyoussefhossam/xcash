@@ -149,6 +149,15 @@ class AmlScreeningService:
     @classmethod
     def _screen_target(cls, *, target: Invoice | Deposit, target_type: str, worth):
         transfer = target.transfer
+        if transfer.has_unknown_source_address():
+            logger.info(
+                "aml_screening.source_address_unknown",
+                target_type=target_type,
+                target_id=target.pk,
+                transfer_id=transfer.pk,
+            )
+            return
+
         provider = cls._select_provider()
         if provider is None:
             logger.info(

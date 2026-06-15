@@ -16,6 +16,7 @@ from django.utils import timezone
 from eth_utils import keccak
 from web3 import Web3
 
+from chains.constants import EVM_UNKNOWN_SOURCE_ADDRESS
 from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
@@ -42,6 +43,7 @@ from evm.intents import DEFAULT_VAULT_SLOT_COLLECT_GAS
 from evm.intents import DEFAULT_VAULT_SLOT_DEPLOY_GAS
 from evm.intents import build_vault_slot_collect_intent
 from evm.intents import build_vault_slot_deploy_intent
+from evm.internal_tx.vault_slot_deploy import XCASH_VAULT_SLOT_DEPLOYED_TOPIC0
 from evm.models import EvmTxTask
 from evm.tests._fixtures import make_evm_chain
 from invoices.models import Invoice
@@ -553,6 +555,131 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertTrue(slot.is_deployed)
         notify_gas_fee.assert_called_once()
         self.assertEqual(notify_gas_fee.call_args.kwargs["tx_task"].pk, task.pk)
+
+    @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
+    def test_confirmed_deposit_deploy_initial_native_balance_creates_confirmed_deposit(
+        self,
+        notify_gas_fee,
+    ):
+        from evm.poller import EvmTaskPoller
+
+        slot = self._create_vault_slot()
+        self._ensure_native_crypto_mapping()
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "ba" * 32
+        timestamp = int(timezone.now().timestamp())
+        initial_value = Decimal(15 * 10**17)
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
+
+        receipt = self._deploy_receipt(
+            slot=slot,
+            initial_native_balance=int(initial_value),
+        )
+        evm_task = task.evm_task
+
+        with (
+            patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            patch("chains.service.TransferService.enqueue_processing"),
+            patch("chains.vault_slot_balances.refresh_vault_slot_balance_for_transfer"),
+            patch("deposits.service.WebhookService.create_event"),
+            patch("deposits.service.screen_deposit_aml.delay"),
+            patch("deposits.service.send_saas_callback"),
+        ):
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            w3_mock.return_value.eth.get_block.return_value = {
+                "timestamp": timestamp,
+            }
+            processed = EvmTaskPoller.process_succeeded_receipt(
+                evm_task=evm_task,
+                tx_hash=tx_hash,
+                receipt=receipt,
+            )
+
+        self.assertTrue(processed)
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.SUCCEEDED)
+        self.assertTrue(slot.is_deployed)
+        self.assertTrue(slot.has_received)
+
+        transfer = Transfer.objects.get(hash=tx_hash)
+        self.assertEqual(transfer.event_index, 1)
+        self.assertEqual(transfer.from_address, EVM_UNKNOWN_SOURCE_ADDRESS)
+        self.assertEqual(transfer.to_address, slot.address)
+        self.assertEqual(transfer.crypto, self.chain.native_coin)
+        self.assertEqual(transfer.value, initial_value)
+        self.assertEqual(transfer.amount, Decimal("1.5"))
+        self.assertEqual(transfer.type, TransferType.Deposit)
+        self.assertEqual(transfer.status, TransferStatus.CONFIRMED)
+        self.assertIsNotNone(transfer.processed_at)
+
+        deposit = Deposit.objects.get(transfer=transfer)
+        self.assertEqual(deposit.customer, self.customer)
+        notify_gas_fee.assert_called_once()
+
+    @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
+    def test_confirmed_invoice_deploy_initial_native_balance_is_not_matched(
+        self,
+        notify_gas_fee,
+    ):
+        from evm.poller import EvmTaskPoller
+
+        slot = VaultSlot.objects.create(
+            project=self.project,
+            usage=VaultSlotUsage.INVOICE,
+            invoice_index=0,
+            chain=self.chain,
+            address=Web3.to_checksum_address(
+                "0x0000000000000000000000000000000000000a12"
+            ),
+            salt=b"\x12" * 32,
+        )
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "bb" * 32
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
+
+        receipt = self._deploy_receipt(
+            slot=slot,
+            initial_native_balance=10**18,
+        )
+        evm_task = task.evm_task
+
+        with patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock:
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            w3_mock.return_value.eth.get_block.side_effect = AssertionError(
+                "invoice initialNativeBalance must not be inspected"
+            )
+            processed = EvmTaskPoller.process_succeeded_receipt(
+                evm_task=evm_task,
+                tx_hash=tx_hash,
+                receipt=receipt,
+            )
+
+        self.assertTrue(processed)
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.SUCCEEDED)
+        self.assertTrue(slot.is_deployed)
+        self.assertFalse(Transfer.objects.filter(hash=tx_hash).exists())
+        notify_gas_fee.assert_called_once()
 
     @patch("evm.internal_tx.processor.notify_vault_slot_collect_gas_fee")
     @patch("evm.internal_tx.processor.refresh_vault_slot_balance_for_collect_task")
@@ -1768,6 +1895,54 @@ class VaultSlotAddressSchedulingTests(TestCase):
             ),
             salt=b"\x11" * 32,
         )
+
+    def _ensure_native_crypto_mapping(self) -> None:
+        CryptoOnChain.objects.update_or_create(
+            crypto=self.chain.native_coin,
+            chain=self.chain,
+            defaults={
+                "address": "",
+                "decimals": 18,
+                "active": True,
+            },
+        )
+
+    def _deploy_receipt(
+        self,
+        *,
+        slot: VaultSlot,
+        initial_native_balance: int,
+    ) -> dict:
+        return {
+            "status": 1,
+            "blockNumber": 1,
+            "blockHash": "0x" + "cd" * 32,
+            "logs": [
+                {
+                    "address": Web3.to_checksum_address(
+                        "0x0000000000000000000000000000000000000bad"
+                    ),
+                    "topics": [],
+                    "data": "0x",
+                    "logIndex": 10,
+                },
+                {
+                    "address": self.chain.vault_slot_contract_addresses().factory,
+                    "topics": [
+                        XCASH_VAULT_SLOT_DEPLOYED_TOPIC0,
+                        self._address_topic(slot.address),
+                        self._address_topic(self.project.evm_vault),
+                        "0x" + bytes(slot.salt).hex(),
+                    ],
+                    "data": "0x" + initial_native_balance.to_bytes(32, "big").hex(),
+                    "logIndex": 11,
+                },
+            ],
+        }
+
+    @staticmethod
+    def _address_topic(address: str) -> str:
+        return "0x" + "0" * 24 + Web3.to_checksum_address(address)[2:].lower()
 
     @staticmethod
     def _mark_vault_slot_deployed(slot: VaultSlot) -> None:

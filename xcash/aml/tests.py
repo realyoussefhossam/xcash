@@ -20,6 +20,7 @@ from django.test import TestCase
 from django.test import override_settings
 from django.utils import timezone
 
+from chains.constants import EVM_UNKNOWN_SOURCE_ADDRESS
 from chains.constants import ChainCode
 from chains.models import Chain
 from chains.models import ChainType
@@ -421,6 +422,21 @@ class AmlScreeningServiceTests(AmlTestMixin, TestCase):
     @patch("aml.service.QuicknodeMistTrackClient.address_risk_score")
     def test_deposit_below_threshold_does_not_create_assessment(self, score):
         deposit = self.make_deposit(worth=Decimal("99.99"))
+
+        AmlScreeningService.screen_deposit(deposit.pk)
+
+        score.assert_not_called()
+        self.assertFalse(RiskAssessment.objects.filter(deposit=deposit).exists())
+        deposit.refresh_from_db()
+        self.assertIsNone(deposit.risk_level)
+        self.assertIsNone(deposit.risk_score)
+
+    @patch("aml.service.QuicknodeMistTrackClient.address_risk_score")
+    def test_deposit_unknown_source_address_does_not_create_assessment(self, score):
+        deposit = self.make_deposit(worth=Decimal("500"))
+        Transfer.objects.filter(pk=self.transfer.pk).update(
+            from_address=EVM_UNKNOWN_SOURCE_ADDRESS
+        )
 
         AmlScreeningService.screen_deposit(deposit.pk)
 

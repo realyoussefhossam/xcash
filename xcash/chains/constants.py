@@ -26,6 +26,9 @@ class ChainType(models.TextChoices):
     TRON = "tron", "Tron"
 
 
+EVM_UNKNOWN_SOURCE_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
 @dataclass(frozen=True)
 class ChainSpec:
     type: str

@@ -11,7 +11,10 @@ contract XcashVaultSlotFactory {
     error ZeroVault();
 
     event XcashVaultSlotDeployed(
-        address indexed vaultSlot, address indexed vault, bytes32 indexed salt
+        address indexed vaultSlot,
+        address indexed vault,
+        bytes32 indexed salt,
+        uint256 initialNativeBalance
     );
 
     address public immutable vaultSlotImplementation;
@@ -31,6 +34,6 @@ contract XcashVaultSlotFactory {
         vaultSlot = Clones.cloneDeterministicWithImmutableArgs(
             vaultSlotImplementation, abi.encodePacked(vault), salt
         );
-        emit XcashVaultSlotDeployed(vaultSlot, vault, salt);
+        emit XcashVaultSlotDeployed(vaultSlot, vault, salt, vaultSlot.balance);
     }
 }

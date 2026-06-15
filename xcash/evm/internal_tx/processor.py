@@ -14,6 +14,8 @@ from chains.vault_slots import mark_deployed_by_task
 from chains.vault_slots import mark_deployed_if_on_chain_for_task
 from evm.internal_tx.routing import UnknownInternalBroadcastError
 from evm.internal_tx.routing import get_matcher
+from evm.internal_tx.vault_slot_deploy import confirm_initial_native_balance_transfer
+from evm.internal_tx.vault_slot_deploy import process_vault_slot_initial_native_balance
 from evm.saas_gas_billing import notify_vault_slot_collect_gas_fee
 from evm.saas_gas_billing import notify_vault_slot_deploy_gas_fee
 
@@ -53,11 +55,29 @@ def _finalize_failed(*, tx_task: TxTask) -> None:
             mark_deployed_if_on_chain_for_task(tx_task)
 
 
-def _finalize_deploy_success(*, chain: Chain, tx_hash: str, tx_task: TxTask) -> bool:
-    updated = TxTask.mark_finalized_success(chain=chain, tx_hash=tx_hash)
+def _finalize_deploy_success(
+    *,
+    chain: Chain,
+    tx_hash: str,
+    tx_task: TxTask,
+    receipt: dict,
+) -> bool:
+    transfer = None
+    updated = False
+    with db_transaction.atomic():
+        transfer = process_vault_slot_initial_native_balance(
+            chain=chain,
+            tx_task=tx_task,
+            tx_hash=tx_hash,
+            receipt=receipt,
+        )
+        updated = TxTask.mark_finalized_success(chain=chain, tx_hash=tx_hash)
+        if updated:
+            tx_task.refresh_from_db()
+            mark_deployed_by_task(tx_task)
+        confirm_initial_native_balance_transfer(transfer)
+
     if updated:
-        tx_task.refresh_from_db()
-        mark_deployed_by_task(tx_task)
         notify_vault_slot_deploy_gas_fee(tx_task=tx_task)
     return True
 
@@ -133,6 +153,7 @@ def process_internal_transaction(
             chain=chain,
             tx_hash=tx_hash,
             tx_task=tx_task,
+            receipt=receipt,
         )
     if tx_type == TxTaskType.VaultSlotCollect:
         return _finalize_collect_success(

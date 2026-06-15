@@ -17,6 +17,7 @@ from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
 from chains.constants import CHAIN_SPECS
+from chains.constants import EVM_UNKNOWN_SOURCE_ADDRESS
 from chains.constants import NATIVE_COIN_COINGECKO_IDS
 from chains.constants import TRON_MAINNET_BASE_URL
 from chains.constants import TRON_TESTNET_BASE_URL
@@ -1393,6 +1394,12 @@ class Transfer(models.Model):
         # 避免系统归集/部署等主动交易污染 Invoice / Deposit 入账状态。
         tx_task = TxTask.resolve_by_hash(chain=self.chain, tx_hash=self.hash)
         if tx_task is not None:
+            if self.is_vault_slot_initial_native_balance_observation(tx_task):
+                from deposits.service import DepositService
+
+                DepositService.try_match_deposit_transfer(self)
+                self._mark_processed()
+                return
             logger.warning(
                 "Transfer 命中内部 TxTask，跳过外部收款匹配",
                 transfer_id=self.pk,
@@ -1422,6 +1429,35 @@ class Transfer(models.Model):
     def _mark_processed(self) -> None:
         self.processed_at = timezone.now()
         Transfer.objects.filter(pk=self.pk).update(processed_at=self.processed_at)
+
+    def has_unknown_source_address(self) -> bool:
+        if self.chain.type != ChainType.EVM:
+            return False
+        try:
+            return Web3.to_checksum_address(self.from_address) == Web3.to_checksum_address(
+                EVM_UNKNOWN_SOURCE_ADDRESS
+            )
+        except ValueError:
+            return False
+
+    def is_vault_slot_initial_native_balance_observation(
+        self,
+        tx_task: TxTask,
+    ) -> bool:
+        if self.chain.type != ChainType.EVM:
+            return False
+        if tx_task.tx_type != TxTaskType.VaultSlotDeploy:
+            return False
+        if self.crypto_id != self.chain.native_coin.pk:
+            return False
+        if not self.has_unknown_source_address():
+            return False
+        return VaultSlot.objects.filter(
+            chain=self.chain,
+            deploy_tx_task=tx_task,
+            usage=VaultSlotUsage.DEPOSIT,
+            address__iexact=self.to_address,
+        ).exists()
 
     @db_transaction.atomic
     def confirm(self):

@@ -11,7 +11,10 @@ contract XcashVaultSlotFactoryTest is Test {
     event XcashNativeReceived(address indexed from, uint256 amount);
     event XcashCollected(address indexed token, uint256 amount);
     event XcashVaultSlotDeployed(
-        address indexed vaultSlot, address indexed vault, bytes32 indexed salt
+        address indexed vaultSlot,
+        address indexed vault,
+        bytes32 indexed salt,
+        uint256 initialNativeBalance
     );
 
     address payable internal vault = payable(address(0xBEEF));
@@ -46,7 +49,7 @@ contract XcashVaultSlotFactoryTest is Test {
         address predicted = _predict(vault, salt);
 
         vm.expectEmit(true, true, true, true, address(factory));
-        emit XcashVaultSlotDeployed(predicted, vault, salt);
+        emit XcashVaultSlotDeployed(predicted, vault, salt, 0);
 
         address deployed = factory.deployVaultSlot(vault, salt);
 
@@ -115,6 +118,8 @@ contract XcashVaultSlotFactoryTest is Test {
         address predicted = _predict(vault, salt);
         vm.deal(predicted, 1.5 ether);
 
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit XcashVaultSlotDeployed(predicted, vault, salt, 1.5 ether);
         address deployed = factory.deployVaultSlot(vault, salt);
 
         vm.expectEmit(true, true, true, true, deployed);
