@@ -230,7 +230,7 @@ class Invoice(models.Model):
                 name="uniq_invoice_project_out_no",
             ),
             models.UniqueConstraint(
-                fields=("project", "crypto", "chain", "pay_address", "pay_amount"),
+                fields=("crypto", "chain", "pay_address", "pay_amount"),
                 condition=Q(status=InvoiceStatus.WAITING),
                 name="uniq_invoice_active_payment",
             ),
@@ -265,7 +265,6 @@ class Invoice(models.Model):
         # 仍锁着该 (pay_address, pay_amount) 组合，而这里若漏判就会让分配陷入
         # IntegrityError 重试死循环。
         return Invoice.objects.filter(
-            project=self.project,
             crypto=crypto,
             chain=chain,
             pay_address=pay_address,
@@ -273,14 +272,13 @@ class Invoice(models.Model):
             status=InvoiceStatus.WAITING,
         ).exists()
 
-    def get_vault_slot(
+    def _allocate_contract_slot(
         self,
-        *,
         crypto: "Crypto",
         chain: "Chain",
         crypto_amount: Decimal,
-    ):
-        """返回本次智能合约收款可使用的 INVOICE VaultSlot。"""
+    ) -> tuple[str, Decimal]:
+        """智能合约收款：选择或创建本次账单可使用的 INVOICE VaultSlot。"""
         vault_address = self.project.vault_address_for_chain_type(chain.type)
         if not vault_address:
             raise self.InvoiceAllocationError(
@@ -313,7 +311,7 @@ class Invoice(models.Model):
                     db_transaction.on_commit(
                         lambda slot_pk=slot.pk: VaultSlot.schedule_deploy(slot_pk)
                     )
-                return slot
+                return slot.address, crypto_amount
 
         latest_index = reusable_slots.aggregate(max_index=Max("invoice_index"))[
             "max_index"
@@ -328,24 +326,11 @@ class Invoice(models.Model):
             )
         except RuntimeError as exc:
             raise self.InvoiceAllocationError(str(exc)) from exc
-        return VaultSlot.objects.get(
+        slot = VaultSlot.objects.get(
             project=self.project,
             chain=chain,
             usage=VaultSlotUsage.INVOICE,
             invoice_index=invoice_index,
-        )
-
-    def _allocate_contract_slot(
-        self,
-        crypto: "Crypto",
-        chain: "Chain",
-        crypto_amount: Decimal,
-    ) -> tuple[str, Decimal]:
-        """智能合约收款：按 XcashVaultSlotFactory 获取本次账单使用的合约地址。"""
-        slot = self.get_vault_slot(
-            crypto=crypto,
-            chain=chain,
-            crypto_amount=crypto_amount,
         )
         return slot.address, crypto_amount
 
@@ -466,6 +451,10 @@ class Invoice(models.Model):
             return self.crypto.address(self.chain)
         return None
 
+    def calculate_worth_usd(self) -> Decimal:
+        """账单 worth 表达计价法币面额折 USD 的价值，不随支付币种报价漂移。"""
+        return self.amount * self.currency.fiat_price(FiatService.get_by_code("USD"))
+
     def _set_current_payment(
         self,
         *,
@@ -476,25 +465,12 @@ class Invoice(models.Model):
         started_at=None,
     ) -> None:
         # Invoice 当前字段就是唯一支付指引；切换支付方式时直接覆盖旧指引。
-        try:
-            worth = crypto.to_fiat(
-                fiat=FiatService.get_by_code("USD"),
-                amount=pay_amount,
-            )
-        except (KeyError, TypeError):
-            # 价格数据不完整时（如新上线币种尚未同步 USD 价格），
-            # 降级为 0 而非中断整个匹配/选方式流程。
-            logger.warning(
-                "crypto price missing for USD",
-                crypto=crypto.pk,
-            )
-            worth = Decimal("0")
         updated_values = {
             "crypto_id": crypto.pk,
             "chain_id": chain.pk,
             "pay_address": pay_address,
             "pay_amount": pay_amount,
-            "worth": worth,
+            "worth": self.calculate_worth_usd(),
             "updated_at": timezone.now(),
         }
         if started_at is not None:

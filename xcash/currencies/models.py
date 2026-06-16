@@ -344,6 +344,8 @@ class Fiat(models.Model):
         return f"{self.code} {self.icon}"
 
     def fiat_price(self, fiat: Fiat) -> Decimal:
+        if self.code == fiat.code:
+            return Decimal("1")
         usdt = Crypto.objects.get(symbol="USDT")
         price0 = usdt.price(self.code)
         price1 = usdt.price(fiat.code)

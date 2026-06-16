@@ -10,6 +10,7 @@ from django.db import IntegrityError
 from django.db import close_old_connections
 from django.db import connection
 from django.db import connections
+from django.db import transaction as db_transaction
 from django.test import TestCase
 from django.test import TransactionTestCase
 from django.test import override_settings
@@ -295,6 +296,50 @@ class InvoicePaymentSelectionTests(TestCase):
         # first 的组合保持不变，未被 second 抢占。
         first.refresh_from_db()
         self.assertEqual((first.pay_address, first.pay_amount), first_combo)
+
+    def test_active_payment_combo_is_globally_unique_across_projects(self):
+        first = self.create_invoice(out_no="global-combo-first")
+        first.select_method(self.crypto, self.chain_a)
+        first.refresh_from_db()
+        other_project = Project.objects.create(
+            name="OtherSlotProject",
+            evm_vault=Web3.to_checksum_address(
+                "0x00000000000000000000000000000000000000A2"
+            ),
+            evm_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+            tron_invoice_receiving_mode=InvoiceReceivingMode.VaultSlot,
+        )
+
+        with self.assertRaises(IntegrityError), db_transaction.atomic():
+            Invoice.objects.create(
+                project=other_project,
+                out_no="global-combo-second",
+                title="Other slot invoice",
+                currency_id="USD",
+                amount=Decimal("10"),
+                methods={"USDT": [ChainCode.Ethereum]},
+                crypto=self.crypto,
+                chain=self.chain_a,
+                pay_address=first.pay_address,
+                pay_amount=first.pay_amount,
+                expires_at=timezone.now() + timedelta(minutes=10),
+            )
+
+    def test_select_method_keeps_worth_based_on_invoice_fiat_amount(self):
+        Fiat.objects.get_or_create(code="CNY")
+        self.crypto.prices["CNY"] = "7"
+        self.crypto.save(update_fields=["prices"])
+        invoice = self.create_invoice(
+            out_no="fiat-worth-after-select",
+            currency_id="CNY",
+            amount=Decimal("10"),
+        )
+
+        invoice.select_method(self.crypto, self.chain_a)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.pay_amount, Decimal("1.43"))
+        self.assertEqual(invoice.worth, Decimal("1.428571"))
 
     def test_check_expired_marks_waiting_invoice_expired(self):
         invoice = self.create_invoice(out_no="payment-expire")
@@ -1506,8 +1551,8 @@ class InvoiceCreatePermissionCheckTests(TestCase):
         )
 
     @patch("invoices.viewsets.check_saas_permission")
-    def test_select_method_checks_invoice_account_status(self, mock_check):
-        """支付页选择支付方式时只复检 invoice 账号状态。"""
+    def test_select_method_does_not_recheck_invoice_account_status(self, mock_check):
+        """支付页选择支付方式不复检 SaaS 权限，已创建账单应继续可付款。"""
         invoice = Mock(
             sys_no="inv-0002",
             status=InvoiceStatus.WAITING,
@@ -1547,10 +1592,8 @@ class InvoiceCreatePermissionCheckTests(TestCase):
                 sys_no="inv-0002",
             )
 
-        mock_check.assert_called_once_with(
-            appid=self.project.appid,
-            action="invoice",
-        )
+        mock_check.assert_not_called()
+        invoice.select_method.assert_called_once_with(crypto, chain)
         cache_mock.delete.assert_called_once_with(
             invoice_public_cache_key(invoice.sys_no)
         )
@@ -1757,7 +1800,7 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
         self.assertEqual(slot.address, pay_address)
         self.assertEqual(pay_amount, Decimal("10"))
 
-    def test_contract_slot_selection_returns_invoice_vault_slot(self):
+    def test_contract_slot_selection_returns_invoice_vault_slot_payment(self):
         vault_address = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000F12"
         )
@@ -1768,15 +1811,17 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
         )
 
         with self.captureOnCommitCallbacks(execute=False):
-            slot = invoice.get_vault_slot(
-                crypto=self.crypto,
-                chain=self.chain,
-                crypto_amount=Decimal("10"),
+            pay_address, pay_amount = invoice._allocate_contract_slot(
+                self.crypto,
+                self.chain,
+                Decimal("10"),
             )
 
+        slot = VaultSlot.objects.get(address=pay_address, chain=self.chain)
         self.assertEqual(slot.project, self.project)
         self.assertEqual(slot.chain, self.chain)
         self.assertEqual(slot.usage, VaultSlotUsage.INVOICE)
+        self.assertEqual(pay_amount, Decimal("10"))
 
     def test_reusing_undeployed_contract_slot_does_not_schedule_deploy_for_token(self):
         vault_address = Web3.to_checksum_address(
@@ -1800,13 +1845,14 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             patch.object(VaultSlot, "schedule_deploy") as schedule_deploy,
             self.captureOnCommitCallbacks(execute=True),
         ):
-            selected = invoice.get_vault_slot(
-                crypto=self.crypto,
-                chain=self.chain,
-                crypto_amount=Decimal("10"),
+            selected_address, selected_amount = invoice._allocate_contract_slot(
+                self.crypto,
+                self.chain,
+                Decimal("10"),
             )
 
-        self.assertEqual(selected.pk, slot.pk)
+        self.assertEqual(selected_address, slot.address)
+        self.assertEqual(selected_amount, Decimal("10"))
         schedule_deploy.assert_not_called()
 
     def test_reusing_undeployed_contract_slot_schedules_deploy_for_native(self):
@@ -1831,13 +1877,14 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             patch.object(VaultSlot, "schedule_deploy") as schedule_deploy,
             self.captureOnCommitCallbacks(execute=True),
         ):
-            selected = invoice.get_vault_slot(
-                crypto=self.chain.native_coin,
-                chain=self.chain,
-                crypto_amount=Decimal("10"),
+            selected_address, selected_amount = invoice._allocate_contract_slot(
+                self.chain.native_coin,
+                self.chain,
+                Decimal("10"),
             )
 
-        self.assertEqual(selected.pk, slot.pk)
+        self.assertEqual(selected_address, slot.address)
+        self.assertEqual(selected_amount, Decimal("10"))
         schedule_deploy.assert_called_once_with(slot.pk)
         self.assertEqual(slot.invoice_index, 0)
         self.assertIsNone(slot.customer_id)
@@ -2132,9 +2179,12 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
         with (
             patch.object(
                 invoice,
-                "get_vault_slot",
-                side_effect=[slot0, slot1],
-            ) as slot_selector,
+                "_allocate_contract_slot",
+                side_effect=[
+                    (slot0.address, Decimal("10")),
+                    (slot1.address, Decimal("10")),
+                ],
+            ) as allocate_slot,
             patch.object(
                 invoice,
                 "_set_current_payment",
@@ -2144,7 +2194,7 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             invoice.select_method(self.crypto, self.chain)
 
         invoice.refresh_from_db()
-        self.assertEqual(slot_selector.call_count, 2)
+        self.assertEqual(allocate_slot.call_count, 2)
         self.assertEqual(update_mock.call_count, 2)
         self.assertEqual(invoice.pay_address, slot1.address)
 

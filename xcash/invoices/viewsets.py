@@ -116,7 +116,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         # SaaS 模式：Invoice 收款这里只校验账号状态。
         check_saas_permission(
-            appid=request.headers.get(APPID_HEADER),
+            appid=request.headers.get(APPID_HEADER),  # noqa
             action="invoice",
         )
 
@@ -129,7 +129,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         try:
             invoice = Invoice.objects.create(
-                project=Project.retrieve(appid=request.headers.get(APPID_HEADER)),
+                project=Project.retrieve(
+                    appid=request.headers.get(APPID_HEADER)  # noqa
+                ),
                 out_no=validated_data["out_no"],
                 title=validated_data["title"],
                 currency_id=validated_data["currency"],
@@ -180,11 +182,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         if validated_data["chain"] not in invoice.methods[validated_data["crypto"]]:
             raise APIError(ErrorCode.INVALID_CHAIN)
-
-        check_saas_permission(
-            appid=invoice.project.appid,
-            action="invoice",
-        )
 
         try:
             crypto = CryptoService.get_by_symbol(validated_data["crypto"])

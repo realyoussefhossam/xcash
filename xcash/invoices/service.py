@@ -27,7 +27,6 @@ from common.saas_callback import SaasCallback
 from common.saas_callback import send_saas_callback
 from common.utils.math import format_decimal_stripped
 from currencies.service import CryptoService
-from currencies.service import FiatService
 from webhooks.service import WebhookService
 
 from .exceptions import InvoiceStatusError
@@ -139,13 +138,9 @@ class InvoiceService:
     @staticmethod
     def refresh_initial_worth(invoice: Invoice) -> None:
         """在账单创建后立即固化基础 worth，避免继续依赖隐式 post_save signal。"""
-        usd = FiatService.get_by_code("USD")
-
-        if invoice.crypto and invoice.pay_amount:
-            worth = invoice.crypto.to_fiat(fiat=usd, amount=invoice.pay_amount)
-        else:
-            # currency 已是 Fiat 实例：尚未选定支付币种时，按计价法币直接折算 USD 价值。
-            worth = invoice.amount * invoice.currency.fiat_price(usd)
+        # worth 表达账单计价法币面额的 USD 价值；支付币种只决定链上支付指引，
+        # 不再让 pay_amount 的实时加密货币报价反向改变账单基础价值。
+        worth = invoice.calculate_worth_usd()
 
         # worth 只更新自身字段，直接 update 可避免把整行实例再次写回。
         Invoice.objects.filter(pk=invoice.pk).update(
