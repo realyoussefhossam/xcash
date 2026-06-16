@@ -46,18 +46,28 @@ contract DeployXcashVaultSlot is Script {
             require(predictedFactory == EXPECTED_FACTORY, "factory address drift");
         }
 
+        // 幂等部署：链上已有代码的地址跳过，只部署缺失的合约，避免对已存在地址
+        // 再次 CREATE2 触发 CreateCollision revert。典型场景：只改 Factory 时
+        // VaultSlot 实现地址未变、已存在，则只部署新 Factory。
         vm.startBroadcast();
-        XcashVaultSlot implementation = new XcashVaultSlot{salt: DEPLOY_SALT}();
-        require(
-            address(implementation) == predictedImplementation, "implementation deploy mismatch"
-        );
+        if (predictedImplementation.code.length == 0) {
+            XcashVaultSlot implementation = new XcashVaultSlot{salt: DEPLOY_SALT}();
+            require(
+                address(implementation) == predictedImplementation, "implementation deploy mismatch"
+            );
+            console.log("Deployed implementation:", address(implementation));
+        } else {
+            console.log("Implementation already on-chain, skip:", predictedImplementation);
+        }
 
-        XcashVaultSlotFactory factory =
-            new XcashVaultSlotFactory{salt: DEPLOY_SALT}(address(implementation));
-        require(address(factory) == predictedFactory, "factory deploy mismatch");
+        if (predictedFactory.code.length == 0) {
+            XcashVaultSlotFactory factory =
+                new XcashVaultSlotFactory{salt: DEPLOY_SALT}(predictedImplementation);
+            require(address(factory) == predictedFactory, "factory deploy mismatch");
+            console.log("Deployed factory: ", address(factory));
+        } else {
+            console.log("Factory already on-chain, skip: ", predictedFactory);
+        }
         vm.stopBroadcast();
-
-        console.log("Deployed implementation:", address(implementation));
-        console.log("Deployed factory: ", address(factory));
     }
 }
