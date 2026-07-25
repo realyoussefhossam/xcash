@@ -655,8 +655,17 @@ class VaultSlotAddressSchedulingTests(TestCase):
         notify_gas_fee.assert_not_called()
 
     @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
-    def test_deploy_without_linked_slot_keeps_task_submitted(self, notify_gas_fee):
-        """部署任务缺少关联槽位属于数据不确定，不能直接标成部署成功。"""
+    def test_deploy_without_linked_slot_finalizes_instead_of_polling_forever(
+        self,
+        notify_gas_fee,
+    ):
+        """关联槽位已不存在时必须终局，不能与"RPC 查不动"一样一直等下轮。
+
+        槽位缺失（项目/客户/链级联删除，或 deploy_tx_task 已改指新任务）靠重试永远
+        恢复不了：若保持 SUBMITTED，poller 每轮都会重复拉 tx + receipt，并长期占住
+        一个 EVM_PIPELINE_DEPTH 名额。既无 is_deployed 要维护也无项目可计费，
+        直接成功终局。
+        """
         from evm.poller import EvmTaskPoller
 
         tx_hash = "0x" + "ae" * 32
@@ -693,9 +702,10 @@ class VaultSlotAddressSchedulingTests(TestCase):
                 receipt={"status": 1, "blockNumber": 1},
             )
 
-        self.assertFalse(processed)
+        self.assertTrue(processed)
         task.refresh_from_db()
-        self.assertEqual(task.status, TxTaskStatus.SUBMITTED)
+        self.assertEqual(task.status, TxTaskStatus.SUCCEEDED)
+        # 没有槽位就没有项目可计费，不能触发 SaaS gas 回调（否则会因 DoesNotExist 反复重试）。
         notify_gas_fee.assert_not_called()
 
     @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")

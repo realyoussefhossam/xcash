@@ -1721,6 +1721,26 @@ class ConfirmTransferMissingReceiptTests(TestCase):
         self.transfer.refresh_from_db()
         self.assertEqual(self.transfer.status, TransferStatus.CONFIRMING)
 
+    def test_failed_receipt_drops_transfer_instead_of_blocking_confirm_batch(self):
+        # 链上事实变为失败时必须丢弃：继续保留会让该转账永久停在 CONFIRMING，
+        # 恒占 block_number_updated 按 timestamp 升序的批次头部，且 reap 只告警不清理。
+        from chains.tasks import confirm_transfer
+
+        class FailedAdapter:
+            @staticmethod
+            def tx_result(*, chain, tx_hash):
+                return TxCheckStatus.FAILED
+
+        with patch(
+            "chains.tasks.AdapterFactory.get_adapter",
+            return_value=FailedAdapter(),
+        ):
+            confirm_transfer.run(self.transfer.pk)
+
+        # 记录被删除，(chain, hash, event_index) 唯一约束随之释放，
+        # 日后若该 tx 再次被成功打包，扫描器可自然重建。
+        self.assertFalse(Transfer.objects.filter(pk=self.transfer.pk).exists())
+
 
 class BlockNumberUpdatedCompensationTests(TestCase):
     """验证 block_number_updated 在满批时自调度补偿。"""
