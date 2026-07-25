@@ -615,6 +615,90 @@ class VaultSlotAddressSchedulingTests(TestCase):
         notify_gas_fee.assert_not_called()
 
     @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
+    def test_deploy_code_check_rpc_error_keeps_task_submitted(self, notify_gas_fee):
+        """链上有码检查不确定时不能误成功或误失败，交给 poller 下轮重试。"""
+        from evm.poller import EvmTaskPoller
+
+        slot = self._create_vault_slot()
+        address_patch = self.patch_address_derivation()
+        tx_hash = "0x" + "ad" * 32
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+
+        with address_patch:
+            task = VaultSlot.schedule_deploy(slot.pk)
+        task.append_tx_hash(tx_hash)
+        TxTask.objects.filter(pk=task.pk).update(status=TxTaskStatus.SUBMITTED)
+
+        with (
+            patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock,
+            patch(
+                "evm.vault_slots.is_deployed_on_chain",
+                side_effect=RuntimeError("rpc unavailable"),
+            ),
+        ):
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            processed = EvmTaskPoller.process_succeeded_receipt(
+                evm_task=task.evm_task,
+                tx_hash=tx_hash,
+                receipt={"status": 1, "blockNumber": 1},
+            )
+
+        self.assertFalse(processed)
+        task.refresh_from_db()
+        slot.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.SUBMITTED)
+        self.assertFalse(slot.is_deployed)
+        notify_gas_fee.assert_not_called()
+
+    @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
+    def test_deploy_without_linked_slot_keeps_task_submitted(self, notify_gas_fee):
+        """部署任务缺少关联槽位属于数据不确定，不能直接标成部署成功。"""
+        from evm.poller import EvmTaskPoller
+
+        tx_hash = "0x" + "ae" * 32
+        task = TxTask.objects.create(
+            chain=self.chain,
+            sender=self.system_sender,
+            tx_type=TxTaskType.VaultSlotDeploy,
+            tx_hash=tx_hash,
+            status=TxTaskStatus.SUBMITTED,
+        )
+        evm_task = EvmTxTask.objects.create(
+            base_task=task,
+            sender=self.system_sender,
+            chain=self.chain,
+            nonce=0,
+            to=Web3.to_checksum_address("0x" + "af" * 20),
+            value=0,
+            data="0xdeadbeef",
+            gas=120_000,
+        )
+        Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
+        self.chain.refresh_from_db()
+
+        with patch.object(
+            type(self.chain), "w3", new_callable=PropertyMock
+        ) as w3_mock:
+            w3_mock.return_value.eth.get_transaction.return_value = {
+                "hash": tx_hash,
+                "from": self.system_sender.address,
+            }
+            processed = EvmTaskPoller.process_succeeded_receipt(
+                evm_task=evm_task,
+                tx_hash=tx_hash,
+                receipt={"status": 1, "blockNumber": 1},
+            )
+
+        self.assertFalse(processed)
+        task.refresh_from_db()
+        self.assertEqual(task.status, TxTaskStatus.SUBMITTED)
+        notify_gas_fee.assert_not_called()
+
+    @patch("evm.internal_tx.processor.notify_vault_slot_deploy_gas_fee")
     def test_confirmed_deposit_deploy_initial_native_balance_creates_confirmed_deposit(
         self,
         notify_gas_fee,

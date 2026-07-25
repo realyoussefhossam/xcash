@@ -152,9 +152,9 @@ def reconcile_vault_slot_collect_balance_gaps_task() -> None:
     ignore_result=True,
     bind=True,
     max_retries=5,
-    time_limit=10,
+    time_limit=60,
 )
-@singleton_task(timeout=5, use_params=True)
+@singleton_task(timeout=65, use_params=True)
 def confirm_transfer(self, pk):
     try:
         transfer = Transfer.objects.get(pk=pk)
