@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import environ
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.db import models
@@ -1345,17 +1346,29 @@ class VaultSlotCollectSchedule(models.Model):
             with db_transaction.atomic():
                 # 前置检查在锁外完成，拿锁后必须复核计划仍然 pending；
                 # skip_locked 让并发执行者直接跳过而不是排队等锁。
+                # of=("self",) 限定只锁归集计划自身：select_related 把 chain/crypto/
+                # vault_slot 都 join 了进来，裸 FOR UPDATE 会连这三张表的行一起锁死。
+                # 除了阻塞全链的外键插入，更隐蔽的是 skip_locked 会被放大——只要
+                # Chain 行此刻被别的事务持有，这条 SELECT 就整行跳过，让前面已经花掉的
+                # 数次链上 RPC 白跑且不退避，繁忙链上会持续空转。
                 locked = (
-                    cls.objects.select_for_update(skip_locked=True)
+                    cls.objects.select_for_update(skip_locked=True, of=("self",))
                     .select_related("chain", "crypto", "vault_slot")
                     .filter(pk=pk, tx_task__isnull=True)
                     .first()
                 )
                 if locked is None:
+                    # 并发执行者已抢先绑定，或计划刚被删除；留痕以便与「静默不归集」区分。
+                    logger.debug("VaultSlot 归集计划已被并发处理，跳过", schedule_id=pk)
                     return 0
                 tx_task = locked.create_tx_task(collect_gas_hint=collect_gas_hint)
                 locked.tx_task = tx_task
                 locked.save(update_fields=["tx_task", "updated_at"])
+        except SoftTimeLimitExceeded:
+            # 软超时是 Celery 要求任务收尾的控制信号，它继承自 Exception，被下面的
+            # 容错分支吞掉后 execute_due 会继续消费剩余计划，直到硬超时被 SIGKILL：
+            # 那时 singleton 锁不走 finally 释放，只能等 TTL 过期。必须原样上抛。
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "VaultSlot 归集计划创建或绑定任务失败,退避重试",

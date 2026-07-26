@@ -298,6 +298,19 @@ class VaultSlotAddressSchedulingTests(TestCase):
             side_effect=fake_get_address,
         )
 
+    @staticmethod
+    def patch_deploy_task_delay():
+        """把预部署的 Celery 投递就地执行，同时保留"确实投递了任务"的可断言性。
+
+        预部署已从 on_commit 回调改为投递 Celery 任务（回调跑在请求线程里，内联
+        RPC 会把已落库的下单请求打成 500）。测试环境 ALWAYS_EAGER=False，故用
+        side_effect 同步跑任务体，让断言仍能覆盖到部署 intent 的构造。
+        """
+        return patch(
+            "chains.tasks.schedule_vault_slot_deploy.delay",
+            side_effect=VaultSlot.schedule_deploy,
+        )
+
     def test_first_ensure_deposit_address_delays_deploy_for_token(self):
         self.project.evm_vault = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000f01"
@@ -330,6 +343,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         with (
             address_patch,
             patch.object(EvmTxTask, "schedule") as schedule,
+            self.patch_deploy_task_delay() as deploy_delay,
             self.captureOnCommitCallbacks(execute=True),
         ):
             address = VaultSlot.ensure_deposit_address(
@@ -340,6 +354,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
 
         slot = VaultSlot.objects.get(chain=self.chain, customer=self.customer)
         self.assertEqual(address, slot.address)
+        deploy_delay.assert_called_once_with(slot.pk)
         self.assertEqual(schedule.call_count, 1)
 
         intent = schedule.call_args.args[0]
@@ -1224,6 +1239,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         with (
             address_patch,
             patch.object(EvmTxTask, "schedule") as schedule,
+            self.patch_deploy_task_delay(),
             self.captureOnCommitCallbacks(execute=True),
         ):
             address = VaultSlot.ensure_deposit_address(

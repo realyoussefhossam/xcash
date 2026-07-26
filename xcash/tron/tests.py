@@ -1917,6 +1917,44 @@ class TronScannerTests(TestCase):
 
     @patch("chains.service.TransferService.enqueue_processing")
     @patch("tron.scanner.TronHttpClient")
+    def test_scan_chain_keeps_progress_when_interrupted_by_soft_time_limit(
+        self,
+        client_cls,
+        _enqueue_processing_mock,
+    ):
+        """被 Celery 软超时打断时，已扫完的块必须落到游标。
+
+        单轮最多 32 块、每块要读整块交易，总耗时很容易越过软超时。若中断路径不落盘，
+        本轮已扫的块会连带回退、下一轮从同一起点重来——节点持续偏慢时游标再也推不动，
+        Tron 充值全面滞留。
+        """
+        from celery.exceptions import SoftTimeLimitExceeded
+        from tron.scanner import TronScanner
+
+        start_cursor = 300_000
+        interrupt_at_block = start_cursor + 3
+
+        self._set_cursor_block(last_scanned_block=start_cursor)
+        client = client_cls.return_value
+        client.get_latest_solid_block_number.return_value = start_cursor + 32
+        client.get_solid_block_id.return_value = "0" * 64
+
+        def infos_by_block(*, block_number, **_kwargs):
+            if block_number >= interrupt_at_block:
+                raise SoftTimeLimitExceeded
+            return []
+
+        client.get_transaction_infos_by_block.side_effect = infos_by_block
+
+        with self.assertRaises(SoftTimeLimitExceeded):
+            TronScanner.scan_chain(chain=self.chain)
+
+        cursor = TronWatchCursor.objects.get(chain=self.chain)
+        # 中断块之前的两块已扫完，游标必须停在最后一个成功块上。
+        self.assertEqual(cursor.last_scanned_block, interrupt_at_block - 1)
+
+    @patch("chains.service.TransferService.enqueue_processing")
+    @patch("tron.scanner.TronHttpClient")
     def test_scan_chain_caps_single_tick_advance_at_batch_size(
         self,
         client_cls,
@@ -2870,6 +2908,8 @@ class TronReceiptConfirmTaskTests(TestCase):
         trx.prices = {"USD": "0.1"}
         trx.save(update_fields=["prices"])
         client_cls.return_value.get_transaction_info_by_id.return_value = {
+            # 真实 gettransactioninfobyid 必带 id；build_tx_detail 用它确认回执归属。
+            "id": "c" * 64,
             "fee": 1_000_000,
             "receipt": {
                 "energy_usage_total": 65_000,
@@ -2884,6 +2924,22 @@ class TronReceiptConfirmTaskTests(TestCase):
         self.assertEqual(detail.net_usage, 300)
         self.assertEqual(detail.native_price, "0.1")
         self.assertEqual(detail.gas_cost, "0.4")
+
+    @patch("tron.saas_gas_billing.TronHttpClient")
+    def test_build_tx_detail_rejects_receipt_not_matching_tx_hash(self, client_cls):
+        """回执不属于本交易时必须抛错，不能按 fee=0 计价。
+
+        gettransactioninfobyid 走 walletsolidity，负载均衡到固化头略落后的后端会返回
+        空对象。若按 0 成本上报，SaaS 侧的 sys_no 幂等会让这笔成本永远无法补正。
+        """
+        from tron.client import TronClientError
+        from tron.saas_gas_billing import build_tx_detail
+
+        for payload in ({}, {"id": "d" * 64, "fee": 1_000_000}):
+            with self.subTest(payload=payload):
+                client_cls.return_value.get_transaction_info_by_id.return_value = payload
+                with self.assertRaises(TronClientError):
+                    build_tx_detail(chain=self.chain, tx_hash="c" * 64)
 
     @patch("tron.saas_gas_billing.send_saas_callback")
     @patch("tron.saas_gas_billing.build_tx_detail")

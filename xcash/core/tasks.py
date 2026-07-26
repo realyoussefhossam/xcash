@@ -7,8 +7,8 @@ from core.monitoring import OperationalRiskService
 logger = structlog.get_logger()
 
 
-@shared_task(ignore_result=True)
-@singleton_task(timeout=55)
+@shared_task(ignore_result=True, soft_time_limit=100, time_limit=110)
+@singleton_task(timeout=115)
 def scan_operational_risks() -> None:
     """周期性巡检回调链路中的卡单风险，并输出结构化告警。"""
     summary = OperationalRiskService.build_summary(limit=3, include_resource_checks=True)

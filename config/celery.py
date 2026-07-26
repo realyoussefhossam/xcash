@@ -42,6 +42,13 @@ EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS = get_int_default(
     "CELERY_EVM_NON_TRANSFER_CONFIRM_SCHEDULE_SECONDS",
     60,
 )
+# EVM 在途主动交易（部署/归集）的终局轮询周期。该轮询原先内联在扫描任务里，
+# 扫描一出异常就整段跳过；拆出来独立调度后周期取 15s——EvmTaskPoller 自身按
+# EVM_PENDING_RECEIPT_POLL_DELAY(32s) 过滤刚广播的任务，再快也没有额外收益。
+EVM_TX_TASK_POLL_SCHEDULE_SECONDS = get_int_default(
+    "CELERY_EVM_TX_TASK_POLL_SCHEDULE_SECONDS",
+    15,
+)
 VAULT_SLOT_COLLECT_SCHEDULE_SECONDS = get_int_default(
     "CELERY_VAULT_SLOT_COLLECT_SCHEDULE_SECONDS",
     60,
@@ -109,6 +116,10 @@ evm_tasks = {
     "scan_stuck_queued_evm_tx_tasks": {
         "task": "evm.tasks.scan_stuck_queued_evm_tx_tasks",
         "schedule": OPERATIONAL_RISKS_SCHEDULE_SECONDS,
+    },
+    "poll_active_evm_chains": {
+        "task": "evm.tasks.poll_active_evm_chains",
+        "schedule": EVM_TX_TASK_POLL_SCHEDULE_SECONDS,
     },
 }
 

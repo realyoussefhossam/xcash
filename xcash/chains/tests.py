@@ -462,17 +462,31 @@ class TransferServiceCreateObservedTests(TestCase):
     def test_first_create_returns_created_true(self, enqueue_mock):
         from chains.service import TransferService
 
-        with patch(
-            "chains.service.Chain.objects.select_for_update",
-            wraps=Chain.objects.select_for_update,
-        ) as lock_mock:
-            result = TransferService.create_observed_transfer(observed=self.payload)
+        result = TransferService.create_observed_transfer(observed=self.payload)
 
         self.assertTrue(result.created)
         self.assertFalse(result.conflict)
         self.assertIsNotNone(result.transfer)
-        lock_mock.assert_called_once()
         enqueue_mock.assert_called_once()
+
+    @patch("chains.service.TransferService.enqueue_processing")
+    def test_create_does_not_lock_chain_row(self, enqueue_mock):
+        """落库不得对 Chain 行加锁。
+
+        这是所有链、所有扫描器落库的唯一入口，链级排他锁会让本链全部外键插入
+        （TxTask / TxHash / 余额快照）卡在 FK 的 FOR KEY SHARE 上，并与余额刷新
+        路径构成反向加锁顺序。并发安全由 (chain, hash, event_index) 唯一约束加
+        IntegrityError 回查保证，见 test_idempotent_replay_returns_created_false_no_conflict。
+        """
+        from chains.service import TransferService
+
+        with patch(
+            "chains.service.Chain.objects.select_for_update",
+            wraps=Chain.objects.select_for_update,
+        ) as lock_mock:
+            TransferService.create_observed_transfer(observed=self.payload)
+
+        lock_mock.assert_not_called()
 
     @patch("chains.service.TransferService.enqueue_processing")
     def test_idempotent_replay_returns_created_false_no_conflict(self, enqueue_mock):
