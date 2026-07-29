@@ -62,7 +62,7 @@ cd xcash
 docker compose up -d
 ```
 
-内置 Caddy 监听 `127.0.0.1:6688`，用你的反向代理（Nginx、Caddy 等）转发流量并配置 TLS。首次启动会创建默认后台账号 —— `admin` / `Admin@123456`，**请立即修改密码**。然后在管理后台完成三步：
+内置 Caddy 监听 `127.0.0.1:6688`，用你的反向代理（Nginx、Caddy 等）转发流量并配置 TLS。首次启动会创建后台账号 `admin`，其密码由 `init_env.sh` 随机生成——脚本执行完会打印一次，同时保存在 `.env` 的 `DJANGO_DEFAULT_SUPERUSER_PASSWORD`，**请存入密码管理器**。然后在管理后台完成三步：
 
 1. 为需要启用的公链填写 RPC 节点（QuickNode / Alchemy / Infura；Tron 需要 TronGrid API Key）。
 2. 为系统钱包在每条启用的链上充值少量 Gas。
@@ -267,14 +267,11 @@ ADMIN_PATH=secure-admin
 docker compose up -d
 ```
 
-启动脚本会先执行数据库迁移并补齐默认链、币种等主数据。首次启动时，如果数据库内还没有任何管理员账号，系统会自动创建默认后台账号：
+启动脚本会先执行数据库迁移并补齐默认链、币种等主数据。首次启动时，如果数据库内还没有任何管理员账号，系统会自动创建后台账号 `admin`，密码取自 `.env` 中的 `DJANGO_DEFAULT_SUPERUSER_PASSWORD`（由 `scripts/init_env.sh` 随机生成，执行时打印过一次）。
 
-```text
-username: admin
-password: Admin@123456
-```
+出于安全考虑，生产环境（`DEBUG=False`）下该口令若为空、短于 12 位、或等于仓库内置的示例值，系统会**拒绝创建管理员并中止升级**——后台在未设置 `ADMIN_PATH` 时挂在站点根路径，弱口令等同于把超管拱手让人。
 
-首次登录后台后请立即修改默认密码。
+建议同时设置 `ADMIN_PATH` 把后台移到非默认路径。
 
 ### 5. 配置链 RPC
 
