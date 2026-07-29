@@ -194,6 +194,13 @@ class ProjectConfigMiddleware(XcashMiddleware):
         if not project:
             return APIError(ErrorCode.INVALID_APPID).to_response()
 
+        # 停用的项目必须在此拒绝。active 此前只有 SaaS 的 activate/deactivate 会写、
+        # 没有任何读取方：运维或 SaaS 停用商户后，对方仍能照常建账单、申请充币地址、
+        # 占用 VaultSlot 并消耗归集 gas，后台却显示「已停用」。
+        # 注意它与 SaaS 侧的 frozen 是两套独立状态，check_saas_permission 兜不住。
+        if not project.active:
+            return APIError(ErrorCode.ACCESS_DENY).to_response()
+
         if not settings.DEBUG:
             request_timestamp = self.timestamp(request)
             now_ts = int(timezone.now().timestamp())

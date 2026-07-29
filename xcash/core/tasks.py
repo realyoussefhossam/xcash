@@ -23,6 +23,7 @@ def scan_operational_risks() -> None:
         summary["stalled_webhook_event_count"]
         + summary["evm_low_native_balance_count"]
         + summary["tron_low_resource_count"]
+        + summary["stale_price_crypto_count"]
     )
     if not risk_count:
         return
@@ -32,6 +33,11 @@ def scan_operational_risks() -> None:
         stalled_webhook_events=summary["stalled_webhook_event_count"],
         evm_low_native_balances=summary["evm_low_native_balance_count"],
         tron_low_resources=summary["tron_low_resource_count"],
+        # 价格陈旧会让账单按错误汇率收款，必须与卡单风险同级告警。
+        stale_price_cryptos=summary["stale_price_crypto_count"],
+        sample_stale_price_symbols=[
+            item["symbol"] for item in summary["recent_stale_price_cryptos"]
+        ],
         sample_event_ids=[
             event.pk for event in summary["recent_stalled_webhook_events"]
         ],

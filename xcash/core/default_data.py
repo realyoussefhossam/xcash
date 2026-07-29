@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import environ
+import structlog
 from django.conf import settings
 from django.db import transaction
 from tron.codec import TronAddressCodec
@@ -16,6 +17,8 @@ from evm.local_erc20 import LOCAL_EVM_ERC20_ABI
 from evm.local_erc20 import LOCAL_EVM_ERC20_BYTECODE
 from evm.local_erc20 import has_standard_erc20_interface
 from evm.local_vault_slot import ensure_local_vault_slot_contracts
+
+logger = structlog.get_logger()
 
 env = environ.Env()
 
@@ -172,6 +175,12 @@ def ensure_crypto_on_chain_mapping(
     """为链上 ERC20/同类合约资产补齐 CryptoOnChain 映射。
 
     decimals 为该币在本链上的精度，必填——它是精度的唯一真相。
+
+    只补缺、不覆盖：本函数在每次升级的 post-migration setup 中都会执行，若用
+    update_or_create 无条件回写内置常量，运维在 admin 对 address/decimals 所做的
+    修正（合约迁移、精度勘误）会被静默回滚。地址被回滚会让买家付到不再被扫描的
+    合约上（付款成功但账单永不确认），decimals 被回滚则直接让金额换算错 10^k 倍。
+    因此检测到差异时只告警、不改数据，交由运维显式处置。
     """
     chain_obj = Chain.objects.using(using).get(code=chain_name)
     normalized_address = address.strip()
@@ -187,7 +196,7 @@ def ensure_crypto_on_chain_mapping(
         normalized_address = Web3.to_checksum_address(normalized_address)
 
     crypto_obj = Crypto.objects.using(using).get(symbol=crypto_symbol)
-    CryptoOnChain.objects.using(using).update_or_create(
+    mapping, created = CryptoOnChain.objects.using(using).get_or_create(
         crypto=crypto_obj,
         chain=chain_obj,
         defaults={
@@ -195,6 +204,19 @@ def ensure_crypto_on_chain_mapping(
             "decimals": decimals,
         },
     )
+    if created:
+        return
+
+    if mapping.address != normalized_address or mapping.decimals != decimals:
+        logger.warning(
+            "CryptoOnChain 映射与内置默认值不一致，保留数据库现值",
+            chain=chain_name,
+            crypto=crypto_symbol,
+            db_address=mapping.address,
+            default_address=normalized_address,
+            db_decimals=mapping.decimals,
+            default_decimals=decimals,
+        )
 
 
 def ensure_default_evm_token_mappings(
