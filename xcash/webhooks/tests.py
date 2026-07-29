@@ -1,7 +1,10 @@
+import socket
+import time
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.test import SimpleTestCase
 from django.test import TestCase
 from django.test import override_settings
 from django.utils import timezone
@@ -12,11 +15,13 @@ from projects.models import Project
 from webhooks.models import DeliveryAttempt
 from webhooks.models import WebhookEvent
 from webhooks.service import WebhookService
+from webhooks.tasks import DeliveryTargetResolutionError
 from webhooks.tasks import _claim_event_for_delivery
 from webhooks.tasks import deliver_event
 from webhooks.tasks import next_backoff
 from webhooks.tasks import pin_request_to_ip
 from webhooks.tasks import reap_stalled_events
+from webhooks.tasks import resolve_addresses
 from webhooks.tasks import safe_delivery_target
 from webhooks.tasks import schedule_events
 
@@ -295,6 +300,50 @@ class DeliverEventTests(TestCase):
         self.assertIn("Unsafe webhook URL", event.last_error)
         mock_http.assert_not_called()
 
+    @patch("webhooks.tasks.socket.getaddrinfo")
+    @patch("webhooks.tasks._execute_http_delivery")
+    def test_dns_failure_suspends_instead_of_failing(
+        self,
+        mock_http,
+        getaddrinfo_mock,
+    ):
+        """DNS 瞬时解析失败必须挂起重试，不得当作 Unsafe URL 一次终局。
+
+        解析器抖动、NS 短暂不可达都是分钟级可恢复的故障，商户域名偶发解析慢
+        一次就 FAILED 会永久丢掉支付成功通知。
+        """
+        getaddrinfo_mock.side_effect = socket.gaierror("Name resolution failed")
+        project = _make_project(webhook="https://merchant.example.com/hook")
+        event = self._create_event(project=project)
+
+        deliver_event(event.pk)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, WebhookEvent.Status.PENDING)
+        self.assertIsNotNone(event.schedule_locked_until)
+        self.assertGreater(event.schedule_locked_until, timezone.now())
+        self.assertIn("DNS resolution failed", event.last_error)
+        mock_http.assert_not_called()
+
+    @patch("webhooks.tasks.socket.getaddrinfo")
+    @patch("webhooks.tasks._execute_http_delivery")
+    def test_dns_failure_fails_after_retry_budget_exhausted(
+        self,
+        mock_http,
+        getaddrinfo_mock,
+    ):
+        """挂起不是无限的：域名持续解析不出来，预算用尽照样终局。"""
+        SystemSettings.objects.create(webhook_delivery_max_retries=1)
+        getaddrinfo_mock.side_effect = socket.gaierror("Name resolution failed")
+        project = _make_project(webhook="https://merchant.example.com/hook")
+        event = self._create_event(project=project)
+
+        deliver_event(event.pk)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, WebhookEvent.Status.FAILED)
+        mock_http.assert_not_called()
+
     @override_settings(WEBHOOK_ALLOW_INTERNAL_TARGETS=True)
     @patch("webhooks.tasks._execute_http_delivery")
     def test_internal_target_allowed_when_switch_on(self, mock_http):
@@ -359,7 +408,9 @@ class WebhookDeliveryPolicyTests(TestCase):
         super().tearDown()
 
     @patch("webhooks.tasks._execute_http_delivery")
-    def test_get_query_delivery_uses_event_delivery_url_and_success_text(self, mock_http):
+    def test_get_query_delivery_uses_event_delivery_url_and_success_text(
+        self, mock_http
+    ):
         mock_http.return_value = (True, 200, {}, "success", "", 30)
         project = _make_project(webhook="https://93.184.216.35/hook")
         event = WebhookEvent.objects.create(
@@ -377,7 +428,9 @@ class WebhookDeliveryPolicyTests(TestCase):
         call_kwargs = mock_http.call_args.kwargs
         self.assertEqual(call_kwargs["request_url"], "https://93.184.216.34/notify")
         self.assertEqual(call_kwargs["method"], "GET")
-        self.assertEqual(call_kwargs["params"], {"pid": "1001", "trade_status": "TRADE_SUCCESS"})
+        self.assertEqual(
+            call_kwargs["params"], {"pid": "1001", "trade_status": "TRADE_SUCCESS"}
+        )
         self.assertEqual(call_kwargs["expected_response_body"], "success")
         # 默认未配置出口代理，请求 header 中不应出现代理转发字段
         self.assertNotIn("CF-Worker-Destination", call_kwargs["headers"])
@@ -420,7 +473,9 @@ class WebhookDeliveryPolicyTests(TestCase):
         self.assertEqual(captured["headers"]["CF-Worker-Key"], "proxy-key-secret")
         # GET 方法和 query payload 不变，签名校验交给商户端的 EPay MD5
         self.assertEqual(captured["method"], "GET")
-        self.assertEqual(captured["params"], {"pid": "1001", "trade_status": "TRADE_SUCCESS"})
+        self.assertEqual(
+            captured["params"], {"pid": "1001", "trade_status": "TRADE_SUCCESS"}
+        )
 
     @patch("webhooks.tasks._egress_proxy_url", None)
     @patch("webhooks.tasks._execute_http_delivery")
@@ -784,7 +839,9 @@ class DeliveryTargetPinningTests(TestCase):
         )
 
     @patch("webhooks.tasks.socket.getaddrinfo")
-    def test_rebinding_between_validation_and_connect_is_blocked(self, mock_getaddrinfo):
+    def test_rebinding_between_validation_and_connect_is_blocked(
+        self, mock_getaddrinfo
+    ):
         """DNS 在校验后翻转为元数据地址，连接仍会打到校验通过的那个 IP。"""
         mock_getaddrinfo.return_value = [
             (None, None, None, None, ("93.184.216.34", 443))
@@ -800,6 +857,44 @@ class DeliveryTargetPinningTests(TestCase):
         )
 
         self.assertEqual(pinned_url, "https://93.184.216.34/hook")
+
+
+class DnsResolutionTimeoutTests(SimpleTestCase):
+    """DNS 解析超时必须真正生效，不能被隐式线程 join 拖回阻塞。"""
+
+    @patch("webhooks.tasks.DNS_RESOLVE_TIMEOUT", 0.2)
+    @patch("webhooks.tasks.socket.getaddrinfo")
+    def test_timeout_returns_promptly_without_joining_blocked_thread(
+        self, getaddrinfo_mock
+    ):
+        """解析线程仍阻塞时函数必须按预算及时抛出。
+
+        曾用 `with ThreadPoolExecutor` 包超时：with 退出隐式 shutdown(wait=True)
+        会 join 阻塞在 getaddrinfo 里的线程，NS 黑洞时超时形同虚设、worker 照旧
+        被卡满一整批。
+        """
+
+        def blocked_resolve(*args, **kwargs):
+            time.sleep(1.5)
+            return [(None, None, None, None, ("93.184.216.34", 443))]
+
+        getaddrinfo_mock.side_effect = blocked_resolve
+
+        start = time.perf_counter()
+        with self.assertRaises(DeliveryTargetResolutionError):
+            resolve_addresses("blackhole.example.com", 443)
+        elapsed = time.perf_counter() - start
+
+        # 预算 0.2s、线程阻塞 1.5s：耗时接近前者才说明没有等待阻塞线程。
+        self.assertLess(elapsed, 1.0)
+
+    @patch("webhooks.tasks.socket.getaddrinfo")
+    def test_resolution_error_raises_instead_of_returning_empty(self, getaddrinfo_mock):
+        """解析失败抛领域异常，与「解析成功但目标不安全」严格区分。"""
+        getaddrinfo_mock.side_effect = socket.gaierror("NXDOMAIN")
+
+        with self.assertRaises(DeliveryTargetResolutionError):
+            resolve_addresses("missing.example.com", 443)
 
 
 class ReapStalledEventsTests(TestCase):

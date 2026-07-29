@@ -54,28 +54,52 @@ _egress_proxy_url: str | None = environ.Env().str("XCASH_EGRESS_PROXY", default=
 _egress_proxy_key: str = environ.Env().str("XCASH_EGRESS_PROXY_KEY", default="")
 
 
+class DeliveryTargetResolutionError(Exception):
+    """DNS 暂时拿不到解析结果（超时、解析器故障、记录传播中）。
+
+    必须与「判定为不安全」区分开：解析失败是瞬时状态，商户域名偶发解析慢一次
+    就永久终结事件会丢掉支付成功通知；只有解析成功且结果里存在非公网地址，
+    才是确定性的不安全目标，允许终局。
+    """
+
+
 def resolve_addresses(hostname: str, port: int) -> list[str]:
-    """带超时的 DNS 解析。
+    """带超时的 DNS 解析；拿不到任何结果时抛 DeliveryTargetResolutionError。
 
     socket.getaddrinfo 本身没有超时参数，遇到权威 NS 黑洞（域名过期、NS 被丢包）
     时会在 C 层阻塞远超任务的 soft_time_limit，把 worker 卡满一整批。这里用线程
-    包一层实现可控超时；超时的解析线程会随其自身返回而自然结束。
+    包一层实现可控超时。
+
+    不能写成 `with ThreadPoolExecutor(...)`：with 退出时隐式 shutdown(wait=True)
+    会 join 仍阻塞在 getaddrinfo 里的工作线程，超时形同虚设。必须 wait=False 立即
+    返回，超时的解析线程泄漏到 getaddrinfo 自身返回为止（libc 解析器有自己的
+    重试上限，最终一定会结束）。
     """
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(
             socket.getaddrinfo, hostname, port, type=socket.SOCK_STREAM
         )
         try:
             infos = future.result(timeout=DNS_RESOLVE_TIMEOUT)
-        except (FuturesTimeoutError, OSError):
-            return []
-    return [item[4][0] for item in infos]
+        except (FuturesTimeoutError, OSError) as exc:
+            raise DeliveryTargetResolutionError(
+                f"DNS resolution failed for {hostname}: {exc}"
+            ) from exc
+    finally:
+        pool.shutdown(wait=False)
+    addresses = [item[4][0] for item in infos]
+    if not addresses:
+        raise DeliveryTargetResolutionError(f"empty DNS answer for {hostname}")
+    return addresses
 
 
 def safe_delivery_target(url: str) -> str | None:
     """校验投递目标，并返回一个可直连的、已通过校验的 IP。
 
-    返回 None 表示目标不安全。返回 "" 表示无需固定 IP（内网放行模式）。
+    返回 None 表示目标确定不安全（非 https、localhost、解析出非公网地址）。
+    返回 "" 表示无需固定 IP（内网放行模式）。DNS 暂时解析不出结果时抛
+    DeliveryTargetResolutionError，由调用方按可重试语义处理，不得当作不安全终局。
 
     必须把校验用的 IP 交给调用方直连：如果只回 bool、让 httpx 再按主机名解析一次，
     两次 DNS 之间就存在 rebinding 窗口——商户把域名的权威 NS 配成交替返回公网 IP
@@ -135,12 +159,10 @@ def _claim_event_for_delivery(event_pk) -> bool:
             status=WebhookEvent.Status.PENDING,
         )
         .filter(
-            Q(schedule_locked_until__isnull=True)
-            | Q(schedule_locked_until__lte=now)
+            Q(schedule_locked_until__isnull=True) | Q(schedule_locked_until__lte=now)
         )
         .filter(
-            Q(delivery_locked_until__isnull=True)
-            | Q(delivery_locked_until__lte=now)
+            Q(delivery_locked_until__isnull=True) | Q(delivery_locked_until__lte=now)
         )
         .update(
             delivery_locked_until=now + timedelta(seconds=DELIVERY_CLAIM_TIMEOUT),
@@ -289,7 +311,9 @@ def reap_stalled_events(batch_size=512):
 
     终结判据取事件超时窗口的若干倍，远大于正常重试链路的总耗时，不会误伤在途重试。
     """
-    deadline = timezone.now() - get_webhook_event_timeout() * STALLED_EVENT_TIMEOUT_FACTOR
+    deadline = (
+        timezone.now() - get_webhook_event_timeout() * STALLED_EVENT_TIMEOUT_FACTOR
+    )
     stalled_pks = list(
         WebhookEvent.objects.filter(
             status=WebhookEvent.Status.PENDING,
@@ -369,7 +393,19 @@ def deliver_event(event_pk):
         )
         return
 
-    pinned_ip = safe_delivery_target(target_url)
+    try:
+        pinned_ip = safe_delivery_target(target_url)
+    except DeliveryTargetResolutionError as exc:
+        # DNS 瞬时失败（解析器抖动、NS 短暂不可达）与「目标不安全」是两回事：
+        # 商户域名偶发解析慢一次就终局会永久丢掉支付成功通知。按正常退避挂起，
+        # 重试预算仍由 attempt_count 统一约束，持续解析不出来最终照样 FAILED。
+        suspend_or_fail(
+            event_pk,
+            try_number=try_number,
+            reason=str(exc),
+            delay=timedelta(seconds=next_backoff(try_number)),
+        )
+        return
     if pinned_ip is None:
         WebhookEvent.objects.filter(pk=event_pk).update(
             status=WebhookEvent.Status.FAILED,
@@ -452,9 +488,8 @@ def deliver_event(event_pk):
         # 或滚动发布期间返回 429 几分钟，一次就判终局会让这期间所有支付成功通知
         # 永久失败，商户不给用户上账，直接产生资金纠纷。
         retryable = (
-            (status_code is None or status_code >= 500 or status_code in RETRYABLE_STATUS)
-            and try_number < get_webhook_delivery_max_retries()
-        )
+            status_code is None or status_code >= 500 or status_code in RETRYABLE_STATUS
+        ) and try_number < get_webhook_delivery_max_retries()
         error_msg = err_text or f"status={status_code}"
         if retryable:
             WebhookEvent.objects.filter(pk=event_pk).update(
