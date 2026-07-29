@@ -4,5 +4,10 @@
 		file_server
 	}
 
-	reverse_proxy django:8000
+	# X-Real-IP 是 IP 白名单与全部 IP 维度限流的取值来源（见 common/utils/security.py
+	# 的 client_ip）。Caddy 默认只追加 X-Forwarded-For，不设置该头，缺失时后端会退回
+	# REMOTE_ADDR（即本容器在 Docker 网络内的地址），导致商户 IP 白名单对所有请求失效。
+	reverse_proxy django:8000 {
+		header_up X-Real-IP {remote_host}
+	}
 }

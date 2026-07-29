@@ -60,9 +60,12 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = ["https://xca.sh"]
 
 DEFAULT_SUPERUSER_USERNAME = "admin"
+# 该默认值只服务于本地开发。生产（DEBUG=False）下 ensure_default_superuser 会拒绝
+# 用它建号：后台默认挂在站点根路径，固定口令又是开源仓库里的公开常量。
+INSECURE_DEFAULT_SUPERUSER_PASSWORD = "Admin@123456"  # noqa: S105
 DEFAULT_SUPERUSER_PASSWORD = env.str(
     "DJANGO_DEFAULT_SUPERUSER_PASSWORD",
-    default="Admin@123456",
+    default=INSECURE_DEFAULT_SUPERUSER_PASSWORD,
 )
 
 # 钱包助记词静态加密
@@ -99,6 +102,12 @@ RATELIMIT_REDIS = {
     "port": REDIS_PORT,
     "db": REDIS_DB,
 }
+# django-smart-ratelimit 的取 IP 策略必须与 TRUSTED_PROXY_IPS 对齐，否则它会退回
+# "信任 CF-Connecting-IP / X-Forwarded-For 最左项" 的兼容分支，登录等 IP 限流可被
+# 任意伪造请求头绕过。TRUSTED_PROXY_IPS 为空列表时该库判定为未配置，因此还需要
+# 显式关闭转发头信任，让其直接使用 REMOTE_ADDR。
+RATELIMIT_TRUSTED_PROXIES = TRUSTED_PROXY_IPS
+RATELIMIT_TRUST_FORWARDED_HEADERS = False
 # EPay V1 /epay/submit.php 入口的 IP 维度限流。
 # 该入口未经鉴权即触发 EpayMerchant.objects.get + serializer + 签名计算，
 # 攻击者可用有效 pid + 错误 sign 大量探测形成 DB 查询型 DoS。
@@ -446,7 +455,9 @@ CELERY_TASK_ROUTES = {
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
+        # 不用 DRF 内置的 AnonRateThrottle：其默认取 IP 逻辑会把整条
+        # X-Forwarded-For 当作限流身份，调用方换个头即换一个桶。
+        "common.throttles.TrustedProxyAnonRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "anon": "256/minute",
