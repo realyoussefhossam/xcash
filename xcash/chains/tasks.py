@@ -113,6 +113,13 @@ def reap_stale_confirming_transfers(limit: int = 200) -> int:
             reaped_count += 1
         elif result == TxCheckStatus.SUCCEEDED:
             # 链上事实仍在，说明只是确认管线曾中断；主动补派确认，不等链高推进。
+            # 业务归类未完成（processed_at 为空）时不能直接确认：type 仍为 Unmatched，
+            # confirm 的业务分发会空转，之后补上的匹配再也等不到确认动作，
+            # 造成链上有钱、账上无单。此时先补处理，确认交回正常调度
+            # （block_number_updated 过滤 processed_at，QUICK 由 process 内部派发）。
+            if transfer.processed_at is None:
+                process_transfer.delay(transfer.pk)
+                continue
             confirm_transfer.delay(transfer.pk)
         else:
             logger.warning(

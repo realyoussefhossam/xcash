@@ -1939,6 +1939,8 @@ class ReapStaleConfirmingTransfersTests(TestCase):
 
     def test_keeps_stale_transfer_and_redispatches_confirm_when_succeeded(self):
         transfer = self.make_confirming_transfer(suffix="2a")
+        # 已完成业务归类的转账才允许直接补派确认。
+        Transfer.objects.filter(pk=transfer.pk).update(processed_at=timezone.now())
 
         with patch("chains.tasks.confirm_transfer.delay") as confirm_delay:
             reaped = self.reap_with_tx_result(TxCheckStatus.SUCCEEDED)
@@ -1946,6 +1948,23 @@ class ReapStaleConfirmingTransfersTests(TestCase):
         self.assertEqual(reaped, 0)
         self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
         confirm_delay.assert_called_once_with(transfer.pk)
+
+    def test_succeeded_unprocessed_transfer_redispatches_process_not_confirm(self):
+        # 业务归类未完成（processed_at 为空、type 仍 Unmatched）时绝不能直接确认：
+        # confirm 会把状态推成 CONFIRMED 但业务分发空转，之后补上的匹配再也等不到
+        # 确认动作，造成链上有钱、账上无单。必须改派 process，确认交回正常调度。
+        transfer = self.make_confirming_transfer(suffix="7a")
+
+        with (
+            patch("chains.tasks.confirm_transfer.delay") as confirm_delay,
+            patch("chains.tasks.process_transfer.delay") as process_delay,
+        ):
+            reaped = self.reap_with_tx_result(TxCheckStatus.SUCCEEDED)
+
+        self.assertEqual(reaped, 0)
+        self.assertTrue(Transfer.objects.filter(pk=transfer.pk).exists())
+        confirm_delay.assert_not_called()
+        process_delay.assert_called_once_with(transfer.pk)
 
     def test_keeps_stale_transfer_when_chain_query_fails(self):
         transfer = self.make_confirming_transfer(suffix="3a")

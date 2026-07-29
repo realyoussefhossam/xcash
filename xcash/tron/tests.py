@@ -3546,6 +3546,53 @@ class TronCollectScheduleExecuteTests(TestCase):
         )
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
+    def test_execute_due_isolates_broken_schedule_and_continues_batch(
+        self, is_contract
+    ):
+        # execute_due 是所有链共享的唯一归集派发入口且按 due_at 升序取批：
+        # 单条计划抛出非预期异常（此处走真实缺口路径——价格数据形态损坏，
+        # Decimal(None) 抛 TypeError 而非 PriceUnavailableError）时必须退避
+        # 该计划并继续消费批次，否则它每轮都在批次头部中断，饿死其后所有
+        # 链的归集调度。
+        VaultSlot.objects.filter(pk=self.slot.pk).update(is_deployed=True)
+        self.slot.is_deployed = True
+        broken_crypto = Crypto.objects.create(
+            name="Broken Price Coin",
+            symbol="BRK",
+            prices={"USD": None},
+            coingecko_id="broken-price-coin",
+        )
+        broken_schedule = VaultSlotCollectSchedule.objects.create(
+            chain=self.chain,
+            vault_slot=self.slot,
+            crypto=broken_crypto,
+            due_at=timezone.now() - timedelta(seconds=2),
+        )
+        healthy_schedule = self.make_pending_schedule()
+
+        with (
+            patch(
+                "core.runtime_settings.get_vault_slot_collect_min_worth_usd",
+                return_value=Decimal("1"),
+            ),
+            patch(
+                "chains.vault_slot_balances.refresh_vault_slot_balance_safely",
+                return_value=SimpleNamespace(value=1, amount=Decimal("100")),
+            ),
+            patch("tron.vault_slots.SystemWallet.get_current") as get_current,
+        ):
+            get_current.return_value.wallet.get_address.return_value = self.sender
+            created = VaultSlotCollectSchedule.execute_due()
+
+        # 损坏计划被退避而非中断整批：健康计划照常建任务。
+        self.assertEqual(created, 1)
+        broken_schedule.refresh_from_db()
+        self.assertIsNone(broken_schedule.tx_task_id)
+        self.assertGreater(broken_schedule.due_at, timezone.now())
+        healthy_schedule.refresh_from_db()
+        self.assertIsNotNone(healthy_schedule.tx_task_id)
+
+    @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
     def test_two_schedules_same_slot_get_independent_tasks(self, is_contract):
         # 回归:移除「复用在途任务」去重后,同 slot+token 的两个计划各建独立任务,
         # 不再撞 VaultSlotCollectSchedule.tx_task 的 OneToOne 唯一约束、毒化整批调度。

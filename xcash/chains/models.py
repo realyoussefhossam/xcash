@@ -1288,7 +1288,25 @@ class VaultSlotCollectSchedule(models.Model):
         )
         created_count = 0
         for pk in due_pks:
-            created_count += cls.execute_one_due(pk)
+            try:
+                created_count += cls.execute_one_due(pk)
+            except SoftTimeLimitExceeded:
+                # 软超时是 Celery 要求收尾的控制信号，必须穿透逐计划容错上抛。
+                raise
+            except Exception as exc:  # noqa: BLE001
+                # execute_due 是所有链共享的唯一归集派发入口且按 due_at 升序取批；
+                # 单条计划的确定性异常（如价格数据形态损坏）若不退避，会每轮在批次
+                # 头部原地中断，饿死其后所有链的归集调度。条件更新只推迟仍未绑定
+                # 任务的计划，避免覆盖并发路径刚完成的绑定。
+                logger.warning(
+                    "VaultSlot 归集计划执行异常，退避重试",
+                    schedule_id=pk,
+                    error=str(exc),
+                )
+                cls.objects.filter(pk=pk, tx_task__isnull=True).update(
+                    due_at=timezone.now() + cls.RETRY_BACKOFF,
+                    updated_at=timezone.now(),
+                )
         return created_count
 
     @classmethod
