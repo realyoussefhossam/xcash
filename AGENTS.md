@@ -10,7 +10,6 @@
 - 当前 admin theme 用的是 django-unfold，admin 页面开发要遵循UI风格统一。
 - 本地通过 docker-compose.dev.yml 拉起数据库、redis、测试链的服务。
 - 生成的docs文件统统不纳入git。
-- 执行方式默认用 Subagent-Driven。
 - commit 信息用中文写，同时在尾部标注本次代码开发使用的模型信息
 - 尽量在 main 分支进行开发
 - 项目兼容易支付 V1接口，文档地址：https://pay.v8jisu.cn/doc_old.html
