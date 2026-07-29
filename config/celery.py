@@ -24,6 +24,10 @@ WEBHOOK_EVENTS_SCHEDULE_SECONDS = get_int_default(
     "CELERY_WEBHOOK_EVENTS_SCHEDULE_SECONDS",
     15,
 )
+WEBHOOK_STALLED_REAP_SCHEDULE_SECONDS = get_int_default(
+    "CELERY_WEBHOOK_STALLED_REAP_SCHEDULE_SECONDS",
+    300,
+)
 FALLBACK_PROCESS_TRANSFER_SCHEDULE_SECONDS = get_int_default(
     "CELERY_FALLBACK_PROCESS_TRANSFER_SCHEDULE_SECONDS",
     20,
@@ -74,6 +78,11 @@ webhooks_tasks = {
     "schedule_events": {
         "task": "webhooks.tasks.schedule_events",
         "schedule": WEBHOOK_EVENTS_SCHEDULE_SECONDS,
+    },
+    "reap_stalled_webhook_events": {
+        # 强制终结超龄未送达事件，防止其恒占调度批次头部饿死其他商户的重试。
+        "task": "webhooks.tasks.reap_stalled_events",
+        "schedule": WEBHOOK_STALLED_REAP_SCHEDULE_SECONDS,
     },
 }
 
