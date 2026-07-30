@@ -17,14 +17,18 @@ from currencies.models import CryptoOnChain
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 )
 class ReferenceDataBootstrapCommandTests(SimpleTestCase):
-    @patch("core.management.commands.ensure_default_reference_data.ensure_default_reference_data")
+    @patch(
+        "core.management.commands.ensure_default_reference_data.ensure_default_reference_data"
+    )
     def test_command_bootstraps_default_reference_data(self, bootstrap_mock):
         call_command("ensure_default_reference_data")
 
         bootstrap_mock.assert_called_once()
         self.assertEqual(bootstrap_mock.call_args.kwargs["using"], "default")
 
-    @patch("core.management.commands.ensure_default_reference_data.ensure_default_reference_data")
+    @patch(
+        "core.management.commands.ensure_default_reference_data.ensure_default_reference_data"
+    )
     def test_command_accepts_database_alias(self, bootstrap_mock):
         call_command("ensure_default_reference_data", database="replica")
 
@@ -96,8 +100,6 @@ class CryptoOnChainMappingPreservationTests(TestCase):
             self.call_ensure(self.OFFICIAL_ADDRESS, 6)
 
         self.assertEqual(
-            CryptoOnChain.objects.filter(
-                crypto=self.crypto, chain=self.chain
-            ).count(),
+            CryptoOnChain.objects.filter(crypto=self.crypto, chain=self.chain).count(),
             1,
         )

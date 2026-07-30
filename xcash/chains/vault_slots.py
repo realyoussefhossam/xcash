@@ -348,9 +348,7 @@ def expedite_pending_collects(*, slot_pk: int) -> int:
 
 def mark_deployed_if_on_chain_for_task(tx_task: TxTask) -> bool:
     slot = (
-        VaultSlot.objects.select_related("chain")
-        .filter(deploy_tx_task=tx_task)
-        .first()
+        VaultSlot.objects.select_related("chain").filter(deploy_tx_task=tx_task).first()
     )
     if slot is None:
         return False

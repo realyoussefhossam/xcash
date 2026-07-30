@@ -169,7 +169,9 @@ def tron_hash_snapshot(task: TxTask) -> tuple[KnownTronTxHash, ...]:
 @shared_task(ignore_result=True, soft_time_limit=150, time_limit=170)
 @singleton_task(timeout=TRON_BROADCAST_LOCK_TIMEOUT_SECONDS, use_params=True)
 def broadcast_tron_task(pk: int) -> None:
-    tx_task = TronTxTask.objects.select_related("base_task", "chain", "sender").get(pk=pk)
+    tx_task = TronTxTask.objects.select_related("base_task", "chain", "sender").get(
+        pk=pk
+    )
     lock_key = sender_broadcast_lock_key(
         chain_id=tx_task.chain_id,
         sender_id=tx_task.sender_id,
@@ -392,9 +394,8 @@ def scan_tron_chain(chain_pk: int) -> None:
 @singleton_task(timeout=64)
 def scan_active_tron_chains() -> None:
     """每 2 秒巡检活跃 Tron 链，仅调度到期（now - last_scanned_at ≥ 扫描周期）的链。"""
-    chains = (
-        Chain.objects.filter(active=True, type=ChainType.TRON)
-        .exclude(tron_api_key="")
+    chains = Chain.objects.filter(active=True, type=ChainType.TRON).exclude(
+        tron_api_key=""
     )
     for chain in chains:
         if chain.is_due_for_scan:

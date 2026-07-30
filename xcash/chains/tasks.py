@@ -160,7 +160,9 @@ def schedule_vault_slot_deploy(self, slot_pk: int) -> None:
         )
         # 8s → 16s → 32s → 64s → 128s，覆盖节点短时抖动；仍失败则由归集前的
         # ensure_deployed_before_collect 兜底，不会丢部署。
-        raise self.retry(exc=exc, countdown=8 * (2**self.request.retries)) from exc  # noqa
+        raise self.retry(
+            exc=exc, countdown=8 * (2**self.request.retries)
+        ) from exc  # noqa
 
 
 @shared_task(ignore_result=True, soft_time_limit=45, time_limit=55)

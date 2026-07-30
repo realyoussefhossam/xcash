@@ -52,4 +52,3 @@ class LoginForm(forms.Form):
         label=_("密码"),
         widget=UnfoldAdminPasswordWidget(attrs={"autocomplete": "new-password"}),
     )
-

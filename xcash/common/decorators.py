@@ -20,6 +20,7 @@ def singleton_task(timeout, *, use_params=False):
         timeout: 锁最大存活秒数（应大于任务最长预期执行时间）。
         use_params: 为 True 时按参数区分锁（同函数不同参数可并行）。
     """
+
     def task_decorator(task_func):
         @wraps(task_func)
         def wrapper(*args, **kwargs):

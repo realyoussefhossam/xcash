@@ -107,10 +107,8 @@ def notify_vault_slot_deploy_gas_fee(*, tx_task: TxTask) -> None:
 
 
 def send_vault_slot_deploy_gas_fee(*, tx_task: TxTask) -> None:
-    slot = (
-        VaultSlot.objects.select_related("project", "chain", "customer").get(
-            deploy_tx_task=tx_task
-        )
+    slot = VaultSlot.objects.select_related("project", "chain", "customer").get(
+        deploy_tx_task=tx_task
     )
     tx_detail = build_tx_detail(chain=slot.chain, tx_hash=tx_task.tx_hash)
     send_saas_callback(

@@ -43,10 +43,10 @@ class AdminSessionTimeoutMiddleware:
         except Resolver404:
             return False
 
-        return (
-            match.namespace == "admin"
-            or match.url_name in {"operational-inspection", "admin-path-redirect"}
-        )
+        return match.namespace == "admin" or match.url_name in {
+            "operational-inspection",
+            "admin-path-redirect",
+        }
 
 
 @dataclass

@@ -26,7 +26,9 @@ from evm.local_vault_slot import predict_create2_address
 class VaultSlotAddressInvariantTests(SimpleTestCase):
     def test_artifacts_predict_expected_constant_addresses(self):
         """artifacts + salt 推导出的地址必须等于全网统一常量地址。"""
-        implementation_address = predict_create2_address(build_implementation_init_code())
+        implementation_address = predict_create2_address(
+            build_implementation_init_code()
+        )
         self.assertEqual(
             implementation_address,
             Web3.to_checksum_address(XCASH_VAULT_SLOT_IMPLEMENTATION_ADDRESS),

@@ -79,7 +79,9 @@ class OperationalRiskService:
             if gas_price is None:
                 try:
                     if task.chain_id not in gas_price_cache:
-                        gas_price_cache[task.chain_id] = int(task.chain.w3.eth.gas_price)
+                        gas_price_cache[task.chain_id] = int(
+                            task.chain.w3.eth.gas_price
+                        )
                     gas_price = gas_price_cache[task.chain_id]
                 except Exception as exc:  # noqa: BLE001
                     key = (task.chain_id, task.sender_id)
@@ -229,7 +231,10 @@ class OperationalRiskService:
 
             current_energy = available_energy(resource)
             current_bandwidth = available_bandwidth(resource)
-            if current_energy < required_energy or current_bandwidth < required_bandwidth:
+            if (
+                current_energy < required_energy
+                or current_bandwidth < required_bandwidth
+            ):
                 alerts.append(
                     {
                         "chain": chain,
@@ -247,13 +252,17 @@ class OperationalRiskService:
         return alerts
 
     @classmethod
-    def build_summary(cls, *, limit: int = 4, include_resource_checks: bool = False) -> dict:
+    def build_summary(
+        cls, *, limit: int = 4, include_resource_checks: bool = False
+    ) -> dict:
         """返回后台展示与异步巡检共享的异常概览。"""
         stalled_webhook_events = cls.stalled_webhook_events()
         evm_low_native_balance_alerts = []
         tron_low_resource_alerts = []
         if include_resource_checks:
-            evm_low_native_balance_alerts = cls.evm_low_native_balance_alerts(limit=limit)
+            evm_low_native_balance_alerts = cls.evm_low_native_balance_alerts(
+                limit=limit
+            )
             tron_low_resource_alerts = cls.tron_low_resource_alerts(limit=limit)
 
         stale_price_cryptos = cls.stale_price_cryptos(limit=limit)
@@ -285,14 +294,11 @@ class OperationalRiskService:
             return []
 
         deadline = timezone.now() - timedelta(seconds=max_age)
-        stale = (
-            Crypto.objects.filter(
-                active=True,
-                coingecko_id__isnull=False,
-                prices_updated_at__lt=deadline,
-            )
-            .order_by("prices_updated_at")[:limit]
-        )
+        stale = Crypto.objects.filter(
+            active=True,
+            coingecko_id__isnull=False,
+            prices_updated_at__lt=deadline,
+        ).order_by("prices_updated_at")[:limit]
         return [
             {
                 "symbol": crypto.symbol,
@@ -332,7 +338,5 @@ class OperationalRiskService:
             "evm_low_native_balance_count": int(
                 cached.get("evm_low_native_balance_count") or 0
             ),
-            "tron_low_resource_count": int(
-                cached.get("tron_low_resource_count") or 0
-            ),
+            "tron_low_resource_count": int(cached.get("tron_low_resource_count") or 0),
         }

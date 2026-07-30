@@ -158,7 +158,9 @@ def refresh_vault_slot_balance_for_transfer(transfer: Transfer) -> None:
     )
 
 
-def refresh_vault_slot_balance_for_collect_task(tx_task: TxTask) -> VaultSlotBalance | None:
+def refresh_vault_slot_balance_for_collect_task(
+    tx_task: TxTask,
+) -> VaultSlotBalance | None:
     """不生成 Transfer 的归集任务确认后刷新余额。"""
     schedule = (
         VaultSlotCollectSchedule.objects.select_related(

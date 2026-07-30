@@ -643,7 +643,10 @@ class InvoiceService:
             return False
         if invoice.transfer_id is not None and invoice.transfer_id != transfer.pk:
             return False
-        if invoice.crypto_id != transfer.crypto_id or invoice.chain_id != transfer.chain_id:
+        if (
+            invoice.crypto_id != transfer.crypto_id
+            or invoice.chain_id != transfer.chain_id
+        ):
             return False
         if invoice.pay_address != transfer.to_address:
             return False
@@ -678,7 +681,9 @@ class InvoiceService:
             invoice.protocol == InvoiceProtocol.NATIVE
             and invoice.transfer.status != TransferStatus.CONFIRMED
         ):
-            raise InvoiceStatusError(f"Invoice transfer must be confirmed, {invoice.sys_no}")
+            raise InvoiceStatusError(
+                f"Invoice transfer must be confirmed, {invoice.sys_no}"
+            )
 
         # 账单确认不依赖 save() 信号，直接 update 可减少并发覆盖面。
         Invoice.objects.filter(pk=invoice.pk).update(

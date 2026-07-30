@@ -131,9 +131,7 @@ class TronScanner:
                     )
                     events_seen += len(parsed_events)
                     for event in parsed_events:
-                        cls._persist_observed_transfer_safely(
-                            observed=event.observed
-                        )
+                        cls._persist_observed_transfer_safely(observed=event.observed)
                     blocks_scanned += 1
                     last_successfully_scanned = block_number
         except TronClientError as exc:

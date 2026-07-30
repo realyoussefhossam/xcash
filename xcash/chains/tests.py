@@ -331,9 +331,12 @@ class AddressIdentityTests(TestCase):
         def fake_get_or_create(**_kwargs):
             raise IntegrityError("unrelated unique constraint")
 
-        with patch.object(
-            Address.objects, "get_or_create", side_effect=fake_get_or_create
-        ), self.assertRaises(IntegrityError):
+        with (
+            patch.object(
+                Address.objects, "get_or_create", side_effect=fake_get_or_create
+            ),
+            self.assertRaises(IntegrityError),
+        ):
             wallet.get_address(
                 chain_type=ChainType.EVM,
                 usage=AddressUsage.HotWallet,
@@ -351,9 +354,7 @@ class WalletGenerationTests(TestCase):
 
         self.assertTrue(wallet_a.encrypted_mnemonic)
         self.assertTrue(wallet_b.encrypted_mnemonic)
-        self.assertNotEqual(
-            wallet_a.encrypted_mnemonic, wallet_b.encrypted_mnemonic
-        )
+        self.assertNotEqual(wallet_a.encrypted_mnemonic, wallet_b.encrypted_mnemonic)
         mnemonic_a = wallet_a.decrypt_mnemonic()
         self.assertEqual(len(mnemonic_a.split()), 24)
         self.assertNotEqual(mnemonic_a, wallet_b.decrypt_mnemonic())
@@ -536,9 +537,7 @@ class TransferServiceCreateObservedTests(TestCase):
         from chains.service import ObservedTransferPayload
         from chains.service import TransferService
 
-        first = ObservedTransferPayload(
-            **{**self.payload.__dict__, "event_index": 0}
-        )
+        first = ObservedTransferPayload(**{**self.payload.__dict__, "event_index": 0})
         second = ObservedTransferPayload(
             **{
                 **self.payload.__dict__,
@@ -556,7 +555,9 @@ class TransferServiceCreateObservedTests(TestCase):
         self.assertTrue(second_result.created)
         self.assertNotEqual(first_result.transfer.pk, second_result.transfer.pk)
         self.assertEqual(
-            Transfer.objects.filter(chain=self.chain, hash=self.payload.tx_hash).count(),
+            Transfer.objects.filter(
+                chain=self.chain, hash=self.payload.tx_hash
+            ).count(),
             2,
         )
         self.assertEqual(enqueue_mock.call_count, 2)
@@ -1125,7 +1126,9 @@ class VaultSlotReceivedFlagTests(TestCase):
         self.assertEqual(balance.synced_block_number, transfer.block)
         self.assertEqual(balance.last_tx_hash, transfer.hash)
 
-    def test_transfer_confirm_sets_vault_slot_balance_worth_zero_without_usd_price(self):
+    def test_transfer_confirm_sets_vault_slot_balance_worth_zero_without_usd_price(
+        self,
+    ):
         transfer = Transfer.objects.create(
             chain=self.chain,
             block=100,
@@ -1722,7 +1725,9 @@ class ConfirmTransferMissingReceiptTests(TestCase):
                 return TxCheckStatus.MISSING
 
         with (
-            patch("chains.tasks.AdapterFactory.get_adapter", return_value=MissingAdapter()),
+            patch(
+                "chains.tasks.AdapterFactory.get_adapter", return_value=MissingAdapter()
+            ),
             patch.object(
                 confirm_transfer.request,
                 "retries",
@@ -1765,9 +1770,7 @@ class BlockNumberUpdatedCompensationTests(TestCase):
             symbol="ETH-BN",
             coingecko_id="ether-bn",
         )
-        self.chain = make_evm_chain(
-            code=ChainCode.Ethereum, latest_block_number=200
-        )
+        self.chain = make_evm_chain(code=ChainCode.Ethereum, latest_block_number=200)
         self.wallet = Wallet.objects.create()
         self.addr = Address.objects.create(
             wallet=self.wallet,
@@ -1870,7 +1873,8 @@ class ProcessTransferAutoretryTests(SimpleTestCase):
             "以覆盖 PG deadlock detected",
         )
         self.assertGreaterEqual(
-            process_transfer.max_retries, 1,
+            process_transfer.max_retries,
+            1,
             "max_retries 必须 >= 1 才能真正触发重试",
         )
         self.assertTrue(
@@ -1999,9 +2003,7 @@ class ReapStaleConfirmingTransfersTests(TestCase):
 
     def test_ignores_confirmed_transfer_regardless_of_age(self):
         transfer = self.make_confirming_transfer(suffix="6a")
-        Transfer.objects.filter(pk=transfer.pk).update(
-            status=TransferStatus.CONFIRMED
-        )
+        Transfer.objects.filter(pk=transfer.pk).update(status=TransferStatus.CONFIRMED)
 
         reaped = self.reap_with_tx_result(TxCheckStatus.MISSING)
 

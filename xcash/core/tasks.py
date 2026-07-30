@@ -11,7 +11,9 @@ logger = structlog.get_logger()
 @singleton_task(timeout=115)
 def scan_operational_risks() -> None:
     """周期性巡检回调链路中的卡单风险，并输出结构化告警。"""
-    summary = OperationalRiskService.build_summary(limit=3, include_resource_checks=True)
+    summary = OperationalRiskService.build_summary(
+        limit=3, include_resource_checks=True
+    )
     # 每轮都刷新缓存（含清零），badge 等展示入口据此低成本判断资源风险，
     # 不必在页面渲染时实时打多链 RPC。须在下方 early-return 之前写入，否则
     # 风险消失（计数归零）那一轮不会更新缓存，badge 会卡在过期的风险态。

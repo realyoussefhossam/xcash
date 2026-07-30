@@ -30,12 +30,8 @@ class VerifyHmacTests(SimpleTestCase):
         for signature in ("你好", "签名值", "abcé"):
             with self.subTest(signature=signature):
                 self.assertFalse(
-                    verify_hmac(
-                        message=self.MESSAGE, key=self.KEY, signature=signature
-                    )
+                    verify_hmac(message=self.MESSAGE, key=self.KEY, signature=signature)
                 )
 
     def test_empty_signature_returns_false(self):
-        self.assertFalse(
-            verify_hmac(message=self.MESSAGE, key=self.KEY, signature="")
-        )
+        self.assertFalse(verify_hmac(message=self.MESSAGE, key=self.KEY, signature=""))

@@ -83,10 +83,7 @@ class VaultSlotCodecTests(SimpleTestCase):
             vault=vault,
         )
         expected_digest = keccak(
-            b"\x41"
-            + tron_address_to_20_bytes(factory)
-            + salt
-            + keccak(init_code)
+            b"\x41" + tron_address_to_20_bytes(factory) + salt + keccak(init_code)
         )
         expected = TronAddressCodec.hex41_to_base58(f"41{expected_digest[-20:].hex()}")
 
@@ -99,10 +96,7 @@ class VaultSlotCodecTests(SimpleTestCase):
 
         self.assertEqual(predicted, expected)
         evm_digest = keccak(
-            b"\xff"
-            + tron_address_to_20_bytes(factory)
-            + salt
-            + keccak(init_code)
+            b"\xff" + tron_address_to_20_bytes(factory) + salt + keccak(init_code)
         )
         evm_style = TronAddressCodec.hex41_to_base58(f"41{evm_digest[-20:].hex()}")
         self.assertNotEqual(predicted, evm_style)
@@ -111,7 +105,9 @@ class VaultSlotCodecTests(SimpleTestCase):
         from chains.keys import sign_tron_transaction
 
         unsigned = {"raw_data_hex": "0a02abcd", "raw_data": {"expiration": 123}}
-        signed = sign_tron_transaction(private_key="1" * 64, unsigned_transaction=unsigned)
+        signed = sign_tron_transaction(
+            private_key="1" * 64, unsigned_transaction=unsigned
+        )
 
         self.assertEqual(signed.tx_hash, sha256(bytes.fromhex("0a02abcd")).hexdigest())
         self.assertEqual(len(signed.raw_transaction["signature"][0]), 130)
@@ -335,9 +331,7 @@ class TronAdapterTests(SimpleTestCase):
             self.trc20_get_balance_with({"result": {"result": True}})
 
     @patch("tron.adapter.TronHttpClient")
-    def test_get_balance_native_rejects_error_payload_instead_of_zero(
-        self, client_cls
-    ):
+    def test_get_balance_native_rejects_error_payload_instead_of_zero(self, client_cls):
         from tron.adapter import TronAdapter
 
         client_cls.return_value.get_account.return_value = {
@@ -375,9 +369,7 @@ class TronAdapterTests(SimpleTestCase):
 
 class TronTransferConfirmationTests(TestCase):
     @patch("tron.adapter.TronHttpClient")
-    def test_confirm_transfer_accepts_native_receipt_without_result(
-        self, client_cls
-    ):
+    def test_confirm_transfer_accepts_native_receipt_without_result(self, client_cls):
         from chains.tasks import confirm_transfer
 
         chain = Chain.objects.create(
@@ -853,7 +845,9 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         sign_transaction.return_value = self.signed_payload(transaction)
         client.get_account.return_value = {"balance": 0}
 
-        with self.assertRaisesMessage(TronClientError, "tron bandwidth trx insufficient"):
+        with self.assertRaisesMessage(
+            TronClientError, "tron bandwidth trx insufficient"
+        ):
             task.broadcast()
 
         client.broadcast_transaction.assert_not_called()
@@ -1020,7 +1014,9 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         TxTask.objects.filter(pk=task.base_task_id).update(
             status=TxTaskStatus.SUBMITTED,
         )
-        task.expiration = int((timezone.now() + timedelta(minutes=1)).timestamp() * 1000)
+        task.expiration = int(
+            (timezone.now() + timedelta(minutes=1)).timestamp() * 1000
+        )
         task.save(update_fields=["expiration"])
 
         task.rebroadcast_expired_submitted()
@@ -1036,7 +1032,9 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         TxTask.objects.filter(pk=task.base_task_id).update(
             status=TxTaskStatus.SUBMITTED,
         )
-        task.expiration = int((timezone.now() - timedelta(minutes=1)).timestamp() * 1000)
+        task.expiration = int(
+            (timezone.now() - timedelta(minutes=1)).timestamp() * 1000
+        )
         task.save(update_fields=["expiration"])
 
         task.rebroadcast_expired_submitted()
@@ -1052,7 +1050,9 @@ class TronTxTaskBroadcastResourceGuardTests(TestCase):
         TxTask.objects.filter(pk=task.base_task_id).update(
             status=TxTaskStatus.SUBMITTED,
         )
-        task.expiration = int((timezone.now() - timedelta(minutes=1)).timestamp() * 1000)
+        task.expiration = int(
+            (timezone.now() - timedelta(minutes=1)).timestamp() * 1000
+        )
         task.save(update_fields=["expiration"])
         for index in range(TRON_MAX_BROADCAST_HASHES):
             task.base_task.append_tx_hash(
@@ -2270,7 +2270,9 @@ class TronScannerTests(TestCase):
         transfers = list(Transfer.objects.filter(hash="1" * 64).order_by("event_index"))
         self.assertEqual(len(transfers), 2)
         self.assertEqual([transfer.event_index for transfer in transfers], [0, 1])
-        self.assertEqual([transfer.amount for transfer in transfers], [Decimal("1"), Decimal("2")])
+        self.assertEqual(
+            [transfer.amount for transfer in transfers], [Decimal("1"), Decimal("2")]
+        )
         self.assertEqual(enqueue_processing_mock.call_count, 2)
 
     @patch("chains.service.TransferService.enqueue_processing")
@@ -2626,7 +2628,10 @@ class TronScannerTests(TestCase):
                     "ret": [{"contractRet": "SUCCESS"}, {"contractRet": "SUCCESS"}],
                     "raw_data": {
                         "contract": [
-                            {"type": "FreezeBalanceV2Contract", "parameter": {"value": {}}},
+                            {
+                                "type": "FreezeBalanceV2Contract",
+                                "parameter": {"value": {}},
+                            },
                             {
                                 "type": "TransferContract",
                                 "parameter": {
@@ -2885,7 +2890,9 @@ class TronReceiptConfirmTaskTests(TestCase):
             )
 
     @patch("tron.saas_gas_billing.retry_vault_slot_collect_gas_fee.delay")
-    @patch("tron.saas_gas_billing.build_tx_detail", side_effect=RuntimeError("rpc down"))
+    @patch(
+        "tron.saas_gas_billing.build_tx_detail", side_effect=RuntimeError("rpc down")
+    )
     def test_collect_gas_fee_build_failure_schedules_retry(
         self,
         _build_tx_detail_mock,
@@ -2937,7 +2944,9 @@ class TronReceiptConfirmTaskTests(TestCase):
 
         for payload in ({}, {"id": "d" * 64, "fee": 1_000_000}):
             with self.subTest(payload=payload):
-                client_cls.return_value.get_transaction_info_by_id.return_value = payload
+                client_cls.return_value.get_transaction_info_by_id.return_value = (
+                    payload
+                )
                 with self.assertRaises(TronClientError):
                     build_tx_detail(chain=self.chain, tx_hash="c" * 64)
 
@@ -3001,9 +3010,7 @@ class TronReceiptConfirmTaskTests(TestCase):
         refresh_balance.assert_called_once()
         self.assertEqual(refresh_balance.call_args.args[0].pk, base_task.pk)
         collect_gas_fee.assert_called_once()
-        self.assertEqual(
-            collect_gas_fee.call_args.kwargs["tx_task"].pk, base_task.pk
-        )
+        self.assertEqual(collect_gas_fee.call_args.kwargs["tx_task"].pk, base_task.pk)
         deploy_gas_fee.assert_not_called()
 
     @patch("tron.tasks.notify_vault_slot_deploy_gas_fee")
@@ -3621,7 +3628,9 @@ class TronCollectScheduleExecuteTests(TestCase):
         self.assertNotEqual(first.tx_task_id, second.tx_task_id)
 
     @patch("tron.vault_slots.TronAdapter.is_contract", return_value=True)
-    def test_execute_due_deletes_pending_schedule_when_balance_is_zero(self, is_contract):
+    def test_execute_due_deletes_pending_schedule_when_balance_is_zero(
+        self, is_contract
+    ):
         schedule = self.make_pending_schedule()
 
         with (
@@ -3635,5 +3644,9 @@ class TronCollectScheduleExecuteTests(TestCase):
             created = VaultSlotCollectSchedule.execute_due()
 
         self.assertEqual(created, 0)
-        self.assertFalse(VaultSlotCollectSchedule.objects.filter(pk=schedule.pk).exists())
-        self.assertFalse(TxTask.objects.filter(tx_type=TxTaskType.VaultSlotCollect).exists())
+        self.assertFalse(
+            VaultSlotCollectSchedule.objects.filter(pk=schedule.pk).exists()
+        )
+        self.assertFalse(
+            TxTask.objects.filter(tx_type=TxTaskType.VaultSlotCollect).exists()
+        )

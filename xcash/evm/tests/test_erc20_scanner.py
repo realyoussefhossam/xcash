@@ -1207,6 +1207,7 @@ class EvmErc20ScannerTests(TestCase):
             datetime=timezone.now(),
             processed_at=timezone.now(),
         )
+
         def advance_block_then_fail(chain):
             # 模拟「扫描已推进部分链高后中途失败」：确认派发依据的是链高确实前进。
             Chain.objects.filter(pk=chain.pk).update(latest_block_number=20)

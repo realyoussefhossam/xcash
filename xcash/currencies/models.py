@@ -53,7 +53,9 @@ class Crypto(models.Model):
     # CoinGecko 的币（如项目方自定义代币）允许留空——它们仍可用于充币等非支付资产流转，只是没有法币价格，
     # 故不会出现在按法币计价的支付（invoice）选项里（见 is_payable 与支付能力门禁）。
     # NULL 让多条无 slug 的币并存而不撞唯一约束；空串在 save() 中归一为 NULL，避免空串互撞。
-    coingecko_id = models.CharField(_("CoinGecko ID"), unique=True, blank=True, null=True)
+    coingecko_id = models.CharField(
+        _("CoinGecko ID"), unique=True, blank=True, null=True
+    )
     active = models.BooleanField(_("启用"), default=True)
     # 是否为链原生币，建币时定死，运行期作为唯一真相（取代旧的硬编码符号名单）。
     is_native = models.BooleanField(_("原生币"), default=False)
@@ -95,9 +97,7 @@ class Crypto(models.Model):
         return CryptoOnChain.objects.get(crypto=self, chain=chain).decimals
 
     def supported_chains(self) -> str:
-        crypto_on_chains = self.crypto_on_chains.select_related(
-            "chain"
-        ).all()
+        crypto_on_chains = self.crypto_on_chains.select_related("chain").all()
         return ", ".join(on_chain.chain.name for on_chain in crypto_on_chains)
 
     @classmethod
@@ -338,7 +338,9 @@ class CryptoOnChain(models.Model):
                 else:
                     self.address = TronAddressCodec.hex41_to_base58(self.address)
             except ValueError as exc:
-                raise ValidationError({"address": _("Tron 合约地址格式无效。")}) from exc
+                raise ValidationError(
+                    {"address": _("Tron 合约地址格式无效。")}
+                ) from exc
             return
 
         raise ValidationError({"chain": _("不支持的链类型。")})

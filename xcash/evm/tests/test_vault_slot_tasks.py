@@ -333,7 +333,9 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertEqual(address, slot.address)
         schedule.assert_not_called()
 
-    def test_first_ensure_deposit_address_schedules_deploy_for_native_after_commit(self):
+    def test_first_ensure_deposit_address_schedules_deploy_for_native_after_commit(
+        self,
+    ):
         self.project.evm_vault = Web3.to_checksum_address(
             "0x0000000000000000000000000000000000000f01"
         )
@@ -704,9 +706,7 @@ class VaultSlotAddressSchedulingTests(TestCase):
         Chain.objects.filter(pk=self.chain.pk).update(latest_block_number=100)
         self.chain.refresh_from_db()
 
-        with patch.object(
-            type(self.chain), "w3", new_callable=PropertyMock
-        ) as w3_mock:
+        with patch.object(type(self.chain), "w3", new_callable=PropertyMock) as w3_mock:
             w3_mock.return_value.eth.get_transaction.return_value = {
                 "hash": tx_hash,
                 "from": self.system_sender.address,
@@ -1153,7 +1153,9 @@ class VaultSlotAddressSchedulingTests(TestCase):
         self.assertEqual(tx_detail["native_price"], "2000")
 
     @patch("evm.saas_gas_billing.retry_vault_slot_deploy_gas_fee.delay")
-    @patch("evm.saas_gas_billing._build_tx_detail", side_effect=RuntimeError("rpc down"))
+    @patch(
+        "evm.saas_gas_billing._build_tx_detail", side_effect=RuntimeError("rpc down")
+    )
     def test_deploy_gas_fee_build_failure_schedules_retry(
         self,
         _build_tx_detail_mock,
@@ -1700,7 +1702,9 @@ class VaultSlotAddressSchedulingTests(TestCase):
             created_count = VaultSlotCollectSchedule.execute_due()
 
         self.assertEqual(created_count, 0)
-        self.assertFalse(VaultSlotCollectSchedule.objects.filter(pk=schedule.pk).exists())
+        self.assertFalse(
+            VaultSlotCollectSchedule.objects.filter(pk=schedule.pk).exists()
+        )
         self.assertFalse(
             EvmTxTask.objects.filter(
                 base_task__tx_type=TxTaskType.VaultSlotCollect
@@ -2334,9 +2338,7 @@ class EvmEstimateCollectGasTests(TestCase):
         )
 
     def patch_hot_wallet(self):
-        sender = SimpleNamespace(
-            address=Web3.to_checksum_address("0x" + "11" * 20)
-        )
+        sender = SimpleNamespace(address=Web3.to_checksum_address("0x" + "11" * 20))
         wallet = SimpleNamespace(get_address=Mock(return_value=sender))
         return patch(
             "evm.vault_slots.SystemWallet.get_current",

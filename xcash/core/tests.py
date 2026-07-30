@@ -91,9 +91,7 @@ class AdminPathConfigTests(SimpleTestCase):
 
         self.assertEqual(str(patterns[0].pattern), "secure-admin")
         self.assertEqual(str(patterns[1].pattern), "secure-admin/")
-        self.assertEqual(
-            str(patterns[2].pattern), "secure-admin/operations/inspection"
-        )
+        self.assertEqual(str(patterns[2].pattern), "secure-admin/operations/inspection")
         self.assertEqual(str(patterns[-1].pattern), "secure-admin/")
 
     def test_admin_session_timeout_middleware_detects_root_admin_route(self):
@@ -358,7 +356,9 @@ class OperationalInspectionPayloadTests(TestCase):
         payload = _build_operational_inspection_payload(self.empty_metrics())
 
         self.assertEqual(len(payload["attention_items"]), 1)
-        self.assertEqual(str(payload["inspection_sections"][0]["title"]), "后台安全配置")
+        self.assertEqual(
+            str(payload["inspection_sections"][0]["title"]), "后台安全配置"
+        )
         self.assertEqual(payload["inspection_sections"][0]["count"], 1)
         self.assertEqual(
             str(payload["inspection_sections"][0]["rows"][0]["title"]),
@@ -784,11 +784,6 @@ class LocalChainIntegrationMixin:
             )
             w3.eth.wait_for_transaction_receipt(mint_hash)
         return token
-
-
-
-
-
 
 
 class LocalEvmContractCompatibilityTests(LocalChainIntegrationMixin, TestCase):

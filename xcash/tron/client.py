@@ -97,7 +97,9 @@ class TronHttpClient:
                         json=json_body,
                     )
                 else:
-                    raise ValueError(f"unsupported HTTP method: {method}")  # noqa: TRY301
+                    raise ValueError(  # noqa: TRY301
+                        f"unsupported HTTP method: {method}"
+                    )
             except Exception as exc:  # noqa: BLE001
                 if not self._is_retriable_http_error(exc):
                     raise TronClientError(f"{request_label} from {chain_code}") from exc

@@ -2209,7 +2209,9 @@ class InvoiceVaultSlotPaymentTest(TestCase, InvoiceTestMixin):
             )
 
         self.assertNotEqual(second_pay_address, first_pay_address)
-        second_slot = VaultSlot.objects.get(address=second_pay_address, chain=self.chain)
+        second_slot = VaultSlot.objects.get(
+            address=second_pay_address, chain=self.chain
+        )
         self.assertEqual(second_slot.invoice_index, first_slot.invoice_index + 1)
         self.assertEqual(
             VaultSlot.objects.filter(
@@ -2922,9 +2924,7 @@ class InvoicePaymentUriTests(InvoiceTestMixin, TestCase):
     以及精度溢出、非 EVM 链、未分配支付指引时的安全降级（返回 None）。
     """
 
-    PAY_ADDRESS = Web3.to_checksum_address(
-        "0x00000000000000000000000000000000000000d1"
-    )
+    PAY_ADDRESS = Web3.to_checksum_address("0x00000000000000000000000000000000000000d1")
 
     def setUp(self):
         # USDT @ Ethereum，decimals=6，chainId=1。
@@ -3043,9 +3043,7 @@ class InvoiceEvmWalletPaymentTests(InvoiceTestMixin, TestCase):
     编码属核心逻辑：编错会导致钱包按错误金额/收款人发交易，必须断言到字节。
     """
 
-    PAY_ADDRESS = Web3.to_checksum_address(
-        "0x00000000000000000000000000000000000000d1"
-    )
+    PAY_ADDRESS = Web3.to_checksum_address("0x00000000000000000000000000000000000000d1")
 
     def setUp(self):
         # USDT @ Ethereum，decimals=6，chainId=1。
@@ -3148,9 +3146,7 @@ class InvoiceEvmWalletPaymentTests(InvoiceTestMixin, TestCase):
 class InvoicePublicEvmPaymentFieldTests(InvoiceTestMixin, TestCase):
     """公开 retrieve 端点 JSON 必须含 evm_payment 键：EVM 为对象、非 EVM 为 null。"""
 
-    PAY_ADDRESS = Web3.to_checksum_address(
-        "0x00000000000000000000000000000000000000d2"
-    )
+    PAY_ADDRESS = Web3.to_checksum_address("0x00000000000000000000000000000000000000d2")
 
     def setUp(self):
         self.factory = APIRequestFactory()
