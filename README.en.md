@@ -119,6 +119,10 @@ Xcash provides two collection modes. Decide which one fits your business before 
 - **Invoice payments** — each transaction creates a fixed-amount, time-limited invoice that completes when the buyer pays. Supports both direct-to-wallet collection and smart-contract collection, where every invoice gets an independent contract address — no address collisions, no amount fudging, high concurrency by default. Ideal for e-commerce checkout and subscription billing.
 - **Deposits** — every user gets a dedicated deposit address, shared across chains and monitored in real time. Users transfer in whenever they like and are credited after block confirmation, with no order to create — the same UX as an exchange. Ideal for wallets, trading platforms, and any business that maintains user balances.
 
+Invoice payments ship with a built-in buyer-facing payment page, ready to use out of the box in English and Chinese:
+
+![Xcash payment page](xcash/static/xcash-pay-page-en.png)
+
 ## Features
 
 | Feature | Detail |
