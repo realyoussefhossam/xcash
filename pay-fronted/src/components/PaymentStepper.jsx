@@ -8,6 +8,7 @@ import PaymentMethodSelector from "@/components/PaymentMethodSelector"
 import PaymentAddress from "@/components/PaymentAddress"
 import WaitingPayment from "@/components/WaitingPayment"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import { useI18n } from "@/hooks/useI18n"
 import { isPaymentConfirming } from "@/lib/invoiceStatus"
 
@@ -16,14 +17,30 @@ function ExpiredOrderCard() {
 
   return (
     <div className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-      <div className="flex flex-col items-center gap-5 rounded-2xl border bg-card px-8 py-14 text-center shadow-sm">
-        <div className="relative flex size-16 items-center justify-center">
-          <span className="absolute inset-0 rounded-full bg-destructive/10" />
-          <TimerOff className="size-8 text-destructive" />
+      <div className="glow-card overflow-hidden rounded-2xl border bg-card shadow-md">
+        {/* 头部：与收款卡同语言 —— 红色着色横幅 + 图标方块 + 状态胶囊 */}
+        <div className="flex items-center gap-3.5 border-b bg-gradient-to-br from-[#e5484d17] via-transparent to-transparent px-6 py-5 dark:from-[#ff5f5712]">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-destructive/10 ring-1 ring-destructive/30">
+            <TimerOff className="size-5 text-destructive" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold tracking-tight">{t("expired.orderExpired")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("expired.contactMerchant")}</p>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
+            <span className="size-1.5 rounded-full bg-current" />
+            {t("invoice.status.expired")}
+          </span>
         </div>
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold tracking-tight">{t("expired.orderExpired")}</h2>
-          <p className="text-sm text-muted-foreground">{t("expired.contactMerchant")}</p>
+
+        <div className="px-6 py-6">
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => window.location.reload()}
+          >
+            {t("expired.refreshPage")}
+          </Button>
         </div>
       </div>
     </div>
