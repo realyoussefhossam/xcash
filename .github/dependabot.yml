@@ -1,0 +1,55 @@
+version: 2
+
+# 本项目所有依赖都精确 pin（见 pyproject.toml），好处是部署可复现，代价是没人
+# 主动升级就永远停在旧版本——Django / cryptography / web3 这类包的安全补丁会被漏掉。
+# 因此统一按周检查，并【按生态分组成单个 PR】：分组后每周最多几个 PR，
+# 既不会淹没 review，也保证补丁不会无人问津。
+updates:
+  # Python 依赖：uv 生态同时理解 pyproject.toml 的精确 pin 与 uv.lock。
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # 运行时依赖单独成组：这些会进生产镜像，需要人工确认后再合。
+      production-dependencies:
+        dependency-type: "production"
+      # 开发工具链合成一个 PR：ruff/black/mypy/pytest 之类升级互不相干，
+      # 逐个开 PR 只是噪音。
+      dev-dependencies:
+        dependency-type: "development"
+
+  # 支付前端（pnpm）
+  - package-ecosystem: "npm"
+    directory: "/pay-fronted"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      pay-fronted:
+        patterns: ["*"]
+
+  # CI 里用到的 action 版本
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # 容器基础镜像（Dockerfile 里的 uv / python / caddy）。
+  # 注意 docker-compose.yml 里的 postgres / redis 镜像 tag 不在此生态覆盖范围内，
+  # 仍需人工跟进。
+  - package-ecosystem: "docker"
+    directory: "/compose/production/django"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      docker-images:
+        patterns: ["*"]

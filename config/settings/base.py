@@ -326,10 +326,10 @@ SESSION_COOKIE_HTTPONLY = True
 ADMIN_PATH = normalize_admin_path(env.str("ADMIN_PATH", default=""))
 ADMIN_ROUTE_PREFIX = admin_route_prefix(ADMIN_PATH)
 ADMIN_PATH_CONFIGURED = bool(ADMIN_PATH)
-ADMINS = [("""Hawking""", "hawking@xca.sh")]
-# https://docs.djangoproject.com/en/dev/ref/settings/#managers
-MANAGERS = ADMINS
-# https://cookiecutter-django.readthedocs.io/en/latest/settings.html#other-environment-settings
+# 不配置 ADMINS / MANAGERS：本项目没有任何 EMAIL_BACKEND，Django 的 mail_admins 与
+# AdminEmailHandler 均未启用，配了也发不出去；且开源仓库里写死某个私人邮箱，会让
+# 每个自托管部署的错误报告都默认指向该地址。错误统一走 structlog JSON 打到 stdout，
+# 由部署方的日志采集链路接管。
 
 # CACHES
 # ------------------------------------------------------------------------------
@@ -339,6 +339,11 @@ CACHES = {
         "LOCATION": REDIS_CACHE_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # django-redis 默认【不设任何 socket 超时】：Redis 进程假死或网络黑洞时，
+            # 缓存调用会永久阻塞在 recv 上，把 gunicorn 的 gthread 线程逐个耗尽，
+            # 表现为整站挂起而非快速失败。缓存操作本身是亚毫秒级的，5s 已极宽裕。
+            "SOCKET_CONNECT_TIMEOUT": 5,
+            "SOCKET_TIMEOUT": 5,
         },
     },
 }

@@ -253,6 +253,44 @@ SITE_DOMAIN=xcash.example.com
 
 请确保该域名的 DNS 已解析到服务器 IP，并配置 Nginx 或 Caddy 等反向代理，将流量转发至 `http://localhost:6688`。
 
+#### 反向代理必须转发真实客户端 IP 与协议
+
+**这一步不是可选项。** 网关的商户 IP 白名单、登录限流和全部 API 限流都以真实客户端 IP 为判定依据；HSTS 与 Secure Cookie 则依赖请求协议判定。如果你的反向代理没有转发这两项信息，Xcash 只能看到 Docker 网关地址，后果是：
+
+- 商户 IP 白名单对所有请求失效（配了白名单的商户会被全部拒绝）；
+- 所有 IP 维度限流塌缩成「全站共用一个桶」，任何人都能打满登录限流，形成针对全体管理员的登录拒服；
+- Django 始终认为请求是明文 HTTP，HSTS 不下发。
+
+**Nginx 示例：**
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:6688;
+    proxy_set_header Host $host;
+    # 真实客户端 IP。必须用 $remote_addr（覆写语义）
+    proxy_set_header X-Real-IP $remote_addr;
+    # 原始请求协议，HSTS 与 Secure Cookie 依赖它
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+> ⚠️ 不要用 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` 作为唯一来源。那是**追加**语义，链最左侧的值来自客户端请求头、可被任意伪造。Xcash 优先采信 `X-Real-IP`，所以按上面写就是安全的。
+
+**Caddy 示例**（Caddy 会自动转发 `X-Forwarded-For` 与 `X-Forwarded-Proto`，无需手动设置）：
+
+```caddyfile
+xcash.example.com {
+    reverse_proxy 127.0.0.1:6688
+}
+```
+
+**若把 6688 端口对外暴露**（在 `.env` 里设置 `LISTEN_TO=0.0.0.0`，例如反向代理部署在另一台机器），必须同时收紧受信代理范围，否则任何能连到该端口的来源都可以伪造客户端 IP：
+
+```env
+# 默认为 private_ranges（信任私有网段），改成反向代理机器的具体 IP
+CADDY_TRUSTED_PROXIES=203.0.113.10
+```
+
 可选：设置 `ADMIN_PATH` 将后台入口移动到自定义路径，例如：
 
 ```env
@@ -301,7 +339,55 @@ docker compose up -d
 
 创建账单收款时可传入账单收款级 `notify_url` 覆盖项目默认 Webhook；兼容易支付 V1 的 `submit.php` 入口也会将 `notify_url` 翻译为账单收款自身的通知地址。
 
+## 备份与恢复
+
+### 必须成对备份的两样东西
+
+Xcash 的助记词以 AES-256-GCM 加密入库，加密密钥不在数据库里，而在 `.env` 的 `WALLET_MNEMONIC_ENCRYPTION_KEY`。因此：
+
+| 备份内容 | 位置 | 只有它的后果 |
+| --- | --- | --- |
+| Postgres 数据 | `db` 容器 / `db_data` 卷 | 助记词无法解密，等于没备份 |
+| `.env` | 项目根目录 | 没有业务数据，等于没备份 |
+
+**两者必须作为一对、同一时点一起备份。** 任何一份单独存在都无法恢复钱包。`WALLET_MNEMONIC_ENCRYPTION_KEY` 一旦丢失即不可恢复——热钱包私钥永久失效、归集能力全部失效。
+
+> `scripts/upgrade.sh` 在迁移演练中生成的 dump **不是备份**：演练成功后会立即删除，只在演练失败时保留供排查。请另行建立独立的定期备份。
+
+### 备份数据库
+
+```bash
+docker compose exec -T db sh -c 'pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > xcash-$(date +%Y%m%d-%H%M%S).dump
+```
+
+建议：
+
+- 至少每天一次，并把 dump 与 `.env` 一起加密后传到**服务器之外**的存储（同机备份无法应对磁盘损坏与主机丢失）；
+- `.env` 内容长期不变，可离线保存一份（如密码管理器或纸质），无需每天重传；
+- 定期做一次**恢复演练**——没验证过的备份不能算备份。
+
+### 恢复
+
+```bash
+# 1. 停止业务服务，保留数据库
+docker compose stop django worker beat
+
+# 2. 把 .env 恢复到位（务必是与该 dump 同时点的那一份）
+
+# 3. 灌入 dump（目标库需为空库）
+docker compose exec -T db sh -c 'pg_restore --exit-on-error --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < xcash-YYYYmmdd-HHMMSS.dump
+
+# 4. 拉起服务
+docker compose up -d
+```
+
 ## 运维命令
+
+查看各服务运行与健康状态（`healthy` / `unhealthy` 来自内置健康检查）：
+
+```bash
+docker compose ps
+```
 
 停止服务（移除服务容器，保留数据库数据卷）：
 
@@ -313,6 +399,12 @@ docker compose down
 
 ```bash
 ./scripts/upgrade.sh
+```
+
+扩容 Celery worker（业务量增长时，`PERFORMANCE` 档位之外的横向扩容手段）：
+
+```bash
+docker compose up -d --scale worker=3
 ```
 
 ## 技术栈

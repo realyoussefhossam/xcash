@@ -253,6 +253,44 @@ SITE_DOMAIN=xcash.example.com
 
 Make sure the domain's DNS resolves to the server IP, and configure a reverse proxy such as Nginx or Caddy to forward traffic to `http://localhost:6688`.
 
+#### Your reverse proxy must forward the real client IP and protocol
+
+**This step is not optional.** The gateway's merchant IP allowlist, login throttling and all API rate limits are keyed on the real client IP, and HSTS plus Secure cookies depend on the request protocol. If your reverse proxy does not forward both, Xcash only ever sees the Docker gateway address, which means:
+
+- merchant IP allowlists reject every request;
+- all IP-based rate limits collapse into a single shared bucket, so anyone can exhaust the login limit and lock out every administrator;
+- Django always believes the request arrived over plain HTTP, so HSTS is never sent.
+
+**Nginx:**
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:6688;
+    proxy_set_header Host $host;
+    # Real client IP. Must use $remote_addr, which overwrites the header
+    proxy_set_header X-Real-IP $remote_addr;
+    # Original protocol; HSTS and Secure cookies depend on it
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+> ⚠️ Do not rely on `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` as the only source. That **appends**, so the leftmost entry comes straight from the client request and can be forged. Xcash prefers `X-Real-IP`, so the configuration above is safe.
+
+**Caddy** (Caddy forwards `X-Forwarded-For` and `X-Forwarded-Proto` automatically, no extra headers needed):
+
+```caddyfile
+xcash.example.com {
+    reverse_proxy 127.0.0.1:6688
+}
+```
+
+**If you expose port 6688 beyond the host** (setting `LISTEN_TO=0.0.0.0` in `.env`, e.g. the reverse proxy runs on a separate machine), you must also narrow the trusted proxy range, otherwise anyone who can reach that port can forge the client IP:
+
+```env
+# Defaults to private_ranges; set it to your reverse proxy's actual IP
+CADDY_TRUSTED_PROXIES=203.0.113.10
+```
+
 Optional: set `ADMIN_PATH` to move the admin entrance to a custom path, for example:
 
 ```env
@@ -301,7 +339,55 @@ After deployment, follow the [API documentation](https://xca.sh/docs/#api-base) 
 
 Invoice creation accepts an invoice-level `notify_url` that overrides the project's default webhook; the EasyPay V1-compatible `submit.php` entry point maps `notify_url` to the invoice-level notification URL as well.
 
+## Backup and restore
+
+### Two things that must be backed up together
+
+Xcash stores wallet mnemonics encrypted with AES-256-GCM. The encryption key does not live in the database — it lives in `.env` as `WALLET_MNEMONIC_ENCRYPTION_KEY`. Therefore:
+
+| What to back up | Where it lives | If you only have this |
+| --- | --- | --- |
+| Postgres data | `db` container / `db_data` volume | Mnemonics cannot be decrypted — no backup at all |
+| `.env` | Project root | No business data — no backup at all |
+
+**They must be captured as a pair, from the same point in time.** Neither half can restore a wallet on its own. Losing `WALLET_MNEMONIC_ENCRYPTION_KEY` is unrecoverable: hot wallet keys are gone for good and sweeping stops working permanently.
+
+> The dump that `scripts/upgrade.sh` creates for its migration rehearsal **is not a backup**: it is deleted as soon as the rehearsal succeeds, and kept only when the rehearsal fails, for debugging. Set up your own independent, scheduled backups.
+
+### Back up the database
+
+```bash
+docker compose exec -T db sh -c 'pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > xcash-$(date +%Y%m%d-%H%M%S).dump
+```
+
+Recommendations:
+
+- At least daily, and ship the dump plus `.env` encrypted to storage **off this server** (a backup on the same host survives neither disk failure nor host loss).
+- `.env` rarely changes, so one offline copy is enough (password manager or paper) — no need to re-upload it daily.
+- Rehearse a restore periodically. A backup you have never restored is not a backup.
+
+### Restore
+
+```bash
+# 1. Stop application services, keep the database running
+docker compose stop django worker beat
+
+# 2. Put .env back in place (it must be the copy matching this dump)
+
+# 3. Load the dump (the target database must be empty)
+docker compose exec -T db sh -c 'pg_restore --exit-on-error --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < xcash-YYYYmmdd-HHMMSS.dump
+
+# 4. Bring the services back up
+docker compose up -d
+```
+
 ## Operations
+
+Show service status and health (`healthy` / `unhealthy` come from the built-in health checks):
+
+```bash
+docker compose ps
+```
 
 Stop the services (containers are removed, database volumes are kept):
 
@@ -313,6 +399,12 @@ Upgrade to the latest version (pulls the latest `main` and runs the full product
 
 ```bash
 ./scripts/upgrade.sh
+```
+
+Scale out Celery workers (horizontal scaling beyond the `PERFORMANCE` tiers, as volume grows):
+
+```bash
+docker compose up -d --scale worker=3
 ```
 
 ## Tech stack

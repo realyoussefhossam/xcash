@@ -1,7 +1,7 @@
 ENV_FILE ?= .env
 DC = docker compose --env-file $(ENV_FILE) -f docker-compose.dev.yml
 
-.PHONY: help init-env up down upgrade dev-sync dev-up dev-up-pro dev-up-deps dev-up-chain dev-down dev-logs dev-chain-logs dev-ps dev-web dev-worker dev-worker-stress dev-worker-scan dev-beat dev-manage dev-mm dev-migrate dev-clear-migrations dev-shell dev-test pytest dev-local-init dev-bootstrap
+.PHONY: help init-env up down upgrade dev-sync lint fmt typecheck dev-up dev-up-pro dev-up-deps dev-up-chain dev-down dev-logs dev-chain-logs dev-ps dev-web dev-worker dev-worker-stress dev-worker-scan dev-beat dev-manage dev-mm dev-migrate dev-clear-migrations dev-shell dev-test pytest dev-local-init dev-bootstrap
 
 help:
 	@echo "可用命令："
@@ -9,8 +9,12 @@ help:
 	@echo "  make up              启动生产 Docker Compose 服务"
 	@echo "  make down            停止生产 Docker Compose 服务"
 	@echo "  make upgrade         升级到 main 最新版"
-	@echo "  开发环境准备：cp .env.example .env 后按需改成开发值"
+	@echo "  开发环境准备：无需 .env，dev 脚本自带本地默认值（127.0.0.1 + postgres/postgres）；"
+	@echo "                需要覆盖时再手写 .env（生产 .env 由 make init-env 生成）"
 	@echo "  make dev-sync         同步本地开发依赖（uv dev group）"
+	@echo "  make lint             ruff + black 检查（不改文件）"
+	@echo "  make fmt              black 格式化"
+	@echo "  make typecheck        mypy 增量类型排查（存量错误多，非门禁）"
 	@echo "  make dev-up           前台运行 Django + Celery（开发模式）"
 	@echo "  make dev-up-pro       生产级方式运行（gunicorn + 高并发 worker，适合压测）"
 	@echo "  make dev-up-deps      仅启动 db/redis"
@@ -48,6 +52,17 @@ upgrade:
 
 dev-sync:
 	uv sync --group dev
+
+lint:
+	uv run ruff check .
+	uv run black --check .
+
+fmt:
+	uv run black .
+
+# mypy 存量错误较多，只作增量排查用，不是门禁（详见 pyproject.toml 的说明）。
+typecheck:
+	uv run mypy
 
 dev-up:
 	ENV_FILE=$(ENV_FILE) ./scripts/dev-up.sh

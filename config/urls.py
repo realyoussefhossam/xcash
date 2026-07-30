@@ -6,6 +6,7 @@ from django.urls import path
 from django.views.generic import RedirectView
 
 from core.dashboard import operational_inspection_view
+from core.health import health_view
 from invoices.epay.views import EpaySubmitView
 from invoices.views import payment_view
 
@@ -39,6 +40,9 @@ def build_admin_urlpatterns():
 
 
 urlpatterns = [
+    # 容器健康探测。必须注册在 build_admin_urlpatterns() 之前：未设置 ADMIN_PATH 时
+    # admin 挂在站点根路径且是 catch-all，后注册的 /health 会被它吞掉。
+    path("health", health_view, name="health"),
     path("v1/", include("config.api_v1")),
     path("epay/submit.php", EpaySubmitView.as_view(), name="epay-submit"),
     # 支付前端 SPA：返回 index.html，由 React 根据 sys_no 渲染支付页
