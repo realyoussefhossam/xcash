@@ -1,5 +1,7 @@
 <div align="center">
 
+**English** · [简体中文](README.zh-CN.md)
+
 # Xcash
 
 **Self-hosted, non-custodial crypto payment gateway**
@@ -21,8 +23,10 @@ Funds move through smart contracts straight into your own wallet:
   <a href="#quick-start">Quick Start</a> ·
   <a href="https://xca.sh/docs/">Documentation</a> ·
   <a href="API.md">API Reference</a> ·
-  <a href="README.zh-CN.md">简体中文</a>
+  <a href="https://xca.sh">Website</a>
 </p>
+
+<sub>E-commerce checkout · USDT deposits · Cross-border settlement · SaaS subscriptions · Wallets &amp; exchanges</sub>
 
 </div>
 
@@ -32,7 +36,7 @@ Funds move through smart contracts straight into your own wallet:
 
 Hosted crypto payment processors stand between you and your money: they take custody of funds until payout, charge a percentage of every transaction, require KYC, and can freeze your account — or shut down entirely. Xcash takes the opposite approach: the gateway runs on your server, and the money never stops being yours.
 
-- **Non-custodial by design** — collections flow through minimal smart contracts whose destination is hard-coded to your own collection address. Xcash handles invoice matching, confirmations and notifications; it is never in the fund path.
+- **Non-custodial by design** — collections flow through minimal smart contracts whose destination is hard-coded to your own collection address. The system holds no key to your business funds, so a full database dump leaves an attacker nothing to steal. Xcash handles invoice matching, confirmations and notifications; it is never in the fund path.
 - **Zero platform fees** — no percentage cut when you self-host. You only pay on-chain gas, and batched sweeping keeps the cost of a sweep close to a plain token transfer.
 - **Stablecoin-first, multi-chain** — any ERC-20 on Ethereum, BNB Chain, Arbitrum, Base, Polygon, Optimism and other EVM chains; USDT and native TRX on Tron.
 - **Two collection modes in one system** — invoice payments for checkout and subscriptions, plus exchange-style dedicated deposit addresses for platforms that maintain user balances.
@@ -129,7 +133,17 @@ Xcash provides two collection modes. Decide which one fits your business before 
 | On-chain risk screening | MistTrack risk scores for payer and deposit source addresses, exposed via API and webhooks |
 | Webhook callbacks | Real-time payment and deposit events, automatic retries, nonce-based idempotency |
 | EasyPay compatibility | Standard EasyPay (易支付) V1 protocol for painless migration from legacy systems |
+| REST API | Clean RESTful endpoints with HMAC-SHA256 request signing |
 | Docker deployment | One-command production deployment with Docker Compose |
+
+## Works with your existing stack
+
+Depending on what you run, you may not need to write integration code at all:
+
+- **WooCommerce** — the official **Xcash for WooCommerce** plugin adds USDT, USDC and other crypto checkout to a WordPress store in a few steps. [Download](https://xca.sh/#integration)
+- **EasyPay (易支付) ecosystem** — any system that already speaks the standard EasyPay V1 protocol plugs in without rewriting its existing integration: Xboard, V2board, New API, 独角数卡, 异次元发卡 (WHMCS in progress).
+
+Everything else integrates through the [REST API](API.md): a handful of HMAC-signed calls to create an invoice or hand out a deposit address, plus webhooks that push payment and deposit events in real time — MistTrack risk score included.
 
 ## Chain support
 
@@ -425,7 +439,9 @@ docker compose up -d --scale worker=3
 
 ## Hosted cloud
 
-If you'd rather not deploy and maintain Xcash yourself, use the official hosted version at **[xca.sh](https://xca.sh)** — no deployment, no maintenance, continuously updated, and the first $500 of monthly volume is fee-free.
+If you'd rather not deploy and maintain Xcash yourself, use the official hosted version at **[xca.sh](https://xca.sh)** — no deployment, no maintenance, continuously updated.
+
+Fees are tiered on monthly volume and charged per tier: **the first $500 every month is free**, then 1% → 0.8% → 0.6% → 0.4% as volume grows. Self-hosting stays free and fee-free either way.
 
 ## Support
 
