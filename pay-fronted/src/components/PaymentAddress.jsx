@@ -28,6 +28,19 @@ function CopyButton({ copied, onCopy, className }) {
   )
 }
 
+// waffo 式字段盒：标签行（左标签 + 右动作）+ 内容区，承载地址/金额/哈希等可复制字段
+function FieldBox({ label, action, children, className }) {
+  return (
+    <div className={cn("rounded-xl border bg-muted/30 px-4 py-3.5", className)}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        {action}
+      </div>
+      <div className="mt-2">{children}</div>
+    </div>
+  )
+}
+
 function PaymentAddress({ invoice, onReset, onBroadcast }) {
   const { t } = useI18n()
   const { getChain, getCrypto } = useMetadataContext()
@@ -86,63 +99,87 @@ function PaymentAddress({ invoice, onReset, onBroadcast }) {
       })
   }
 
+  const headerTitle = isCompleted
+    ? t("payment.paymentCompleted")
+    : isFinalizing
+      ? t("payment.paymentFinalizing")
+      : isConfirming
+        ? t("payment.paymentConfirming")
+        : t("payment.paymentInfo")
+
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card shadow-md">
-      {/* 头部：状态 */}
-      <div className="border-b bg-muted/40 px-6 py-5">
-        <h2 className="text-lg font-semibold tracking-tight">
-          {isCompleted
-            ? t("payment.paymentCompleted")
-            : isFinalizing
-              ? t("payment.paymentFinalizing")
-              : isConfirming
-                ? t("payment.paymentConfirming")
-                : t("payment.paymentInfo")}
-        </h2>
-        <div className="mt-1 text-sm text-muted-foreground">
-          {isCompleted ? (
-            <span className="flex items-center gap-1.5 text-success">
-              <CheckCircle2 className="size-3.5" />
-              {t("confirmation.transactionConfirmed")}
-            </span>
-          ) : isFinalizing ? (
-            <span className="flex items-center gap-1.5">
-              <Clock className="size-3.5" />
-              {t("confirmation.awaitingFinalization")}
-            </span>
-          ) : isConfirming ? (
-            <span className="flex items-center gap-1.5">
-              <Clock className="size-3.5" />
-              {t("confirmation.waitingConfirmation")}
-            </span>
-          ) : (
-            <span>
-              {t("payment.transferInstruction", {
-                amount: invoice.pay_amount,
-                crypto: invoice.crypto,
-              })}
-            </span>
-          )}
+    <div className="glow-card overflow-hidden rounded-2xl border bg-card shadow-md">
+      {/* 头部：waffo 式着色横幅 —— 图标方块 + 标题/副标题 + 右侧网络胶囊 */}
+      <div className="flex items-center gap-3.5 border-b bg-gradient-to-br from-[#0a934d17] via-transparent to-transparent px-6 py-5 dark:from-[#72e85712]">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand-soft ring-1 ring-brand-border">
+          <img
+            src={chainMeta.icon || undefined}
+            alt=""
+            className="size-6 rounded-full"
+            onError={(e) => { e.target.style.visibility = "hidden" }}
+          />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold tracking-tight">{headerTitle}</h2>
+          <div className="mt-0.5 text-sm text-muted-foreground">
+            {isCompleted ? (
+              <span className="flex items-center gap-1.5 text-success">
+                <CheckCircle2 className="size-3.5" />
+                {t("confirmation.transactionConfirmed")}
+              </span>
+            ) : isFinalizing ? (
+              <span className="flex items-center gap-1.5">
+                <Clock className="size-3.5" />
+                {t("confirmation.awaitingFinalization")}
+              </span>
+            ) : isConfirming ? (
+              <span className="flex items-center gap-1.5">
+                <Clock className="size-3.5" />
+                {t("confirmation.waitingConfirmation")}
+              </span>
+            ) : (
+              <span>
+                {t("payment.transferInstruction", {
+                  amount: invoice.pay_amount,
+                  crypto: invoice.crypto,
+                })}
+              </span>
+            )}
+          </div>
         </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-brand-border bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand">
+          <img
+            src={chainMeta.icon || undefined}
+            alt=""
+            className="size-3.5 rounded-full"
+            onError={(e) => { e.target.style.visibility = "hidden" }}
+          />
+          {chainMeta.name}
+          {chainMeta.isTestnet && ` · ${t("selector.testNetwork")}`}
+        </span>
       </div>
 
-      <div className="flex flex-col gap-6 px-6 py-6">
+      <div className="flex flex-col gap-4 px-6 py-6">
         {/* Confirmation progress */}
         {hasPayment && (isConfirming || isCompleted) && (
-          <div className="flex flex-col gap-4">
-            <div className="relative overflow-hidden rounded-xl border border-success-border bg-success-soft p-5">
+          <>
+            <div className="relative overflow-hidden rounded-xl border border-success-border bg-success-soft p-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">
+                <span className="text-xs font-medium text-muted-foreground">
                   {t("confirmation.blockConfirmation")}
                 </span>
-                <span className="font-mono text-lg font-bold tabular-nums text-success">
+                <span className="font-mono text-sm font-bold tabular-nums text-success">
                   {progress}%
                 </span>
               </div>
-              <div className="mt-3">
-                <Progress value={progress} />
+              <div className="mt-2.5">
+                <Progress
+                  value={progress}
+                  className="bg-[#e4e9ee] dark:bg-[#26313d]"
+                  indicatorClassName="bg-gradient-to-r from-[#3dcf40] to-[#72e857] shadow-[0_0_10px_#72e85780]"
+                />
               </div>
-              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+              <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground">
                 <span>{t("confirmation.confirmed")} {hasConfirmedCount} {t("confirmation.blocks")}</span>
                 <span>{t("confirmation.needs")} {needConfirmedCount} {t("confirmation.blocks")}</span>
               </div>
@@ -153,112 +190,79 @@ function PaymentAddress({ invoice, onReset, onBroadcast }) {
 
             {/* Transaction hash */}
             {invoice.payment.hash && (
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("payment.transactionHash")}
-                </span>
-                <code className="block break-all rounded-xl bg-muted p-3.5 font-mono text-xs leading-relaxed text-muted-foreground">
+              <FieldBox label={t("payment.transactionHash")}>
+                <code className="block break-all font-mono text-[13px] leading-relaxed text-muted-foreground">
                   {invoice.payment.hash}
                 </code>
-              </div>
+              </FieldBox>
             )}
-          </div>
+          </>
         )}
 
-        {/* QR + 金额/网络 — only when not yet paid */}
+        {/* QR — only when not yet paid */}
         {!hasPayment && (
-          <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-stretch">
-            {/* QR */}
-            <div className="flex shrink-0 flex-col items-center gap-2.5">
-              <div className="rounded-2xl border bg-white p-3.5 shadow-sm ring-1 ring-black/5">
-                {qrCodeUrl ? (
-                  <img src={qrCodeUrl} alt={t("payment.scanQRCode")} className="size-44" />
-                ) : (
-                  <div className="flex size-44 items-center justify-center">
-                    <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                  </div>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">{t("payment.scanQRCode")}</p>
+          <div className="flex flex-col items-center gap-2.5 py-2">
+            <div className="rounded-2xl border bg-white p-3.5 shadow-sm ring-1 ring-black/5 dark:shadow-[0_0_28px_#72e8572e] dark:ring-[#72e85740]">
+              {qrCodeUrl ? (
+                <img src={qrCodeUrl} alt={t("payment.scanQRCode")} className="size-44" />
+              ) : (
+                <div className="flex size-44 items-center justify-center">
+                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
-
-            {/* Amount + Network */}
-            <div className="flex w-full min-w-0 flex-1 flex-col gap-3">
-              <div className="flex-1 rounded-xl border bg-muted/40 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    {t("payment.paymentAmount")}
-                  </span>
-                  <CopyButton
-                    copied={copiedField === "amount"}
-                    onCopy={() => handleCopy(invoice.pay_amount, "amount")}
-                  />
-                </div>
-                <div className="mt-2.5 flex items-center gap-2.5">
-                  <img
-                    src={cryptoMeta.icon || undefined}
-                    alt=""
-                    className="size-7 shrink-0 rounded-full"
-                    onError={(e) => { e.target.style.visibility = "hidden" }}
-                  />
-                  <span className="truncate font-mono text-xl font-bold tabular-nums tracking-tight">
-                    {invoice.pay_amount}
-                  </span>
-                  <span className="shrink-0 text-sm font-semibold text-muted-foreground">
-                    {invoice.crypto}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-xl border bg-muted/40 p-4">
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("payment.network")}
-                </span>
-                <div className="mt-2.5 flex items-center gap-2.5">
-                  <img
-                    src={chainMeta.icon || undefined}
-                    alt=""
-                    className="size-6 shrink-0 rounded-full"
-                    onError={(e) => { e.target.style.visibility = "hidden" }}
-                  />
-                  <span className="text-sm font-semibold">{chainMeta.name}</span>
-                  {chainMeta.isTestnet && (
-                    <span className="rounded-full bg-warning-soft px-1.5 py-px text-[10px] font-medium text-warning">
-                      {t("selector.testNetwork")}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
+            <p className="text-xs text-muted-foreground">{t("payment.scanQRCode")}</p>
           </div>
         )}
 
-        {/* Payment address */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {t("payment.paymentAddress")}
+        {/* Amount field */}
+        <FieldBox
+          label={t("payment.paymentAmount")}
+          action={
+            <CopyButton
+              copied={copiedField === "amount"}
+              onCopy={() => handleCopy(invoice.pay_amount, "amount")}
+            />
+          }
+        >
+          <div className="flex items-center gap-2.5">
+            <img
+              src={cryptoMeta.icon || undefined}
+              alt=""
+              className="size-7 shrink-0 rounded-full"
+              onError={(e) => { e.target.style.visibility = "hidden" }}
+            />
+            <span className="truncate font-mono text-xl font-bold tabular-nums tracking-tight">
+              {invoice.pay_amount}
             </span>
+            <span className="shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand">
+              {invoice.crypto}
+            </span>
+          </div>
+        </FieldBox>
+
+        {/* Payment address field */}
+        <FieldBox
+          label={t("payment.paymentAddress")}
+          action={
             <CopyButton
               copied={copiedField === "address"}
               onCopy={() => handleCopy(invoice.pay_address, "address")}
             />
-          </div>
-          <code className="block break-all rounded-xl border bg-muted/40 p-3.5 font-mono text-xs leading-relaxed">
+          }
+        >
+          <code className="block break-all font-mono text-[13px] leading-relaxed">
             {invoice.pay_address}
           </code>
-        </div>
+        </FieldBox>
 
         {/* Contract address */}
         {invoice.crypto_address && (
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {invoice.crypto} {t("payment.contractAddress")}
-            </span>
-            <code className="block select-none break-all rounded-xl bg-muted p-3.5 font-mono text-xs leading-relaxed text-muted-foreground">
+          <FieldBox label={`${invoice.crypto} ${t("payment.contractAddress")}`} className="bg-muted/20">
+            <code className="block select-none break-all font-mono text-xs leading-relaxed text-muted-foreground">
               {invoice.crypto_address.slice(0, 6)}...{invoice.crypto_address.slice(-8)}
             </code>
-          </div>
+          </FieldBox>
         )}
 
         {/* Wallet pay (注入式 EVM 钱包) — 作为「手动转账」之外的备选项放在底部；

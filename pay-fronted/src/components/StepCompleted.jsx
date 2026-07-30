@@ -21,14 +21,14 @@ function StepCompleted({ invoice }) {
 
   return (
     <div className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-md">
+      <div className="glow-card overflow-hidden rounded-2xl border bg-card shadow-md">
         <div className="flex flex-col gap-6 px-6 py-10">
           {/* Success hero */}
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="relative flex size-20 items-center justify-center">
               <span className="absolute inset-0 animate-pulse-ring rounded-full bg-success/30" />
               <span className="absolute inset-0 rounded-full bg-success-soft ring-1 ring-success-border" />
-              <span className="relative flex size-12 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg animate-in zoom-in-50 duration-500">
+              <span className="relative flex size-12 items-center justify-center rounded-full bg-success text-success-foreground shadow-[0_0_24px_#72e85773] animate-in zoom-in-50 duration-500">
                 <Check className="size-6" strokeWidth={3} />
               </span>
             </div>
@@ -88,7 +88,11 @@ function StepCompleted({ invoice }) {
                 {progress}%
               </span>
             </div>
-            <Progress value={progress} />
+            <Progress
+              value={progress}
+              className="bg-[#e4e9ee] dark:bg-[#26313d]"
+              indicatorClassName="bg-gradient-to-r from-[#3dcf40] to-[#72e857] shadow-[0_0_10px_#72e85780]"
+            />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>{t("confirmation.confirmed") || "已确认"} {hasConfirmedCount} {t("confirmation.blocks") || "区块"}</span>
               <span>{t("confirmation.needs") || "需要"} {needConfirmedCount} {t("confirmation.blocks") || "区块"}</span>

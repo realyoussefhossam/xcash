@@ -37,7 +37,7 @@ function ChainSelector({ availableMethods, selectedCrypto, selectedChain, onChai
             className={cn(
               "group flex min-h-16 items-center justify-between gap-3 rounded-xl border bg-card p-3.5 text-left shadow-xs transition-all duration-200",
               "hover:-translate-y-px hover:border-brand/50 hover:shadow-md focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-              selected && "border-brand bg-brand-soft/60 ring-1 ring-brand/30 hover:shadow-sm",
+              selected && "border-brand bg-brand-soft/60 shadow-[0_0_18px_#72e8572e] ring-1 ring-brand/40 hover:shadow-[0_0_18px_#72e8572e]",
               disabled && "cursor-not-allowed opacity-60 hover:translate-y-0 hover:shadow-xs"
             )}
           >

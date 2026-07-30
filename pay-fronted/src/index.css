@@ -200,6 +200,23 @@
     color: transparent;
   }
 
+  /* waffo 式绿色辉光阴影（活跃步骤点、主按钮、选中态） */
+  .shadow-glow-green {
+    box-shadow: 0 0 14px #72e85740, 0 0 4px #72e85726;
+  }
+  .shadow-glow-green-lg {
+    box-shadow: 0 0 30px #72e85740, 0 0 10px #72e8572e;
+  }
+
+  /* waffo 招牌深色卡：顶部绿色微光 + 内嵌高光描边（浅色主题下退化为极淡绿晕） */
+  .glow-card {
+    background-image: radial-gradient(circle at 30% 0%, #0a934d0d, transparent 55%);
+  }
+  .dark .glow-card {
+    background-image: radial-gradient(circle at 30% 0%, #adff8512, transparent 55%);
+    box-shadow: inset 0 1px 0 #ffffff0d;
+  }
+
   /* 确认进度条呼吸光效 */
   @keyframes shimmer {
     from { transform: translateX(-100%); }

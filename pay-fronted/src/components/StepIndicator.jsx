@@ -32,9 +32,9 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
                 className={cn(
                   "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-all outline-none",
                   isSuccess(n)
-                    ? "bg-success text-success-foreground shadow-sm"
+                    ? "bg-success text-success-foreground shadow-[0_0_10px_#72e85759]"
                     : n <= activeStep
-                      ? "bg-primary text-primary-foreground shadow-[0_0_0_4px_var(--brand-soft)]"
+                      ? "bg-primary text-primary-foreground shadow-[0_0_0_4px_var(--brand-soft),0_0_16px_#72e85780]"
                       : "border bg-card text-muted-foreground",
                   isClickable(n) && "cursor-pointer hover:scale-105"
                 )}
@@ -46,7 +46,7 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
                 <div className="absolute left-[calc(50%+1.125rem)] right-[calc(-50%+1.125rem)] top-1/2 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-border">
                   <div
                     className={cn(
-                      "h-full rounded-full bg-success transition-all duration-500",
+                      "h-full rounded-full bg-gradient-to-r from-[#3dcf40] to-[#72e857] shadow-[0_0_8px_#72e85773] transition-all duration-500",
                       n < naturalStep ? "w-full" : "w-0"
                     )}
                   />
@@ -66,7 +66,7 @@ function StepIndicator({ activeStep, naturalStep, onStepClick, stepCount = 3, lo
                 isSuccess(n)
                   ? "text-success"
                   : n === activeStep
-                    ? "text-foreground"
+                    ? "text-brand font-semibold"
                     : "text-muted-foreground"
               )}
             >
