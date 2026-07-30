@@ -113,7 +113,7 @@ function PaymentAddress({ invoice, onReset, onBroadcast }) {
       <div className="flex items-center gap-3.5 border-b bg-gradient-to-br from-[#0a934d17] via-transparent to-transparent px-6 py-5 dark:from-[#72e85712]">
         <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand-soft ring-1 ring-brand-border">
           <img
-            src={chainMeta.icon || undefined}
+            src={cryptoMeta.icon || undefined}
             alt=""
             className="size-6 rounded-full"
             onError={(e) => { e.target.style.visibility = "hidden" }}
