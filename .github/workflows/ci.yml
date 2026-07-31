@@ -22,11 +22,16 @@ jobs:
     name: Lint (ruff + black)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      # setup-uv 自 v8 起不再维护 v9 这类浮动 major tag，只能钉具体版本，
+      # 后续升级交给 dependabot 的 github-actions 分组跟进。
+      # prune-cache 在 v9 把默认值从 true 改成了 false（缓存更大、恢复更快），
+      # 这里显式设回 true 保持原有缓存体积，避免吃满仓库的 Actions 缓存配额。
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          prune-cache: true
 
       # --locked：pyproject 改了却没同步 uv.lock 时直接失败。锁文件漂移会让
       # CI 与生产镜像装到不同版本，必须在这里掐住。
@@ -81,13 +86,15 @@ jobs:
     steps:
       # fetch-depth: 0 —— django-migration-linter 要按 origin/main 求迁移文件差集，
       # 浅克隆下拿不到该 ref，脚本会退化成 HEAD（等于什么都不检查）。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
+      # 钉具体版本与 prune-cache 的理由同 lint job。
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          prune-cache: true
 
       - name: 安装依赖
         run: uv sync --group dev --locked
@@ -123,16 +130,16 @@ jobs:
     name: Frontend (pay-fronted)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 版本由 pay-fronted/package.json 的 packageManager 字段决定，不在此重复声明。
       # 但必须显式指出该文件的位置：action 默认只读仓库根目录的 package.json，
       # 而本项目根目录没有这个文件，缺了这行会以 "No pnpm version is specified" 直接失败。
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: pay-fronted/package.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: pnpm
@@ -157,15 +164,15 @@ jobs:
     name: Docker 生产镜像构建
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # 构建 caddy-run-stage 会连带构建它依赖的 python-build-stage 与
       # python-run-stage，一次覆盖 Dockerfile 全部阶段（含镜像内 collectstatic
       # 与 compilemessages）。只构建、不推送。
       - name: 构建生产镜像
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./compose/production/django/Dockerfile
