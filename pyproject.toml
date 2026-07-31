@@ -17,7 +17,7 @@ dependencies = [
     "shortuuid==1.0.13",
     "httpx==0.28.1",
     # Django
-    "django==5.2.14",
+    "django==5.2.16",
     "django-environ==0.13.0",
     "django-unfold==0.97.0",
     "djangorestframework==3.17.1",
