@@ -1,3 +1,4 @@
+# 版本控制、CI 与本地环境目录：镜像内一律用不到
 .editorconfig
 .gitattributes
 .github

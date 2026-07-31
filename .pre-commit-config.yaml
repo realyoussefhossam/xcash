@@ -32,11 +32,11 @@ repos:
     hooks:
       - id: black
 
-  # Run the Ruff linter.
+  # Ruff 静态检查（在 black 之后运行，此时格式已统一）
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.12
     hooks:
-      # Linter only（格式化由 black 负责，ruff-format 已移除避免冲突）
+      # 只跑 linter：格式化由 black 独占，ruff-format 已移除以免两者互相打架
       - id: ruff
         args: [ --fix, --exit-non-zero-on-fix ]
 

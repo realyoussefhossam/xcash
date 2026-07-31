@@ -29,7 +29,7 @@
 	}
 
 	reverse_proxy django:8000 {
-		# X-Real-IP 是 IP 白名单与全部 IP 维度限流的取值来源（见 common/utils/security.py
+		# X-Real-IP 是 IP 白名单与全部 IP 维度限流的取值来源（见 xcash/common/utils/security.py
 		# 的 client_ip）。必须用 {client_ip} 而非 {remote_host}：后者是本容器看到的 TCP
 		# 对端，在宿主反代拓扑下恒为 Docker 网关，会让所有外部请求在 Django 眼里收敛成
 		# 同一个 IP——商户 IP 白名单全量拒绝、IP 限流塌缩成全站单桶。{client_ip} 会按上面

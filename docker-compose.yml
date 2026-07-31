@@ -22,7 +22,7 @@ x-logging: &default-logging
     max-file: "3"
 
 # django / worker / beat 三者共享的部分。抽成独立扩展字段而非挂在 django 服务上，
-# 是为了让"哪个服务有 container_name、有 healthcheck"由各服务自己声明，
+# 是为了让「哪个服务有 container_name、有 healthcheck」由各服务自己声明，
 # 不必先继承再用 !reset 取消（那种写法既依赖较新的 Compose 版本，也难读）。
 x-django-base: &django-base
   build:
@@ -85,7 +85,7 @@ services:
     healthcheck:
       # 就绪探测必须走 TCP（-h 127.0.0.1）而非 pg_isready 默认的 Unix socket：
       # postgres 官方镜像首次初始化会先起一个【仅监听 socket】的临时实例跑建库脚本，
-      # socket 版探测会在临时实例阶段就报就绪，使依赖方撞上"临时实例→正式实例"
+      # socket 版探测会在临时实例阶段就报就绪，使依赖方撞上「临时实例→正式实例」
       # 切换窗口而偶发连接失败。同 scripts/upgrade.sh 里 wait_for_postgres 的理由。
       test:
         ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -p 5432 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
@@ -155,7 +155,7 @@ services:
     <<: *django-base
     container_name: xcash_beat
     # beat 有意不配 healthcheck：Celery 没有给 beat 提供存活查询接口（inspect ping
-    # 只对 worker 有效），任何探测都只能验证"进程在"，与 restart 策略的保障重复。
+    # 只对 worker 有效），任何探测都只能验证「进程在」，与 restart 策略的保障重复。
     command: /start-beat
 
   caddy:

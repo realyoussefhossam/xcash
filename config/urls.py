@@ -28,11 +28,11 @@ def build_admin_urlpatterns():
             path(settings.ADMIN_ROUTE_PREFIX, include("users.urls")),
             path(
                 f"{settings.ADMIN_ROUTE_PREFIX}operations/inspection",
-                # 改动原因：为“异常巡检”提供独立后台页，避免继续复用 admin 首页。
+                # 为“异常巡检”提供独立后台页，避免继续复用 admin 首页。
                 admin.site.admin_view(operational_inspection_view),
                 name="operational-inspection",
             ),
-            # Admin authentication URLs (需要在 admin.site.urls 之前)
+            # 后台认证路由：必须先于 admin.site.urls 注册
             path(settings.ADMIN_ROUTE_PREFIX, admin.site.urls),
         ]
     )
