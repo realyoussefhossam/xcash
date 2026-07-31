@@ -126,7 +126,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # 版本由 pay-fronted/package.json 的 packageManager 字段决定，不在此重复声明。
+      # 但必须显式指出该文件的位置：action 默认只读仓库根目录的 package.json，
+      # 而本项目根目录没有这个文件，缺了这行会以 "No pnpm version is specified" 直接失败。
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: pay-fronted/package.json
 
       - uses: actions/setup-node@v4
         with:
