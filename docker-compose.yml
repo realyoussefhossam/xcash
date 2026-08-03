@@ -175,7 +175,7 @@ services:
       # 受信代理网段，决定 Caddy 是否采信宿主反代转发的真实客户端 IP 与协议。
       # 默认信任私有网段（宿主反代经 127.0.0.1:6688 接入时，对端是 Docker 网关）。
       # 若把 6688 对外暴露（LISTEN_TO=0.0.0.0），务必收紧为反代机的具体 IP。
-      # 详见 Caddyfile 顶部说明。
+      # 详见 compose/production/caddy/Caddyfile 顶部说明。
       CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-private_ranges}
     ports:
       - "${LISTEN_TO:-127.0.0.1}:6688:80"
