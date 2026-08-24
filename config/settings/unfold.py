@@ -3,9 +3,8 @@ from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 
 BASE_UNFOLD = {
-    "SITE_TITLE": "Xcash",
-    "SITE_HEADER": "Xcash",
-    "SITE_URL": "https://xca.sh/",
+    "SITE_TITLE": "fightluck",
+    "SITE_HEADER": "fightluck",
     "SITE_SYMBOL": "dashboard",  # symbol from icon set
     "DASHBOARD_CALLBACK": "core.dashboard.dashboard_callback",
     "LOGIN": {
@@ -23,40 +22,6 @@ BASE_UNFOLD = {
         "light": lambda request: static("logo.png"),  # light mode
         "dark": lambda request: static("logo.png"),  # dark mode
     },
-    "SHOW_LANGUAGES": True,
-    "LANGUAGES": {
-        "navigation": [
-            {
-                "bidi": False,
-                "code": "en",
-                "name": "English",
-                "name_local": "🇺🇸 English",
-                "name_translated": "🇺🇸 English",
-            },
-            {
-                "bidi": False,
-                "code": "zh-hans",
-                "name": "简体中文",
-                "name_local": "🇨🇳 简体中文",
-                "name_translated": "🇨🇳 简体中文",
-            },
-        ],
-    },
-    "SITE_DROPDOWN": [
-        {
-            "icon": "home",
-            "title": "Xcash",
-            "link": "https://xca.sh",
-            "attrs": {
-                "target": "_blank",
-            },
-        },
-        {
-            "icon": "docs",
-            "title": _("文档"),
-            "link": "https://docs.xca.sh",
-        },
-    ],
     "BORDER_RADIUS": "16px",
     "COLORS": {
         "primary": {

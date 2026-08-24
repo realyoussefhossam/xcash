@@ -124,12 +124,11 @@ DEBUG = env.bool("DJANGO_DEBUG", False)
 # In Windows, this must be set to your system time zone.
 TIME_ZONE = "UTC"
 # https://docs.djangoproject.com/en/dev/ref/settings/#language-code
-LANGUAGE_CODE = "zh-hans"
+LANGUAGE_CODE = "en"
 # https://docs.djangoproject.com/en/dev/ref/settings/#languages
 # from django.utils.translation import gettext_lazy as _
 LANGUAGES = [
-    ("en", "🇺🇸 English"),
-    ("zh-hans", "🇨🇳 简体中文"),
+    ("en", "English"),
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#use-i18n
 USE_I18N = True
