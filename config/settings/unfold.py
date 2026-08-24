@@ -11,19 +11,19 @@ BASE_UNFOLD = {
     "SITE_SYMBOL": "dashboard",  # symbol from icon set
     "DASHBOARD_CALLBACK": "core.dashboard.dashboard_callback",
     "LOGIN": {
-        "image": lambda request: static("login-bg.jpg"),
+        "image": lambda request: static("fightluck.svg"),
     },
     "SITE_FAVICONS": [
         {
             "rel": "icon",
             "sizes": "32x32",
-            "type": "image/png",
-            "href": lambda request: static("logo.png"),
+            "type": "image/svg+xml",
+            "href": lambda request: static("fightluck.svg"),
         },
     ],
     "SITE_ICON": {
-        "light": lambda request: static("logo.png"),  # light mode
-        "dark": lambda request: static("logo.png"),  # dark mode
+        "light": lambda request: static("fightluck.svg"),  # light mode
+        "dark": lambda request: static("fightluck.svg"),  # dark mode
     },
     "BORDER_RADIUS": "16px",
     "COLORS": {
