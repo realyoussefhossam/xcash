@@ -5,6 +5,9 @@ from django.utils.translation import gettext_lazy as _
 BASE_UNFOLD = {
     "SITE_TITLE": "fightluck",
     "SITE_HEADER": "fightluck",
+    # Explicitly None to override unfold's default "/": hides "Return to site" on the
+    # login page and "View site" in the sidebar footer.
+    "SITE_URL": None,
     "SITE_SYMBOL": "dashboard",  # symbol from icon set
     "DASHBOARD_CALLBACK": "core.dashboard.dashboard_callback",
     "LOGIN": {
