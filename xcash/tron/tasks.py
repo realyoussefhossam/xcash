@@ -27,6 +27,8 @@ from chains.vault_slot_balances import refresh_vault_slot_balance_for_collect_ta
 from chains.vault_slots import mark_deployed_by_task
 from chains.vault_slots import mark_deployed_if_on_chain_for_task
 from common.decorators import singleton_task
+from common.dispatch_guard import release_scan_dispatch
+from common.dispatch_guard import try_claim_scan_dispatch
 from common.time import ago
 
 logger = structlog.get_logger()
@@ -388,6 +390,8 @@ def scan_tron_chain(chain_pk: int) -> None:
     finally:
         # 无论成功还是 RPC 失败都推进 last_scanned_at，按固定周期重试。
         chain.mark_scanned()
+        # 释放派发护栏：正常走完 finally 才能立即允许下一次派发；被硬杀时由 TTL 兑底过期。
+        release_scan_dispatch(chain_pk)
 
 
 @shared_task(ignore_result=True)
@@ -398,5 +402,5 @@ def scan_active_tron_chains() -> None:
         tron_api_key=""
     )
     for chain in chains:
-        if chain.is_due_for_scan:
+        if chain.is_due_for_scan and try_claim_scan_dispatch(chain.pk):
             scan_tron_chain.delay(chain.pk)

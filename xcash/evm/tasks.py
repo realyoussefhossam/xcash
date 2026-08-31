@@ -11,6 +11,8 @@ from chains.models import ChainType
 from chains.models import TxTaskStatus
 from chains.tasks import dispatch_block_confirmation_checks_if_needed
 from common.decorators import singleton_task
+from common.dispatch_guard import release_scan_dispatch
+from common.dispatch_guard import try_claim_scan_dispatch
 from common.time import ago
 from evm.models import EvmTxTask
 from evm.poller import EvmTaskPoller
@@ -199,6 +201,9 @@ def _scan_evm_chain(chain_pk: int) -> None:
         # 无论本轮是否命中 RPC 异常都推进 last_scanned_at，按固定周期重试，
         # 避免对不健康的节点每 2 秒一次连环重扫。
         chain.mark_scanned()
+        # 释放派发护栏：只有正常走到 finally 才能立即允许下一次派发；被硬杀时
+        # 护栏标记由 TTL 兜底过期，链条不会因此永久停扫。
+        release_scan_dispatch(chain_pk)
 
 
 @shared_task(ignore_result=True, soft_time_limit=110, time_limit=120)
@@ -227,5 +232,5 @@ def poll_active_evm_chains() -> None:
 def scan_active_evm_chains() -> None:
     """每 2 秒巡检活跃 EVM 链，仅调度到期（now - last_scanned_at ≥ 扫描周期）的链。"""
     for chain in Chain.objects.filter(active=True, type=ChainType.EVM):
-        if chain.is_due_for_scan:
+        if chain.is_due_for_scan and try_claim_scan_dispatch(chain.pk):
             _scan_evm_chain.delay(chain.pk)
