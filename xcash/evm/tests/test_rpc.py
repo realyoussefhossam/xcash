@@ -18,6 +18,36 @@ from evm.tests._fixtures import make_evm_chain
 
 @patch.object(rpc_module, "_EVM_RPC_RETRY_BACKOFF_SECONDS", (0, 0))
 class EvmScannerRpcErrorMessageTests(SimpleTestCase):
+    def test_get_logs_topic2_addresses_are_padded_to_32byte_literals(self):
+        # eth_getLogs 的 topic 必须是 32 字节字面量；传裸 20 字节地址会被节点拒收。
+        get_logs_mock = Mock(return_value=[])
+        chain = SimpleNamespace(
+            code="bsc-mainnet",
+            evm_log_max_block_range=10,
+            w3=SimpleNamespace(eth=SimpleNamespace(get_logs=get_logs_mock)),
+        )
+        slot = Web3.to_checksum_address("0x" + "bd" * 20)
+
+        EvmScannerRpcClient(chain=chain).get_logs(
+            from_block=100,
+            to_block=100,
+            addresses=None,
+            topic0=Web3.to_hex(
+                Web3.keccak(text="Transfer(address,address,uint256)")
+            ),
+            topic2=[slot],
+            summary="获取 EVM 日志失败",
+        )
+
+        sent_filter = get_logs_mock.call_args.args[0]
+        topics = sent_filter["topics"]
+        self.assertEqual(len(topics), 3)
+        self.assertIsNone(topics[1])
+        self.assertEqual(
+            topics[2],
+            ["0x" + "0" * 24 + slot[2:].lower()],
+        )
+
     def test_get_logs_error_includes_rpc_method_and_raw_reason(self):
         # 游标 last_error 直接使用此异常文本；必须带上具体 RPC 方法和节点原始报错，
         # 否则后台只能看到失败区块范围，无法判断是套餐限流、超时还是节点内部错误。

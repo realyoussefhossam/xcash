@@ -162,9 +162,14 @@ class EvmScannerRpcClient:
     ) -> list[dict[str, Any]]:
         # topic2（收款地址 OR 列表）存在时，把过滤下推到节点侧：只回传命中所关注
         # 收款地址的 Transfer 日志，避免高频稳定币全网日志把响应撑到结果上限。
+        # 地址必须展平成 32 字节的 topic 字面量（左补零），否则节点报 hex 长度非法。
         topics: list[Any] = [topic0]
         if topic2:
-            topics = [topic0, None, topic2]
+            topics = [
+                topic0,
+                None,
+                ["0x" + "0" * 24 + addr[2:].lower() for addr in topic2],
+            ]
         filter_params: dict[str, Any] = {
             "fromBlock": from_block,
             "toBlock": to_block,
