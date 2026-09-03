@@ -370,6 +370,7 @@ class EvmErc20ScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=token_registry,
+            topic2_addresses=frozenset({self.vault_slot.address}),
             from_block=100,
             to_block=100,
         )

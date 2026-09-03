@@ -87,14 +87,17 @@ class EvmChainScannerServiceTests(TestCase):
         scan_chain_mock.assert_called_once_with(chain=self.chain, rpc_client=ANY)
         self.assertIsNone(result)
 
+    @patch("evm.scanner.service.load_scan_filter_addresses")
     @patch("evm.scanner.service.load_token_registry")
     @patch("evm.scanner.service.EvmLogScanner.scan_range")
     def test_reconcile_blocks_scans_native_and_erc20_ranges(
         self,
         scan_range_mock,
         load_token_registry_mock,
+        load_scan_filter_addresses_mock,
     ):
         load_token_registry_mock.return_value = {}
+        load_scan_filter_addresses_mock.return_value = frozenset()
         scan_range_mock.return_value = None
 
         result = EvmScannerService.reconcile_blocks(
@@ -106,6 +109,7 @@ class EvmChainScannerServiceTests(TestCase):
             chain=self.chain,
             rpc_client=ANY,
             token_registry=load_token_registry_mock.return_value,
+            topic2_addresses=load_scan_filter_addresses_mock.return_value,
             from_block=10,
             to_block=10,
         )

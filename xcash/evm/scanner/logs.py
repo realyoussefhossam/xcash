@@ -19,7 +19,9 @@ from evm.scanner.constants import XCASH_NATIVE_RECEIVED_TOPIC0
 from evm.scanner.observed_transfers import EvmObservedTransferProcessor
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.rpc import EvmScannerRpcError
+from evm.scanner.watchers import SCAN_TOPIC2_GROUP_SIZE
 from evm.scanner.watchers import load_owned_addresses_for_candidates
+from evm.scanner.watchers import load_scan_filter_addresses
 from evm.scanner.watchers import load_token_registry
 
 logger = structlog.get_logger()
@@ -54,6 +56,9 @@ class EvmLogScanner:
             )
 
             token_registry = load_token_registry(chain=chain)
+            # 收款地址过滤集一次加载、整窗口复用：槽位变更频率远低于扫描频率，
+            # 逐 chunk 重复加载只会放大 DB 查询开销。
+            topic2_addresses = load_scan_filter_addresses(chain=chain)
             scan_window = cls._compute_scan_window(
                 cursor=cursor,
                 latest_block=latest_block,
@@ -77,6 +82,7 @@ class EvmLogScanner:
                     chain=chain,
                     rpc_client=rpc_client,
                     token_registry=token_registry,
+                    topic2_addresses=topic2_addresses,
                     from_block=chunk_from,
                     to_block=chunk_to,
                 )
@@ -93,6 +99,7 @@ class EvmLogScanner:
         chain: Chain,
         rpc_client: EvmScannerRpcClient,
         token_registry: dict[str, CryptoOnChain],
+        topic2_addresses: frozenset[str],
         from_block: int,
         to_block: int,
     ) -> None:
@@ -102,6 +109,7 @@ class EvmLogScanner:
             token_registry=token_registry,
             from_block=from_block,
             to_block=to_block,
+            topic2_addresses=topic2_addresses,
         )
         cls._process_logs(
             chain=chain,
@@ -144,8 +152,14 @@ class EvmLogScanner:
         token_registry: dict[str, CryptoOnChain],
         from_block: int,
         to_block: int,
+        topic2_addresses: frozenset[str],
     ) -> list[dict[str, Any]]:
-        """拉取本轮关注的外部入账日志。"""
+        """拉取本轮关注的外部入账日志。
+
+        ERC20 查询把收款地址过滤下推到节点侧（topic2 OR 列表），避免高频稳定币
+        全网日志撑爆结果上限；过滤集超过单请求承载量时按固定分组分批查询，
+        分组互不相交，每笔日志只会在唯一分组命中，直接拼接即为完整结果。
+        """
         logs: list[dict[str, Any]] = []
         logs.extend(
             rpc_client.get_logs(
@@ -157,17 +171,44 @@ class EvmLogScanner:
             )
         )
         erc20_addresses = cls._erc20_log_filter_addresses(token_registry=token_registry)
-        if erc20_addresses:
-            logs.extend(
-                rpc_client.get_logs(
-                    from_block=from_block,
-                    to_block=to_block,
-                    addresses=erc20_addresses,
-                    topic0=ERC20_TRANSFER_TOPIC0,
-                    summary="获取 EVM ERC20 Transfer 日志失败",
+        if erc20_addresses and topic2_addresses:
+            ordered = sorted(topic2_addresses)
+            erc20_logs: list[dict[str, Any]] = []
+            for start in range(0, len(ordered), SCAN_TOPIC2_GROUP_SIZE):
+                group = ordered[start : start + SCAN_TOPIC2_GROUP_SIZE]
+                erc20_logs.extend(
+                    rpc_client.get_logs(
+                        from_block=from_block,
+                        to_block=to_block,
+                        addresses=erc20_addresses,
+                        topic0=ERC20_TRANSFER_TOPIC0,
+                        topic2=group,
+                        summary="获取 EVM ERC20 Transfer 日志失败",
+                    )
+                )
+            # 分批查询后按链上顺序归位，保持与单次查询一致的处理顺序。
+            erc20_logs.sort(
+                key=lambda log: (
+                    cls._log_position_key(log.get("blockNumber", 0)),
+                    cls._log_position_key(log.get("logIndex", 0)),
                 )
             )
+            logs.extend(erc20_logs)
         return logs
+
+    @staticmethod
+    def _log_position_key(value: Any) -> int:
+        """把日志位置字段统一为 int（兼容 hex 字符串与十进制 int 两种形态）。
+
+        无法解析的字段（后续会在解析阶段被跳过的畸形日志）归为 0，只影响排序、
+        不影响最终是否落库。
+        """
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value, 16)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _erc20_log_filter_addresses(

@@ -71,6 +71,39 @@ def clear_token_registry_cache(*, chain: Chain | None = None) -> None:
         delete_pattern(TOKEN_REGISTRY_CACHE_KEY_TEMPLATE.format(chain_id="*"))
 
 
+SCAN_TOPIC2_GROUP_SIZE = 200
+
+
+def load_scan_filter_addresses(*, chain: Chain) -> frozenset[str]:
+    """加载该 EVM 链所有可能成为收款方的系统自有地址，用作 getLogs 的 topic2 过滤。
+
+    充值槽位是跨链同址的（salt 不掺 chain），同一客户在每条 EVM 链收款地址相同，
+    因此过滤集必须覆盖【全部 EVM 链】的 VaultSlot 地址，而不是只查本链行；
+    否则「其它链已建、本链未建」的跨链首笔充值会被节点侧过滤掉，永久漏账。
+    DifferRecipientAddress 是项目钱包直收地址，按匹配器同口径（chain_type +
+    project 网络类别）补齐。
+
+    与 load_owned_addresses_for_candidates 的分工：前者回答「查询时应该过滤哪些地址」，
+    后者回答「日志里哪些地址确属本链可归集」；过滤集必须是匹配集的超集（VaultSlot 匹配
+    不按网络类别过滤，这里也同宽口径），命中后的精确匹配与跨链补建仍由原链路完成，
+    识别语义不变。
+    """
+    from invoices.models import DifferRecipientAddress
+
+    addresses: set[str] = set(
+        VaultSlot.objects.filter(
+            chain__type=chain.type,
+        ).values_list("address", flat=True)
+    )
+    addresses |= set(
+        DifferRecipientAddress.objects.filter(
+            chain_type=chain.type,
+            project__is_test=chain.is_testnet,
+        ).values_list("address", flat=True)
+    )
+    return frozenset(addresses)
+
+
 def load_owned_addresses_for_candidates(
     *,
     chain: Chain,
@@ -84,9 +117,6 @@ def load_owned_addresses_for_candidates(
     候选集来自整个日志窗口，规模不可控，所有 address__in 查询一律按
     ADDRESS_LOOKUP_CHUNK_SIZE 分片下发，避免超出 DB 的 bind parameter 上限。
     """
-
-    if not addresses:
-        return frozenset()
 
     candidates = set(addresses)
     vault_slot_addresses: set[str] = set()

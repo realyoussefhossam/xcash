@@ -9,6 +9,7 @@ from evm.models import EvmScanCursor
 from evm.scanner.logs import EvmLogScanner
 from evm.scanner.rpc import EvmScannerRpcClient
 from evm.scanner.rpc import EvmScannerRpcError
+from evm.scanner.watchers import load_scan_filter_addresses
 from evm.scanner.watchers import load_token_registry
 
 RECONCILE_MAX_BLOCK_SPAN = 64
@@ -103,6 +104,7 @@ class EvmScannerService:
 
         rpc_client = EvmScannerRpcClient(chain=chain)
         token_registry = load_token_registry(chain=chain)
+        topic2_addresses = load_scan_filter_addresses(chain=chain)
 
         for range_from_block, range_to_block in cls._iter_reconcile_block_ranges(
             block_numbers
@@ -111,6 +113,7 @@ class EvmScannerService:
                 chain=chain,
                 rpc_client=rpc_client,
                 token_registry=token_registry,
+                topic2_addresses=topic2_addresses,
                 from_block=range_from_block,
                 to_block=range_to_block,
             )

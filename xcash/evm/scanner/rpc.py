@@ -56,6 +56,7 @@ class EvmScannerRpcClient:
         to_block: int,
         addresses: list[str] | None,
         topic0: str | list[str],
+        topic2: list[str] | None = None,
         summary: str = "获取 EVM 日志失败",
     ) -> list[dict[str, Any]]:
         if from_block > to_block or addresses == []:
@@ -75,6 +76,7 @@ class EvmScannerRpcClient:
                     to_block=chunk_to,
                     addresses=addresses,
                     topic0=topic0,
+                    topic2=topic2,
                     summary=summary,
                 )
             )
@@ -89,6 +91,7 @@ class EvmScannerRpcClient:
         to_block: int,
         addresses: list[str] | None,
         topic0: str | list[str],
+        topic2: list[str] | None,
         summary: str,
     ) -> list[dict[str, Any]]:
         """拉取单个块区间日志；命中"结果过多/范围过大"类限制时按块二分重试。
@@ -105,6 +108,7 @@ class EvmScannerRpcClient:
                 to_block=to_block,
                 addresses=addresses,
                 topic0=topic0,
+                topic2=topic2,
                 summary=summary,
             )
         except Exception as exc:  # noqa: BLE001
@@ -133,6 +137,7 @@ class EvmScannerRpcClient:
             to_block=mid_block,
             addresses=addresses,
             topic0=topic0,
+            topic2=topic2,
             summary=summary,
         )
         upper = self._get_logs_chunk(
@@ -140,6 +145,7 @@ class EvmScannerRpcClient:
             to_block=to_block,
             addresses=addresses,
             topic0=topic0,
+            topic2=topic2,
             summary=summary,
         )
         return lower + upper
@@ -151,12 +157,18 @@ class EvmScannerRpcClient:
         to_block: int,
         addresses: list[str] | None,
         topic0: str | list[str],
+        topic2: list[str] | None,
         summary: str,
     ) -> list[dict[str, Any]]:
+        # topic2（收款地址 OR 列表）存在时，把过滤下推到节点侧：只回传命中所关注
+        # 收款地址的 Transfer 日志，避免高频稳定币全网日志把响应撑到结果上限。
+        topics: list[Any] = [topic0]
+        if topic2:
+            topics = [topic0, None, topic2]
         filter_params: dict[str, Any] = {
             "fromBlock": from_block,
             "toBlock": to_block,
-            "topics": [topic0],
+            "topics": topics,
         }
         if addresses is not None:
             filter_params["address"] = addresses

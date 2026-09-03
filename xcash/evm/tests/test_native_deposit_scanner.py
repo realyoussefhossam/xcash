@@ -139,6 +139,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
@@ -186,6 +187,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
@@ -221,6 +223,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
@@ -248,6 +251,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
@@ -289,6 +293,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
@@ -322,6 +327,7 @@ class EvmLogScannerTests(TestCase):
             chain=self.chain,
             rpc_client=rpc_client,
             token_registry=self.token_registry,
+            topic2_addresses=frozenset(),
             from_block=120,
             to_block=120,
         )
