@@ -243,13 +243,15 @@ class TelegramCommandTests(TestCase):
 
     def test_status_command_reports_chain_state(self):
         reply = commands.handle_update(self._update("/status"))
-        self.assertIn("xcash status", reply)
+        self.assertIn("status", reply)
+        self.assertNotIn("xcash", reply.lower())
         self.assertIn("anvil", reply)
         self.assertIn("lag 10", reply)
 
     def test_group_command_with_bot_suffix_is_recognized(self):
         reply = commands.handle_update(self._update("/status@fightluck_alerts_bot"))
-        self.assertIn("xcash status", reply)
+        self.assertIn("status", reply)
+        self.assertNotIn("xcash", reply.lower())
 
     def test_help_lists_all_commands(self):
         reply = commands.handle_update(self._update("/help"))

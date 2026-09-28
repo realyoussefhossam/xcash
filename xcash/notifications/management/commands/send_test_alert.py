@@ -10,6 +10,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from notifications.commands import alert_brand
 from notifications.service import AlertService
 from notifications.telegram import TelegramClient
 
@@ -36,7 +37,7 @@ class Command(BaseCommand):
             return
 
         text = options["message"] or (
-            "✅ xcash alert channel test\n"
+            f"✅ {alert_brand()} alert channel test\n"
             f"chat_id={settings.TELEGRAM_CHAT_ID}\n"
             "If you can read this, deposit/sweep/RPC alerts will arrive here."
         )

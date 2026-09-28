@@ -32,9 +32,23 @@ logger = structlog.get_logger()
 
 STALE_SCAN_MULTIPLIER = 10  # a chain is "stalled" well before the watchdog threshold
 
+
+def alert_brand() -> str:
+    """Operator-facing brand for alert text.
+
+    Reads the admin's configured SITE_TITLE so there is a single source of truth
+    for branding: this repo ships as xcash upstream but deploys under the
+    operator's own name, and alerts must never leak the upstream name into a
+    product group.
+    """
+    unfold = getattr(settings, "UNFOLD", None) or {}
+    title = unfold.get("SITE_TITLE")
+    return str(title) if title else "alerts"
+
+
 HELP_TEXT = (
-    "🤖 <b>xcash bot commands</b>\n"
-    "/status — chain &amp; RPC health at a glance\n"
+    "🤖 <b>{brand} bot commands</b>\n".format(brand=alert_brand())
+    + "/status — chain &amp; RPC health at a glance\n"
     "/rpcs — per-chain detail (cursor, errors, gas, endpoint)\n"
     "/deposits — last 5 credited deposits\n"
     "/help — this message"
@@ -97,7 +111,7 @@ def chain_health_rows() -> list[dict]:
 
 def build_status_text() -> str:
     rows = chain_health_rows()
-    lines = [f"📊 <b>xcash status</b> — {timezone.now():%Y-%m-%d %H:%M} UTC", ""]
+    lines = [f"📊 <b>{alert_brand()} status</b> — {timezone.now():%Y-%m-%d %H:%M} UTC", ""]
     icon = {
         "OK": "✅",
         "LAGGING": "⚠️",
