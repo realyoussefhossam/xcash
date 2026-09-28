@@ -73,6 +73,13 @@ TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS = get_int_default(
     "CELERY_TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS",
     300,
 )
+
+# On-demand bot commands are polled frequently so replies feel instant; each
+# tick is one cheap getUpdates call that usually returns nothing.
+TELEGRAM_COMMAND_POLL_SCHEDULE_SECONDS = get_int_default(
+    "CELERY_TELEGRAM_COMMAND_POLL_SCHEDULE_SECONDS",
+    3,
+)
 CRYPTO_PRICE_REFRESH_SCHEDULE_SECONDS = get_int_default(
     "CELERY_CRYPTO_PRICE_REFRESH_SCHEDULE_SECONDS",
     60,
@@ -187,6 +194,11 @@ notifications_tasks = {
         # low gas / stale prices / stalled webhooks → Telegram.
         "task": "notifications.tasks.scan_operational_alerts",
         "schedule": TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS,
+    },
+    "poll_telegram_commands": {
+        # Answer /status, /rpcs, /deposits on demand.
+        "task": "notifications.tasks.poll_telegram_commands",
+        "schedule": TELEGRAM_COMMAND_POLL_SCHEDULE_SECONDS,
     },
 }
 

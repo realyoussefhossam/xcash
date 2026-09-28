@@ -81,6 +81,43 @@ class TelegramClient:
 
         return True
 
+    def get_updates(self, *, offset: int, timeout: int = 0, limit: int = 10):
+        """Fetch pending updates for command handling.
+
+        Returns a list of updates, or None when the call failed (so callers can
+        leave the offset untouched and retry without dropping messages).
+        """
+        if not self.configured:
+            return None
+
+        url = f"{TELEGRAM_API_BASE}/bot{self.token}/getUpdates"
+        try:
+            response = requests.post(
+                url,
+                json={"offset": offset, "timeout": timeout, "limit": limit},
+                timeout=settings.TELEGRAM_REQUEST_TIMEOUT_SECONDS + timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 — polling must never propagate
+            logger.debug("Telegram 命令轮询失败（网络异常）", error=str(exc))
+            return None
+
+        if response.status_code != 200:
+            logger.warning(
+                "Telegram 命令轮询失败（HTTP 状态异常）", status_code=response.status_code
+            )
+            return None
+
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+
+        if not body.get("ok"):
+            logger.warning("Telegram 命令轮询失败（API 返回 ok=false）", body=body)
+            return None
+
+        return body.get("result") or []
+
 
 def escape_html(value: object) -> str:
     """Escape text for Telegram's HTML parse mode."""
@@ -90,3 +127,19 @@ def escape_html(value: object) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def mask_secret_in_url(url: str) -> str:
+    """Hide the credential segment of an RPC URL before it reaches a chat.
+
+    Providers carry the API key in the path (``/v3/<key>``) or in the last
+    segment (``/bsc/<key>``). Chat history is long-lived and can be forwarded,
+    so the key is replaced with ``***`` while the host stays visible for triage.
+    """
+    if not url:
+        return "(not configured)"
+    parts = url.split("/")
+    if len(parts) <= 3:
+        return url
+    parts[-1] = "***"
+    return "/".join(parts)

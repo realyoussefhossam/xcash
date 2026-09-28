@@ -24,11 +24,14 @@ from chains.models import Chain
 from chains.models import ChainType
 from currencies.models import CryptoOnChain
 from evm.models import EvmScanCursor
+from notifications import commands
 from notifications import events
 from notifications.service import AlertLevel
 from notifications.service import AlertService
 from notifications.service import build_message
+from notifications.tasks import poll_telegram_commands
 from notifications.telegram import TelegramClient
+from notifications.telegram import mask_secret_in_url
 from notifications.watchdog import AlertWatchdog
 from notifications.watchdog import looks_like_auth_error
 
@@ -211,6 +214,139 @@ class NativeAmountFormattingTests(TestCase):
         self.assertEqual(
             events.format_native_amount(chain=self.chain, wei=123), "123 wei"
         )
+
+
+@override_settings(TELEGRAM_CHAT_ID="-5349535104")
+class TelegramCommandTests(TestCase):
+    """Command contract: read-only, chat-scoped, resilient."""
+
+    def setUp(self):
+        cache.clear()
+        chain = Chain.objects.create(code="anvil", rpc="", active=False)
+        Chain.objects.filter(pk=chain.pk).update(
+            rpc="http://evm-test.invalid",
+            active=True,
+            latest_block_number=50_000,
+            last_scanned_at=timezone.now(),
+        )
+        self.chain = Chain.objects.get(pk=chain.pk)
+        EvmScanCursor.objects.create(
+            chain=self.chain, last_scanned_block=49_990, enabled=True
+        )
+
+    @staticmethod
+    def _update(text: str, chat_id: int = -5349535104) -> dict:
+        return {
+            "update_id": 1,
+            "message": {"chat": {"id": chat_id}, "text": text},
+        }
+
+    def test_status_command_reports_chain_state(self):
+        reply = commands.handle_update(self._update("/status"))
+        self.assertIn("xcash status", reply)
+        self.assertIn("anvil", reply)
+        self.assertIn("lag 10", reply)
+
+    def test_group_command_with_bot_suffix_is_recognized(self):
+        reply = commands.handle_update(self._update("/status@fightluck_alerts_bot"))
+        self.assertIn("xcash status", reply)
+
+    def test_help_lists_all_commands(self):
+        reply = commands.handle_update(self._update("/help"))
+        for cmd in ("/status", "/rpcs", "/deposits"):
+            self.assertIn(cmd, reply)
+
+    def test_commands_from_other_chats_are_ignored(self):
+        self.assertIsNone(commands.handle_update(self._update("/status", chat_id=42)))
+
+    def test_non_command_text_is_ignored(self):
+        self.assertIsNone(commands.handle_update(self._update("hello")))
+
+    def test_unknown_command_is_ignored(self):
+        self.assertIsNone(commands.handle_update(self._update("/nuke")))
+
+    def test_stalled_chain_is_flagged(self):
+        Chain.objects.filter(pk=self.chain.pk).update(
+            last_scanned_at=timezone.now() - timedelta(seconds=600)
+        )
+        reply = commands.handle_update(self._update("/status"))
+        self.assertIn("STALLED", reply)
+
+    def test_rejected_rpc_key_is_flagged_distinctly(self):
+        EvmScanCursor.objects.filter(chain=self.chain).update(
+            last_error="403 Client Error: Forbidden"
+        )
+        reply = commands.handle_update(self._update("/status"))
+        self.assertIn("AUTH FAIL", reply)
+
+    def test_rpcs_command_masks_api_keys(self):
+        Chain.objects.filter(pk=self.chain.pk).update(
+            rpc="https://rpc.ankr.com/bsc/supersecretkey123"
+        )
+        reply = commands.handle_update(self._update("/rpcs"))
+        self.assertNotIn("supersecretkey123", reply)
+        self.assertIn("rpc.ankr.com/bsc/***", reply)
+
+    def test_rpc_url_masking_helper(self):
+        self.assertEqual(
+            mask_secret_in_url("https://eth-mainnet.g.alchemy.com/v2/abc123"),
+            "https://eth-mainnet.g.alchemy.com/v2/***",
+        )
+        self.assertEqual(mask_secret_in_url(""), "(not configured)")
+        self.assertEqual(mask_secret_in_url("https://rpc.example.com"), "https://rpc.example.com")
+
+    def test_deposits_command_lists_recent(self):
+        reply = commands.handle_update(self._update("/deposits"))
+        self.assertIn("last 5 deposits", reply)
+        self.assertIn("(none yet)", reply)
+
+    def test_broken_handler_replies_with_error_instead_of_raising(self):
+        def explode():
+            raise RuntimeError("db down")
+
+        with patch.dict(commands._COMMANDS, {"/status": explode}):
+            reply = commands.handle_update(self._update("/status"))
+        self.assertIn("command failed", reply)
+
+
+@override_settings(
+    TELEGRAM_BOT_TOKEN="token",
+    TELEGRAM_CHAT_ID="-5349535104",
+)
+class TelegramPollingTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    @patch("notifications.tasks.handle_update", return_value="reply text")
+    @patch("notifications.tasks.TelegramClient")
+    def test_poll_answers_and_advances_offset(self, client_cls, handle):
+        client = client_cls.return_value
+        client.configured = True
+        client.get_updates.return_value = [
+            {"update_id": 10, "message": {"chat": {"id": -5349535104}, "text": "/status"}}
+        ]
+
+        handled = poll_telegram_commands()
+
+        self.assertEqual(handled, 1)
+        client.send_message.assert_called_once_with("reply text")
+        self.assertEqual(cache.get("notifications:telegram:update_offset"), 11)
+
+    @patch("notifications.tasks.TelegramClient")
+    def test_failed_fetch_keeps_offset(self, client_cls):
+        client = client_cls.return_value
+        client.configured = True
+        client.get_updates.return_value = None
+
+        self.assertEqual(poll_telegram_commands(), 0)
+        self.assertIsNone(cache.get("notifications:telegram:update_offset"))
+
+    @patch("notifications.tasks.TelegramClient")
+    def test_unconfigured_bot_does_not_poll(self, client_cls):
+        client = client_cls.return_value
+        client.configured = False
+        self.assertEqual(poll_telegram_commands(), 0)
+        client.get_updates.assert_not_called()
 
 
 class WatchdogScannerHealthTests(TestCase):
