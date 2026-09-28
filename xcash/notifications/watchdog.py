@@ -167,15 +167,15 @@ class AlertWatchdog:
                 warning = f"Balance check failed: {alert['error']}"
             else:
                 warning = (
-                    f"Needs ~{required} wei for "
-                    f"{alert.get('task_count', 0)} queued task(s)"
+                    f"Needs ~{events.format_native_amount(chain=chain, wei=required)}"
+                    f" for {alert.get('task_count', 0)} queued task(s)"
                 )
             alerted += int(
                 events.low_gas(
                     chain=chain,
                     address=alert["sender"].address,
-                    balance_display=(
-                        f"{balance} wei" if balance is not None else "unknown"
+                    balance_display=events.format_native_amount(
+                        chain=chain, wei=balance
                     ),
                     warning=warning,
                 )

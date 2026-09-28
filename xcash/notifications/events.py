@@ -7,6 +7,7 @@ strings because they double as dedup keys and as the future filter vocabulary.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from notifications.service import AlertLevel
@@ -32,6 +33,24 @@ def format_amount(value, symbol: str) -> str:
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return f"{text} {symbol}"
+
+
+def format_native_amount(*, chain, wei: int | None) -> str:
+    """Render a wei amount in the chain's native unit (0.16 POL, not 160000000...).
+
+    Operators act on human units; raw wei in an alert forces a mental division
+    every time. Falls back to wei if the chain has no registered native coin
+    precision, which should not happen for active chains.
+    """
+    if wei is None:
+        return "unknown"
+    try:
+        decimals = chain.native_coin.get_decimals(chain)
+        symbol = chain.native_coin.symbol
+    except Exception:  # noqa: BLE001 — never let formatting break an alert
+        return f"{wei} wei"
+    amount = Decimal(wei) / (Decimal(10) ** decimals)
+    return format_amount(amount.normalize(), symbol)
 
 
 def _task_lines(task: TxTask) -> list[str]:

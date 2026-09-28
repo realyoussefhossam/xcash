@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from chains.models import Chain
 from chains.models import ChainType
+from currencies.models import CryptoOnChain
 from evm.models import EvmScanCursor
 from notifications import events
 from notifications.service import AlertLevel
@@ -178,6 +179,38 @@ class AlertEventFormattingTests(TestCase):
         self.assertEqual(notify.call_args.kwargs["level"], AlertLevel.MONEY)
         # Money events must never be deduplicated away.
         self.assertIsNone(notify.call_args.kwargs.get("cooldown_seconds"))
+
+
+class NativeAmountFormattingTests(TestCase):
+    """Alerts must speak human units: "0.16 POL", never raw wei."""
+
+    def setUp(self):
+        chain = Chain.objects.create(code="anvil", rpc="", active=False)
+        Chain.objects.filter(pk=chain.pk).update(
+            rpc="http://evm-test.invalid", active=True
+        )
+        self.chain = Chain.objects.get(pk=chain.pk)
+        # Mirror ensure_native_crypto_mapping_for_chain: precision lives on
+        # CryptoOnChain, which is what format_native_amount reads.
+        native = self.chain.native_coin
+        CryptoOnChain.objects.get_or_create(
+            chain=self.chain,
+            crypto=native,
+            defaults={"address": "", "decimals": 18},
+        )
+
+    def test_wei_is_rendered_in_native_units(self):
+        text = events.format_native_amount(
+            chain=self.chain, wei=160_001_620_363_520_000
+        )
+        self.assertIn("0.16000162036352", text)
+        self.assertTrue(text.endswith(self.chain.native_coin.symbol), text)
+
+    def test_missing_precision_degrades_to_wei(self):
+        CryptoOnChain.objects.filter(chain=self.chain).delete()
+        self.assertEqual(
+            events.format_native_amount(chain=self.chain, wei=123), "123 wei"
+        )
 
 
 class WatchdogScannerHealthTests(TestCase):
