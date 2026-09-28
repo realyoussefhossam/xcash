@@ -169,8 +169,12 @@ def scan_stuck_queued_evm_tx_tasks(limit: int = 32) -> int:
         )
         # A queued task stuck at the nonce head means a sweep or deploy is not
         # moving (usually no gas) — worth a Telegram alert, not just a log line.
-        minutes = int((timezone.now() - task.created_at).total_seconds() // 60)
-        alert_events.tx_task_stuck(task.base_task, minutes=minutes)
+        # Inactive chains are excluded on purpose: the operator parked them, so
+        # their leftover tasks are expected to sit still and alerting on them is
+        # pure noise (logged above for the record).
+        if task.chain.active:
+            minutes = int((timezone.now() - task.created_at).total_seconds() // 60)
+            alert_events.tx_task_stuck(task.base_task, minutes=minutes)
     return alerted
 
 

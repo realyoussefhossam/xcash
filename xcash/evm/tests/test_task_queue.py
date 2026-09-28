@@ -9,6 +9,7 @@ from web3 import Web3
 from chains.constants import ChainCode
 from chains.models import Address
 from chains.models import AddressUsage
+from chains.models import Chain
 from chains.models import ChainType
 from chains.models import TxTask
 from chains.models import TxTaskStatus
@@ -202,6 +203,35 @@ class EvmTaskQueueTests(TestCase):
             {call.args[0] for call in delay_mock.call_args_list},
             {due_queued.pk},
         )
+
+    @patch("evm.tasks.alert_events.tx_task_stuck")
+    def test_stuck_task_alert_skips_inactive_chains(self, alert_mock):
+        """Parked chains must not produce "stuck task" alerts.
+
+        Deactivating a chain leaves its queued tasks in place by design; alerting
+        on them trains operators to ignore the channel (observed in production:
+        an optimism task queued 27 days alerted repeatedly after the chain was
+        deliberately disabled).
+        """
+        from evm.tasks import scan_stuck_queued_evm_tx_tasks
+
+        stuck = self._create_evm_task(
+            tx_hash="0x" + "9a" * 32,
+            status=TxTaskStatus.QUEUED,
+            nonce=0,
+        )
+        old_time = timezone.now() - timedelta(minutes=31)
+        EvmTxTask.objects.filter(pk=stuck.pk).update(
+            created_at=old_time, last_attempt_at=old_time
+        )
+
+        Chain.objects.filter(pk=self.chain.pk).update(active=False)
+        scan_stuck_queued_evm_tx_tasks.run()
+        alert_mock.assert_not_called()
+
+        Chain.objects.filter(pk=self.chain.pk).update(active=True)
+        scan_stuck_queued_evm_tx_tasks.run()
+        alert_mock.assert_called_once()
 
     @patch("evm.tasks.logger.warning")
     def test_scan_stuck_queued_evm_tx_tasks_logs_only_nonce_head(self, warning_mock):
