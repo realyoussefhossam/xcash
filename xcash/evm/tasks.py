@@ -5,6 +5,9 @@ from django.db import transaction as db_transaction
 from django.db.models import Exists
 from django.db.models import OuterRef
 from django.db.models import Q
+from django.utils import timezone
+
+from notifications import events as alert_events
 
 from chains.models import Chain
 from chains.models import ChainType
@@ -164,6 +167,10 @@ def scan_stuck_queued_evm_tx_tasks(limit: int = 32) -> int:
             created_at=task.created_at,
             last_attempt_at=task.last_attempt_at,
         )
+        # A queued task stuck at the nonce head means a sweep or deploy is not
+        # moving (usually no gas) — worth a Telegram alert, not just a log line.
+        minutes = int((timezone.now() - task.created_at).total_seconds() // 60)
+        alert_events.tx_task_stuck(task.base_task, minutes=minutes)
     return alerted
 
 

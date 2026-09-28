@@ -65,6 +65,14 @@ OPERATIONAL_RISKS_SCHEDULE_SECONDS = get_int_default(
     "CELERY_OPERATIONAL_RISKS_SCHEDULE_SECONDS",
     120,
 )
+
+# Telegram alert watchdog cadence. 5 minutes is a deliberate compromise: fast
+# enough to catch a stalled scanner before a deposit sits uncredited through a
+# user's session, slow enough to keep DB/RPC load negligible.
+TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS = get_int_default(
+    "CELERY_TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS",
+    300,
+)
 CRYPTO_PRICE_REFRESH_SCHEDULE_SECONDS = get_int_default(
     "CELERY_CRYPTO_PRICE_REFRESH_SCHEDULE_SECONDS",
     60,
@@ -171,6 +179,18 @@ invoices_tasks = {
 }
 
 # ---------------------------
+# notifications app
+# ---------------------------
+notifications_tasks = {
+    "scan_operational_alerts": {
+        # Health watchdog: chain lag / stalled scanner / rejected RPC key /
+        # low gas / stale prices / stalled webhooks → Telegram.
+        "task": "notifications.tasks.scan_operational_alerts",
+        "schedule": TELEGRAM_ALERT_WATCHDOG_SCHEDULE_SECONDS,
+    },
+}
+
+# ---------------------------
 # core app
 # ---------------------------
 core_tasks = {
@@ -203,4 +223,5 @@ app.conf.beat_schedule = {
     **celery_internal_tasks,
     **invoices_tasks,
     **core_tasks,
+    **notifications_tasks,
 }

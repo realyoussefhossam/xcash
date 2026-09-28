@@ -54,6 +54,23 @@ IS_SAAS = env.bool("IS_SAAS", default=bool(SAAS_API_TOKEN))
 # 空串 = 关闭回调推送
 SAAS_CALLBACK_URL = env.str("SAAS_CALLBACK_URL", default="http://xcash-saas-caddy")
 
+# Telegram operational alerts
+# ------------------------------------------------------------------------------
+# Both values must be present to enable alerting; missing either keeps the whole
+# feature inert (alerts are a side channel and must never affect money paths).
+TELEGRAM_BOT_TOKEN = env.str("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_CHAT_ID = env.str("TELEGRAM_CHAT_ID", default="")
+# Alert re-send cooldown for repeating conditions (chain lag, low gas, stuck task).
+# The first breach alerts immediately; while the condition persists it re-alerts
+# once per window; clearing the condition sends a recovery message.
+TELEGRAM_ALERT_DEDUP_SECONDS = env.int("TELEGRAM_ALERT_DEDUP_SECONDS", default=1800)
+# HTTP timeout for the Telegram Bot API call.
+TELEGRAM_REQUEST_TIMEOUT_SECONDS = env.int("TELEGRAM_REQUEST_TIMEOUT_SECONDS", default=10)
+# Alert when a chain has not completed a scan for this long (scanning is dead).
+TELEGRAM_SCAN_STALL_SECONDS = env.int("TELEGRAM_SCAN_STALL_SECONDS", default=300)
+# Alert when the scan cursor trails the chain head by more than this many blocks.
+TELEGRAM_CHAIN_LAG_ALERT_BLOCKS = env.int("TELEGRAM_CHAIN_LAG_ALERT_BLOCKS", default=1000)
+
 # https://docs.djangoproject.com/en/dev/ref/settings/#allowed-hosts
 # CORS 默认关闭全放行，基础白名单允许官网来源；各环境可继续追加自身域名。
 CORS_ALLOW_ALL_ORIGINS = False
@@ -219,6 +236,8 @@ LOCAL_APPS = [
     # Tron 监听、扫描游标与 provider 接入
     "tron",
     "saas_api",
+    # Telegram operational alerting (deposits, chain/RPC health, gas)
+    "notifications",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

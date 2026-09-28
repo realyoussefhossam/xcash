@@ -16,6 +16,7 @@ from common.saas_callback import send_saas_callback
 from common.utils.math import format_decimal_stripped
 from deposits.exceptions import DepositStatusError
 from deposits.models import Deposit
+from notifications import events as alert_events
 from webhooks.service import WebhookService
 
 logger = structlog.get_logger()
@@ -124,6 +125,8 @@ class DepositService:
                 to_address=transfer.to_address,
                 tx_hash=transfer.hash,
             )
+            # 同一异常除了结构化日志，还要推送到运维告警渠道：日志不会叫人。
+            alert_events.confirmed_transfer_without_slot(transfer)
             return None
 
         deposit, created = Deposit.objects.get_or_create(
@@ -164,6 +167,9 @@ class DepositService:
                 currency=deposit.transfer.crypto.symbol,
             )
         )
+        # Operator alert: every credited deposit is a money event the team wants
+        # to see in Telegram, independent of the merchant webhook above.
+        alert_events.deposit_credited(deposit)
 
     @staticmethod
     def schedule_collect_for_completed_deposit(deposit: Deposit) -> bool:

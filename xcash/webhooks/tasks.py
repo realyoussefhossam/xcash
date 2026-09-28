@@ -26,6 +26,7 @@ from common.decorators import singleton_task
 from core.runtime_settings import get_webhook_delivery_max_backoff_seconds
 from core.runtime_settings import get_webhook_delivery_max_retries
 from core.runtime_settings import get_webhook_event_timeout
+from notifications import events as alert_events
 from webhooks.models import DeliveryAttempt
 from webhooks.models import WebhookEvent
 
@@ -192,6 +193,11 @@ def suspend_or_fail(
             schedule_locked_until=None,
             delivery_locked_until=None,
         )
+        event = WebhookEvent.objects.filter(pk=event_pk).first()
+        if event is not None:
+            # Merchant never received a money event and retries are exhausted:
+            # surface it to the operator channel, not only to the admin page.
+            alert_events.webhook_delivery_failed(event, reason=reason)
         return
 
     WebhookEvent.objects.filter(pk=event_pk).update(
@@ -336,6 +342,9 @@ def reap_stalled_events(batch_size=512):
         count=reaped,
         deadline=deadline.isoformat(),
     )
+    if reaped:
+        # Reaped events are permanently undelivered payment notifications.
+        alert_events.stalled_events_reaped(count=reaped)
 
 
 @shared_task

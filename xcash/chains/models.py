@@ -571,6 +571,36 @@ class TxTaskStatus(models.TextChoices):
 TERMINAL_TX_TASK_STATUSES = frozenset({TxTaskStatus.SUCCEEDED, TxTaskStatus.FAILED})
 
 
+def _notify_tx_task_terminal(*, task_id: int, succeeded: bool) -> None:
+    """Push a Telegram alert when a chain tx task reaches a terminal state.
+
+    Sweeps and contract deploys are the two operations that move customer money,
+    so their outcome is always reported: a failed sweep means funds are still
+    sitting at a deposit address, a failed deploy blocks both. Imported lazily to
+    keep the chains <-> notifications import graph acyclic, and alerting failures
+    are swallowed by AlertService so this can never affect the tx pipeline.
+    """
+    from notifications import events as alert_events  # noqa: PLC0415
+
+    task = (
+        TxTask.objects.select_related("chain")
+        .filter(pk=task_id)
+        .first()
+    )
+    if task is None:
+        return
+    if task.tx_type == TxTaskType.VaultSlotCollect:
+        if succeeded:
+            alert_events.sweep_succeeded(task)
+        else:
+            alert_events.sweep_failed(task)
+    elif task.tx_type == TxTaskType.VaultSlotDeploy:
+        if succeeded:
+            alert_events.deploy_succeeded(task)
+        else:
+            alert_events.deploy_failed(task)
+
+
 class TxHash(models.Model):
     tx_task = models.ForeignKey(
         "TxTask",
@@ -789,6 +819,8 @@ class TxTask(UndeletableModel):
                 updated_at=timezone.now(),
             )
         )
+        if updated:
+            _notify_tx_task_terminal(task_id=task.pk, succeeded=True)
         return bool(updated)
 
     @staticmethod
@@ -806,12 +838,15 @@ class TxTask(UndeletableModel):
         )
         if expected_status is not None:
             queryset = queryset.filter(status=expected_status)
-        return bool(
+        updated = bool(
             queryset.update(
                 status=TxTaskStatus.FAILED,
                 updated_at=timezone.now(),
             )
         )
+        if updated:
+            _notify_tx_task_terminal(task_id=task_id, succeeded=False)
+        return updated
 
 
 class VaultSlotUsage(models.TextChoices):
